@@ -1,0 +1,11 @@
+{
+  "version": "0.1.0",
+  "name": "Anikoto",
+  "description": "Something that has to do with streaming, I am unsure of.",
+  "author": "aquaryuo",
+  "icon": "https://anikototv.to/favicon.ico",
+  "website": "https://anikototv.to",
+  "type": "onlinestream-provider",
+  "manifestURI": "https://github.com/aquaryuo/seanime/blob/main/seanime/anikoto/manifest.json",
+  "payloadURI": "https://github.com/aquaryuo/seanime/blob/main/seanime/anikoto/provider.ts"
+}
