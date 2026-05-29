@@ -1,5 +1,24 @@
 class Provider {
-    private baseUrl = "https://anikototv.to"
+    private baseUrl = "{{baseUrl}}"
+    private mirrors = ["https://anikototv.to", "https://anikoto.cz", "https://anikoto.me", "https://anikoto.net", "https://anikototv.se"]
+
+    private async resolveBase(): Promise<string> {
+        const all = [this.baseUrl].concat(this.mirrors).map((u) => u.replace(/\/+$/, ""))
+        const candidates = all.filter((u, idx) => all.indexOf(u) === idx)
+        if (candidates.length === 1) return candidates[0]
+        const cached = $store.get<string>("anikoto:base")
+        if (cached && candidates.indexOf(cached) !== -1) return cached
+        for (const c of candidates) {
+            try {
+                const res = await fetch(c, { method: "HEAD", timeout: 8 })
+                if (res.ok) {
+                    $store.set("anikoto:base", c)
+                    return c
+                }
+            } catch (_e) {}
+        }
+        return candidates[0]
+    }
 
     private pageHeaders(): { [key: string]: string } {
         return { Referer: `${this.baseUrl}/` }
@@ -17,6 +36,7 @@ class Provider {
     }
 
     async search(opts: SearchOptions): Promise<SearchResult[]> {
+        this.baseUrl = await this.resolveBase()
         const url = `${this.baseUrl}/filter?keyword=${encodeURIComponent(opts.query)}`
         const res = await fetch(url, { headers: this.pageHeaders() })
         if (!res.ok) throw new Error(`search failed: status ${res.status}`)
@@ -53,6 +73,7 @@ class Provider {
     }
 
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {
+        this.baseUrl = await this.resolveBase()
         const parsed = this.splitAudio(id)
         const audio = parsed.audio
         const seriesUrl = this.seriesUrl(this.absoluteUrl(parsed.base))
@@ -103,6 +124,7 @@ class Provider {
     }
 
     async findEpisodeServer(episode: EpisodeDetails, _server: string): Promise<EpisodeServer> {
+        this.baseUrl = await this.resolveBase()
         const parsed = this.splitAudio(episode.id)
         const dataIds = parsed.base
         const audio = parsed.audio
