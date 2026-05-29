@@ -1,11 +1,14 @@
 {
-  "version": "0.1.0",
+  "id": "anikoto",
   "name": "Anikoto",
-  "description": "Something that has to do with streaming, I am unsure of.",
-  "author": "aquaryuo",
-  "icon": "https://anikototv.to/favicon.ico",
-  "website": "https://anikototv.to",
+  "version": "1.0.1",
+  "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/anikoto/manifest.json",
+  "language": "typescript",
   "type": "onlinestream-provider",
-  "manifestURI": "https://github.com/aquaryuo/seanime/blob/main/seanime/anikoto/manifest.json",
-  "payloadURI": "https://github.com/aquaryuo/seanime/blob/main/seanime/anikoto/provider.ts"
+  "description": "Online streaming provider for anikototv.to.",
+  "author": "aquaryuo",
+  "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/anikoto/icon.png",
+  "website": "https://anikototv.to",
+  "lang": "en",
+  "payloadURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/anikoto/provider.ts"
 }
