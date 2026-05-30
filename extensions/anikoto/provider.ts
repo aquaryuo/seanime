@@ -2,6 +2,7 @@ class Provider {
     private baseUrl = "{{baseUrl}}"
     private mirrors = ["https://anikototv.to", "https://anikoto.cz", "https://anikoto.me", "https://anikoto.net", "https://anikototv.se"]
     private cacheTtl = 900000
+    private serverCacheTtl = 300000
 
     private async resolveBase(): Promise<string> {
         const all = [this.baseUrl].concat(this.mirrors).map((u) => u.replace(/\/+$/, ""))
@@ -31,7 +32,15 @@ class Provider {
 
     getSettings(): Settings {
         return {
-            episodeServers: ["Auto", "HD-1", "Vidstream-2", "VidCloud-1"],
+            episodeServers: [
+                "Auto",
+                "HD-1",
+                "Vidstream-2",
+                "VidCloud-1",
+                "HS: HD-1",
+                "HS: Vidstream-2",
+                "HS: VidCloud-1",
+            ],
             supportsDub: true,
         }
     }
@@ -176,18 +185,13 @@ class Provider {
         const dataIds = parsed.base
         const audio = parsed.audio
 
-        const slRes = await fetch(
-            `${this.baseUrl}/ajax/server/list?servers=${encodeURIComponent(dataIds)}`,
-            { headers: this.ajaxHeaders() }
-        )
-        if (!slRes.ok) throw new Error(`server list failed: status ${slRes.status}`)
-        const $ = LoadDoc(slRes.json<{ status: number; result: string }>().result || "")
-
-        const groups = audio === "dub" ? ["dub"] : ["hsub"]
-        const candidates = this.collectServers($, groups)
-        if (candidates.length === 0) throw new Error("Server not available for this episode.")
-
         if (server === "Auto" || server === "default" || !server) {
+            const $ = await this.serverListDoc(dataIds)
+            const groups = audio === "dub" ? ["dub"] : ["sub", "hsub"]
+            const candidates = this.collectServers($, groups)
+            if (candidates.length === 0) throw new Error("No server available for this episode.")
+
+            const label = server === "Auto" ? "Auto" : ""
             let firstResolved: EpisodeServer | undefined
             for (const c of candidates) {
                 let resolved: EpisodeServer | undefined
@@ -197,6 +201,7 @@ class Provider {
                     resolved = undefined
                 }
                 if (!resolved) continue
+                if (label) resolved.server = label
                 if (!firstResolved) firstResolved = resolved
                 if (await this.isPlayable(resolved)) return resolved
             }
@@ -204,9 +209,33 @@ class Provider {
             throw new Error("No playable server found for this episode.")
         }
 
-        const picked = candidates.filter((c) => c.name === server)[0]
+        const target = this.parseServerLabel(server, audio)
+        if (!target.ok) throw new Error("Server not available for this audio.")
+
+        const $ = await this.serverListDoc(dataIds)
+        const picked = this.collectServers($, [target.group]).filter((c) => c.name === target.name)[0]
         if (!picked) throw new Error("Server not available for this episode.")
-        return this.resolveServer(picked.linkId, picked.name)
+        return this.resolveServer(picked.linkId, target.label)
+    }
+
+    private parseServerLabel(server: string, audio: string): { group: string; name: string; label: string; ok: boolean } {
+        if (server.indexOf("HS: ") === 0) return { group: "hsub", name: server.slice(4), label: server, ok: audio !== "dub" }
+        return { group: audio === "dub" ? "dub" : "sub", name: server, label: server, ok: true }
+    }
+
+    private async serverListDoc(dataIds: string): Promise<DocSelectionFunction> {
+        const cacheKey = `anikoto:slist:${dataIds}`
+        let html = this.readCache<string>(cacheKey, this.serverCacheTtl)
+        if (!html) {
+            const slRes = await fetch(
+                `${this.baseUrl}/ajax/server/list?servers=${encodeURIComponent(dataIds)}`,
+                { headers: this.ajaxHeaders() }
+            )
+            if (!slRes.ok) throw new Error(`server list failed: status ${slRes.status}`)
+            html = slRes.json<{ status: number; result: string }>().result || ""
+            if (html) this.writeCache(cacheKey, html)
+        }
+        return LoadDoc(html || "")
     }
 
     private collectServers($: DocSelectionFunction, groups: string[]): { name: string; linkId: string }[] {
@@ -216,8 +245,8 @@ class Provider {
             $(`.servers .type[data-type="${t}"] li[data-link-id]`).each((_i, el) => {
                 const linkId = el.attr("data-link-id")
                 const name = el.text().trim()
-                if (!linkId || !name || seen[name]) return
-                seen[name] = true
+                if (!linkId || !name || seen[linkId]) return
+                seen[linkId] = true
                 out.push({ name, linkId })
             })
         }
@@ -302,10 +331,11 @@ class Provider {
         }
     }
 
-    private readCache<T>(key: string): T | undefined {
+    private readCache<T>(key: string, ttl?: number): T | undefined {
         const entry = $store.get<{ at: number; data: T }>(key)
         const t = this.now()
-        if (entry && t > 0 && entry.at > 0 && t - entry.at < this.cacheTtl) return entry.data
+        const max = ttl === undefined ? this.cacheTtl : ttl
+        if (entry && t > 0 && entry.at > 0 && t - entry.at < max) return entry.data
         return undefined
     }
 
