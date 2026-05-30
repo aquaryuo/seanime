@@ -30,7 +30,7 @@ class Provider {
 
     getSettings(): Settings {
         return {
-            episodeServers: ["megaplay"],
+            episodeServers: ["Auto", "HD-1", "Vidstream-2", "VidCloud-1"],
             supportsDub: true,
         }
     }
@@ -123,7 +123,7 @@ class Provider {
         return episodes
     }
 
-    async findEpisodeServer(episode: EpisodeDetails, _server: string): Promise<EpisodeServer> {
+    async findEpisodeServer(episode: EpisodeDetails, server: string): Promise<EpisodeServer> {
         this.baseUrl = await this.resolveBase()
         const parsed = this.splitAudio(episode.id)
         const dataIds = parsed.base
@@ -134,22 +134,50 @@ class Provider {
             { headers: this.ajaxHeaders() }
         )
         if (!slRes.ok) throw new Error(`server list failed: status ${slRes.status}`)
-        const slJson = slRes.json<{ status: number; result: string }>()
-        const $ = LoadDoc(slJson.result || "")
+        const $ = LoadDoc(slRes.json<{ status: number; result: string }>().result || "")
 
-        const order = audio === "dub" ? ["dub", "sub", "hsub"] : ["sub", "hsub", "dub"]
-        let li: DocSelection | undefined
-        for (const t of order) {
-            const candidate = $(`.servers .type[data-type="${t}"] li[data-link-id]`).first()
-            if (candidate.length() > 0) {
-                li = candidate
-                break
+        const groups = audio === "dub" ? ["dub"] : ["hsub"]
+        const candidates = this.collectServers($, groups)
+        if (candidates.length === 0) throw new Error("Server not available for this episode.")
+
+        if (server === "Auto" || server === "default" || !server) {
+            let firstResolved: EpisodeServer | undefined
+            for (const c of candidates) {
+                let resolved: EpisodeServer | undefined
+                try {
+                    resolved = await this.resolveServer(c.linkId, c.name)
+                } catch (_e) {
+                    resolved = undefined
+                }
+                if (!resolved) continue
+                if (!firstResolved) firstResolved = resolved
+                if (await this.isPlayable(resolved)) return resolved
             }
+            if (firstResolved) return firstResolved
+            throw new Error("No playable server found for this episode.")
         }
-        if (!li || li.length() === 0) li = $(".servers li[data-link-id]").first()
-        const linkId = li && li.length() > 0 ? li.attr("data-link-id") : undefined
-        if (!linkId) throw new Error("No playable server found for this episode.")
 
+        const picked = candidates.filter((c) => c.name === server)[0]
+        if (!picked) throw new Error("Server not available for this episode.")
+        return this.resolveServer(picked.linkId, picked.name)
+    }
+
+    private collectServers($: DocSelectionFunction, groups: string[]): { name: string; linkId: string }[] {
+        const out: { name: string; linkId: string }[] = []
+        const seen: { [key: string]: boolean } = {}
+        for (const t of groups) {
+            $(`.servers .type[data-type="${t}"] li[data-link-id]`).each((_i, el) => {
+                const linkId = el.attr("data-link-id")
+                const name = el.text().trim()
+                if (!linkId || !name || seen[name]) return
+                seen[name] = true
+                out.push({ name, linkId })
+            })
+        }
+        return out
+    }
+
+    private async resolveServer(linkId: string, serverName: string): Promise<EpisodeServer> {
         const psRes = await fetch(`${this.baseUrl}/ajax/server?get=${encodeURIComponent(linkId)}`, {
             headers: this.ajaxHeaders(),
         })
@@ -157,11 +185,22 @@ class Provider {
         const ps = psRes.json<{ status: number; result: { url: string } }>()
         const embedUrl = ps && ps.result ? ps.result.url : undefined
         if (!embedUrl) throw new Error("Could not resolve the player URL.")
-
-        return this.extractMegaplay(embedUrl)
+        return this.extractMegaplay(embedUrl, serverName)
     }
 
-    private async extractMegaplay(embedUrl: string): Promise<EpisodeServer> {
+    private async isPlayable(server: EpisodeServer): Promise<boolean> {
+        const src = server.videoSources[0]
+        if (!src || !src.url) return false
+        try {
+            const res = await fetch(src.url, { headers: server.headers, timeout: 10 })
+            if (!res.ok) return false
+            return res.text().indexOf("#EXTM3U") !== -1
+        } catch (_e) {
+            return false
+        }
+    }
+
+    private async extractMegaplay(embedUrl: string, serverName: string): Promise<EpisodeServer> {
         const origin = this.originOf(embedUrl)
 
         const embedRes = await fetch(embedUrl, { headers: { Referer: `${this.baseUrl}/` } })
@@ -174,25 +213,15 @@ class Provider {
             headers: { Referer: embedUrl, "X-Requested-With": "XMLHttpRequest" },
         })
         if (!srcRes.ok) throw new Error(`getSources failed: status ${srcRes.status}`)
-        const data = srcRes.json<{
-            sources: { file: string } | { file: string }[]
-            tracks?: { file: string; label?: string; kind?: string; default?: boolean }[]
-        }>()
+        const data = srcRes.json<{ sources: { file: string } | { file: string }[] }>()
 
         const file = Array.isArray(data.sources) ? (data.sources[0] || ({} as any)).file : data.sources.file
         if (!file) throw new Error("getSources returned no video file.")
 
-        const subtitles: VideoSubtitle[] = (data.tracks || [])
-            .filter((t) => t.kind === "captions" || t.kind === "subtitles")
-            .map((t, idx) => ({
-                id: String(idx),
-                url: t.file,
-                language: t.label || "Unknown",
-                isDefault: !!t.default,
-            }))
+        const subtitles: VideoSubtitle[] = []
 
         return {
-            server: "megaplay",
+            server: serverName,
             headers: { Referer: `${origin}/`, Origin: origin },
             videoSources: [
                 {
