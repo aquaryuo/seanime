@@ -1,7 +1,7 @@
 {
   "id": "anikoto",
   "name": "Anikoto",
-  "version": "1.1.2",
+  "version": "1.2.5",
   "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/anikoto/manifest.json",
   "language": "typescript",
   "type": "onlinestream-provider",
