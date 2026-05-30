@@ -1,6 +1,7 @@
 class Provider {
     private baseUrl = "{{baseUrl}}"
     private mirrors = ["https://anikototv.to", "https://anikoto.cz", "https://anikoto.me", "https://anikoto.net", "https://anikototv.se"]
+    private cacheTtl = 900000
 
     private async resolveBase(): Promise<string> {
         const all = [this.baseUrl].concat(this.mirrors).map((u) => u.replace(/\/+$/, ""))
@@ -37,13 +38,55 @@ class Provider {
 
     async search(opts: SearchOptions): Promise<SearchResult[]> {
         this.baseUrl = await this.resolveBase()
-        const url = `${this.baseUrl}/filter?keyword=${encodeURIComponent(opts.query)}`
-        const res = await fetch(url, { headers: this.pageHeaders() })
-        if (!res.ok) throw new Error(`search failed: status ${res.status}`)
+        const audio = opts.dub ? "dub" : "sub"
+        const queries = this.searchQueries(opts)
 
-        const $ = LoadDoc(res.text())
         const results: SearchResult[] = []
+        const seen: { [key: string]: boolean } = {}
+        let anyOk = false
 
+        for (const q of queries) {
+            let html = ""
+            try {
+                const res = await fetch(`${this.baseUrl}/filter?keyword=${encodeURIComponent(q)}`, {
+                    headers: this.pageHeaders(),
+                })
+                if (res.ok) {
+                    anyOk = true
+                    html = res.text()
+                }
+            } catch (_e) {
+                html = ""
+            }
+            if (html) this.parseSearchInto(LoadDoc(html), audio, opts.dub, seen, results)
+        }
+
+        if (!anyOk) throw new Error("search failed")
+        return results
+    }
+
+    private searchQueries(opts: SearchOptions): string[] {
+        const raw = [opts.query, opts.media.romajiTitle, opts.media.englishTitle]
+        const out: string[] = []
+        const seen: { [key: string]: boolean } = {}
+        for (const t of raw) {
+            const q = (t || "").trim()
+            if (!q) continue
+            const key = q.toLowerCase()
+            if (seen[key]) continue
+            seen[key] = true
+            out.push(q)
+        }
+        return out
+    }
+
+    private parseSearchInto(
+        $: DocSelectionFunction,
+        audio: string,
+        dub: boolean,
+        seen: { [key: string]: boolean },
+        results: SearchResult[]
+    ): void {
         $("div.item").each((_i, card) => {
             const titleLink = card.find("a.name.d-title").first()
             if (titleLink.length() === 0) return
@@ -51,6 +94,7 @@ class Provider {
             const href = titleLink.attr("href") || card.find(".ani.poster.tip a").first().attr("href")
             if (!href) return
             const seriesUrl = this.seriesUrl(href)
+            if (seen[seriesUrl]) return
 
             const title = (
                 titleLink.text() ||
@@ -62,14 +106,12 @@ class Provider {
 
             const hasSub = card.find(".ep-status.sub").length() > 0
             const hasDub = card.find(".ep-status.dub").length() > 0
-            if (opts.dub && !hasDub) return
-            const subOrDub: SubOrDub = hasSub && hasDub ? "both" : hasDub ? "dub" : "sub"
-            const audio = opts.dub ? "dub" : "sub"
+            if (dub && !hasDub) return
 
+            seen[seriesUrl] = true
+            const subOrDub: SubOrDub = hasSub && hasDub ? "both" : hasDub ? "dub" : "sub"
             results.push({ id: this.withAudio(seriesUrl, audio), title, url: seriesUrl, subOrDub })
         })
-
-        return results
     }
 
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {
@@ -77,6 +119,10 @@ class Provider {
         const parsed = this.splitAudio(id)
         const audio = parsed.audio
         const seriesUrl = this.seriesUrl(this.absoluteUrl(parsed.base))
+
+        const cacheKey = `anikoto:eps:${seriesUrl}:${audio}`
+        const cached = this.readCache<EpisodeDetails[]>(cacheKey)
+        if (cached && cached.length > 0) return cached
 
         const page = await fetch(seriesUrl, { headers: this.pageHeaders() })
         if (!page.ok) throw new Error(`findEpisodes failed: status ${page.status}`)
@@ -120,6 +166,7 @@ class Provider {
 
         if (episodes.length === 0) throw new Error("No episodes found.")
         episodes.sort((x, y) => x.number - y.number)
+        this.writeCache(cacheKey, episodes)
         return episodes
     }
 
@@ -245,6 +292,26 @@ class Provider {
             if (a === "sub" || a === "dub") return { base: id.slice(0, i), audio: a }
         }
         return { base: id, audio: "sub" }
+    }
+
+    private now(): number {
+        try {
+            return Date.now()
+        } catch (_e) {
+            return 0
+        }
+    }
+
+    private readCache<T>(key: string): T | undefined {
+        const entry = $store.get<{ at: number; data: T }>(key)
+        const t = this.now()
+        if (entry && t > 0 && entry.at > 0 && t - entry.at < this.cacheTtl) return entry.data
+        return undefined
+    }
+
+    private writeCache<T>(key: string, data: T): void {
+        const t = this.now()
+        if (t > 0) $store.set(key, { at: t, data })
     }
 
     private seriesUrl(href: string): string {
