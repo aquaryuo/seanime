@@ -3,6 +3,8 @@ class Provider {
     private mirrors = ["https://anikototv.to", "https://anikoto.cz", "https://anikoto.me", "https://anikoto.net", "https://anikototv.se"]
     private cacheTtl = 900000
     private serverCacheTtl = 300000
+    private subtitleProxy = "{{subtitleProxy}}"
+    private defaultSubtitleProxy = "https://sub-ak.ryuo.to"
 
     private async resolveBase(): Promise<string> {
         const all = [this.baseUrl].concat(this.mirrors).map((u) => u.replace(/\/+$/, ""))
@@ -289,12 +291,15 @@ class Provider {
             headers: { Referer: embedUrl, "X-Requested-With": "XMLHttpRequest" },
         })
         if (!srcRes.ok) throw new Error(`getSources failed: status ${srcRes.status}`)
-        const data = srcRes.json<{ sources: { file: string } | { file: string }[] }>()
+        const data = srcRes.json<{
+            sources: { file: string } | { file: string }[]
+            tracks?: { file: string; label?: string; kind?: string; default?: boolean }[]
+        }>()
 
         const file = Array.isArray(data.sources) ? (data.sources[0] || ({} as any)).file : data.sources.file
         if (!file) throw new Error("getSources returned no video file.")
 
-        const subtitles: VideoSubtitle[] = []
+        const subtitles = this.buildSubtitles(data.tracks)
 
         return {
             server: serverName,
@@ -308,6 +313,38 @@ class Provider {
                 },
             ],
         }
+    }
+
+    private subtitleProxyBase(): string {
+        let p = (this.subtitleProxy || "").trim()
+        if (p === "" || p === "{{subtitleProxy}}") p = this.defaultSubtitleProxy
+        if (p.toLowerCase() === "off") return ""
+        if (p.indexOf("http://") !== 0 && p.indexOf("https://") !== 0) p = `https://${p}`
+        return p.replace(/\/+$/, "")
+    }
+
+    private buildSubtitles(
+        tracks: { file: string; label?: string; kind?: string; default?: boolean }[] | undefined
+    ): VideoSubtitle[] {
+        const collected: VideoSubtitle[] = []
+        const proxy = this.subtitleProxyBase()
+        if (!proxy || !tracks || tracks.length === 0) return collected
+
+        for (let i = 0; i < tracks.length; i++) {
+            const t = tracks[i]
+            if (!t || !t.file) continue
+            if (t.kind && t.kind !== "captions" && t.kind !== "subtitles") continue
+            collected.push({
+                id: `${t.label || "subtitle"}-${i}`,
+                url: `${proxy}/?url=${encodeURIComponent(t.file)}`,
+                language: t.label || "English",
+                isDefault: t.default === true,
+            })
+        }
+
+        const ordered = collected.filter((s) => s.isDefault).concat(collected.filter((s) => !s.isDefault))
+        for (let k = 0; k < ordered.length; k++) ordered[k].isDefault = k === 0
+        return ordered
     }
 
     private withAudio(base: string, audio: string): string {
