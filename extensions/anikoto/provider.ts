@@ -4,8 +4,6 @@ class Provider {
     private cacheTtl = 900000
     private serverCacheTtl = 300000
     private subEndpoint = "https://sub.ryuo.to"
-    private curAnilistId = 0
-    private curEpisode = 0
 
     private async resolveBase(): Promise<string> {
         const all = [this.baseUrl].concat(this.mirrors).map((u) => u.replace(/\/+$/, ""))
@@ -31,6 +29,28 @@ class Provider {
 
     private ajaxHeaders(): { [key: string]: string } {
         return { Referer: `${this.baseUrl}/`, "X-Requested-With": "XMLHttpRequest" }
+    }
+
+    private async fetchRetry(url: string, opts?: FetchOptions, tries = 2): Promise<FetchResponse> {
+        let lastErr: any
+        for (let i = 0; i < tries; i++) {
+            try {
+                const res = await fetch(url, opts)
+                if (res.ok || res.status < 500 || i === tries - 1) return res
+            } catch (e) {
+                lastErr = e
+                if (i === tries - 1) throw e
+            }
+        }
+        throw lastErr
+    }
+
+    private firstAttr($: DocSelectionFunction, selectors: string[], attr: string): string {
+        for (const sel of selectors) {
+            const v = $(sel).first().attr(attr)
+            if (v) return v
+        }
+        return ""
     }
 
     getSettings(): Settings {
@@ -137,13 +157,18 @@ class Provider {
         const cached = this.readCache<EpisodeDetails[]>(cacheKey)
         if (cached && cached.length > 0) return cached
 
-        const page = await fetch(seriesUrl, { headers: this.pageHeaders() })
+        const page = await this.fetchRetry(seriesUrl, { headers: this.pageHeaders() })
         if (!page.ok) throw new Error(`findEpisodes failed: status ${page.status}`)
 
-        const seriesId = LoadDoc(page.text())("#watch-main").first().attr("data-id")
+        const pageHtml = page.text()
+        let seriesId = this.firstAttr(LoadDoc(pageHtml), ["#watch-main", "[id*='watch'][data-id]", "main [data-id]"], "data-id")
+        if (!seriesId) {
+            const m = pageHtml.match(/data-id="(\d+)"/)
+            if (m) seriesId = m[1]
+        }
         if (!seriesId) throw new Error("Could not determine series id (#watch-main[data-id]).")
 
-        const listRes = await fetch(`${this.baseUrl}/ajax/episode/list/${seriesId}`, {
+        const listRes = await this.fetchRetry(`${this.baseUrl}/ajax/episode/list/${seriesId}`, {
             headers: this.ajaxHeaders(),
         })
         if (!listRes.ok) throw new Error(`episode list failed: status ${listRes.status}`)
@@ -154,7 +179,10 @@ class Provider {
         const episodes: EpisodeDetails[] = []
         const seen: { [key: string]: boolean } = {}
 
-        $("ul.ep-range li > a").each((i, a) => {
+        let epNodes = $("ul.ep-range li > a")
+        if (epNodes.length() === 0) epNodes = $(".ep-range a")
+        if (epNodes.length() === 0) epNodes = $("a[data-ids]")
+        epNodes.each((i, a) => {
             const epId = a.attr("data-id") || ""
             const dataIds = a.attr("data-ids")
             if (!dataIds) return
@@ -180,6 +208,14 @@ class Provider {
         if (episodes.length === 0) throw new Error("No episodes found.")
         episodes.sort((x, y) => x.number - y.number)
         this.writeCache(cacheKey, episodes)
+        if (parsed.anilistId > 0) {
+            for (let k = 0; k < episodes.length - 1; k++) {
+                this.writeCache(`anikoto:next:${parsed.anilistId}:${episodes[k].number}`, {
+                    id: episodes[k + 1].id,
+                    number: episodes[k + 1].number,
+                })
+            }
+        }
         return episodes
     }
 
@@ -188,8 +224,7 @@ class Provider {
         const parsed = this.splitMeta(episode.id)
         const dataIds = parsed.base
         const audio = parsed.audio
-        this.curAnilistId = parsed.anilistId
-        this.curEpisode = episode.number
+        const ctx = { anilistId: parsed.anilistId, episode: episode.number }
 
         if (server === "Auto" || server === "default" || !server) {
             const $ = await this.serverListDoc(dataIds)
@@ -202,16 +237,22 @@ class Provider {
             for (const c of candidates) {
                 let resolved: EpisodeServer | undefined
                 try {
-                    resolved = await this.resolveServer(c.linkId, c.name)
+                    resolved = await this.resolveServer(c.linkId, c.name, ctx)
                 } catch (_e) {
                     resolved = undefined
                 }
                 if (!resolved) continue
                 if (label) resolved.server = label
                 if (!firstResolved) firstResolved = resolved
-                if (await this.isPlayable(resolved)) return resolved
+                if (await this.isPlayable(resolved)) {
+                    this.firePrefetch(ctx)
+                    return resolved
+                }
             }
-            if (firstResolved) return firstResolved
+            if (firstResolved) {
+                this.firePrefetch(ctx)
+                return firstResolved
+            }
             throw new Error("No playable server found for this episode.")
         }
 
@@ -221,11 +262,14 @@ class Provider {
         const $ = await this.serverListDoc(dataIds)
         const picked = this.collectServers($, [target.group]).filter((c) => c.name === target.name)[0]
         if (!picked) throw new Error("Server not available for this episode.")
-        return this.resolveServer(picked.linkId, target.label)
+        const result = await this.resolveServer(picked.linkId, target.label, ctx)
+        this.firePrefetch(ctx)
+        return result
     }
 
     private parseServerLabel(server: string, audio: string): { group: string; name: string; label: string; ok: boolean } {
-        if (server.indexOf("HS: ") === 0) return { group: "hsub", name: server.slice(4), label: server, ok: audio !== "dub" }
+        const hs = server.match(/^hs:\s*/i)
+        if (hs) return { group: "hsub", name: server.slice(hs[0].length), label: server, ok: audio !== "dub" }
         return { group: audio === "dub" ? "dub" : "sub", name: server, label: server, ok: true }
     }
 
@@ -259,15 +303,22 @@ class Provider {
         return out
     }
 
-    private async resolveServer(linkId: string, serverName: string): Promise<EpisodeServer> {
-        const psRes = await fetch(`${this.baseUrl}/ajax/server?get=${encodeURIComponent(linkId)}`, {
-            headers: this.ajaxHeaders(),
-        })
-        if (!psRes.ok) throw new Error(`server resolve failed: status ${psRes.status}`)
-        const ps = psRes.json<{ status: number; result: { url: string } }>()
-        const embedUrl = ps && ps.result ? ps.result.url : undefined
-        if (!embedUrl) throw new Error("Could not resolve the player URL.")
-        return this.extractMegaplay(embedUrl, serverName)
+    private async resolveServer(linkId: string, serverName: string, ctx: { anilistId: number; episode: number }): Promise<EpisodeServer> {
+        const got = await this.fetchSources(linkId)
+        if (!got || !got.file) throw new Error("Could not resolve the player URL.")
+        const subtitles = this.buildSubtitles(got.tracks, ctx)
+        return {
+            server: serverName,
+            headers: { Referer: `${got.origin}/`, Origin: got.origin },
+            videoSources: [
+                {
+                    url: got.file,
+                    type: "m3u8",
+                    quality: "default",
+                    subtitles,
+                },
+            ],
+        }
     }
 
     private async isPlayable(server: EpisodeServer): Promise<boolean> {
@@ -282,68 +333,127 @@ class Provider {
         }
     }
 
-    private async extractMegaplay(embedUrl: string, serverName: string): Promise<EpisodeServer> {
+    private async fetchSources(
+        linkId: string
+    ): Promise<{ origin: string; file?: string; tracks?: { file: string; label?: string; kind?: string; default?: boolean }[] } | undefined> {
+        const psRes = await this.fetchRetry(`${this.baseUrl}/ajax/server?get=${encodeURIComponent(linkId)}`, {
+            headers: this.ajaxHeaders(),
+        })
+        if (!psRes.ok) return undefined
+        const ps = psRes.json<{ status: number; result: { url: string } }>()
+        const embedUrl = ps && ps.result ? ps.result.url : undefined
+        if (!embedUrl) return undefined
+
         const origin = this.originOf(embedUrl)
+        const embedRes = await this.fetchRetry(embedUrl, { headers: { Referer: `${this.baseUrl}/` } })
+        if (!embedRes.ok) return undefined
 
-        const embedRes = await fetch(embedUrl, { headers: { Referer: `${this.baseUrl}/` } })
-        if (!embedRes.ok) throw new Error(`embed fetch failed: status ${embedRes.status}`)
+        const ehtml = embedRes.text()
+        let dataId = this.firstAttr(LoadDoc(ehtml), ["#megaplay-player", "[id*='player'][data-id]"], "data-id")
+        if (!dataId) {
+            const m = ehtml.match(/data-id="([^"]+)"/)
+            if (m) dataId = m[1]
+        }
+        if (!dataId) return undefined
 
-        const dataId = LoadDoc(embedRes.text())("#megaplay-player").first().attr("data-id")
-        if (!dataId) throw new Error("Could not find #megaplay-player[data-id] in embed.")
-
-        const srcRes = await fetch(`${origin}/stream/getSources?id=${encodeURIComponent(dataId)}`, {
+        const srcRes = await this.fetchRetry(`${origin}/stream/getSources?id=${encodeURIComponent(dataId)}`, {
             headers: { Referer: embedUrl, "X-Requested-With": "XMLHttpRequest" },
         })
-        if (!srcRes.ok) throw new Error(`getSources failed: status ${srcRes.status}`)
+        if (!srcRes.ok) return undefined
         const data = srcRes.json<{
             sources: { file: string } | { file: string }[]
             tracks?: { file: string; label?: string; kind?: string; default?: boolean }[]
         }>()
-
         const file = Array.isArray(data.sources) ? (data.sources[0] || ({} as any)).file : data.sources.file
-        if (!file) throw new Error("getSources returned no video file.")
+        return { origin, file, tracks: data.tracks }
+    }
 
-        const subtitles = this.buildSubtitles(data.tracks)
+    private firePrefetch(ctx: { anilistId: number; episode: number }): void {
+        try {
+            void this.prefetchNext(ctx)
+        } catch (_e) {}
+    }
 
-        return {
-            server: serverName,
-            headers: { Referer: `${origin}/`, Origin: origin },
-            videoSources: [
-                {
-                    url: file,
-                    type: "m3u8",
-                    quality: "default",
-                    subtitles,
-                },
-            ],
-        }
+    private async prefetchNext(ctx: { anilistId: number; episode: number }): Promise<void> {
+        if (ctx.anilistId <= 0 || ctx.episode <= 0) return
+        const next = this.readCache<{ id: string; number: number }>(`anikoto:next:${ctx.anilistId}:${ctx.episode}`)
+        if (!next || !next.id) return
+        const warmKey = `anikoto:warmed:${ctx.anilistId}:${next.number}`
+        if (this.readCache<boolean>(warmKey)) return
+        this.writeCache(warmKey, true)
+
+        try {
+            const parsed = this.splitMeta(next.id)
+            const $ = await this.serverListDoc(parsed.base)
+            const groups = parsed.audio === "dub" ? ["dub"] : ["sub", "hsub"]
+            const candidates = this.collectServers($, groups)
+
+            let tracks: { file: string; label?: string; kind?: string; default?: boolean }[] | undefined
+            for (const c of candidates) {
+                const got = await this.fetchSources(c.linkId)
+                if (got && got.tracks && got.tracks.length > 0) {
+                    tracks = got.tracks
+                    break
+                }
+            }
+            if (!tracks || tracks.length === 0) return
+
+            const items: { lang: string; src: string }[] = []
+            const seen: { [key: string]: boolean } = {}
+            for (let i = 0; i < tracks.length; i++) {
+                const t = tracks[i]
+                if (!t || !t.file) continue
+                if (t.kind && t.kind !== "captions" && t.kind !== "subtitles") continue
+                const lang = this.subLang(t.label)
+                if (seen[lang]) continue
+                seen[lang] = true
+                items.push({ lang, src: t.file })
+            }
+            if (items.length === 0) return
+
+            await fetch(`${this.subEndpoint}/warm`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ anilist: ctx.anilistId, episode: next.number, items }),
+            })
+        } catch (_e) {}
     }
 
     private buildSubtitles(
-        tracks: { file: string; label?: string; kind?: string; default?: boolean }[] | undefined
+        tracks: { file: string; label?: string; kind?: string; default?: boolean }[] | undefined,
+        ctx: { anilistId: number; episode: number }
     ): VideoSubtitle[] {
         const collected: VideoSubtitle[] = []
         if (!tracks || tracks.length === 0) return collected
 
-        const anime = this.curAnilistId > 0 ? String(this.curAnilistId) : "unknown"
-        const ep = this.curEpisode > 0 ? String(this.curEpisode) : "0"
+        const anime = ctx.anilistId > 0 ? String(ctx.anilistId) : "unknown"
+        const ep = ctx.episode > 0 ? String(ctx.episode) : "0"
+        const seenLang: { [key: string]: boolean } = {}
+        let englishIdx = -1
+        let defaultIdx = -1
 
         for (let i = 0; i < tracks.length; i++) {
             const t = tracks[i]
             if (!t || !t.file) continue
             if (t.kind && t.kind !== "captions" && t.kind !== "subtitles") continue
             const lang = this.subLang(t.label)
+            if (seenLang[lang]) continue
+            seenLang[lang] = true
+            const idx = collected.length
             collected.push({
-                id: `${lang}-${i}`,
+                id: `${lang}-${idx}`,
                 url: `${this.subEndpoint}/s/${anime}/${ep}/${lang}.vtt?src=${encodeURIComponent(t.file)}`,
                 language: t.label || "English",
-                isDefault: t.default === true,
+                isDefault: false,
             })
+            if (englishIdx === -1 && lang.indexOf("english") === 0) englishIdx = idx
+            if (defaultIdx === -1 && t.default === true) defaultIdx = idx
         }
 
-        const ordered = collected.filter((s) => s.isDefault).concat(collected.filter((s) => !s.isDefault))
-        for (let k = 0; k < ordered.length; k++) ordered[k].isDefault = k === 0
-        return ordered
+        if (collected.length === 0) return collected
+        const pick = englishIdx !== -1 ? englishIdx : defaultIdx !== -1 ? defaultIdx : 0
+        collected[pick].isDefault = true
+        return collected.filter((s) => s.isDefault).concat(collected.filter((s) => !s.isDefault))
     }
 
     private subLang(label: string | undefined): string {
