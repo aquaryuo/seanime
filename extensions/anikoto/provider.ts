@@ -306,7 +306,7 @@ class Provider {
     private async resolveServer(linkId: string, serverName: string, ctx: { anilistId: number; episode: number }): Promise<EpisodeServer> {
         const got = await this.fetchSources(linkId)
         if (!got || !got.file) throw new Error("Could not resolve the player URL.")
-        const subtitles = this.buildSubtitles(got.tracks, ctx)
+        const subtitles = await this.buildSubtitles(got.tracks, ctx)
         return {
             server: serverName,
             headers: { Referer: `${got.origin}/`, Origin: got.origin },
@@ -398,16 +398,15 @@ class Provider {
             }
             if (!tracks || tracks.length === 0) return
 
+            const valid = tracks.filter((t) => t && t.file && (!t.kind || t.kind === "captions" || t.kind === "subtitles"))
+            const codes = await this.langCodes(valid.map((t) => t.label || "English"))
             const items: { lang: string; src: string }[] = []
             const seen: { [key: string]: boolean } = {}
-            for (let i = 0; i < tracks.length; i++) {
-                const t = tracks[i]
-                if (!t || !t.file) continue
-                if (t.kind && t.kind !== "captions" && t.kind !== "subtitles") continue
-                const lang = this.subLang(t.label)
+            for (let i = 0; i < valid.length; i++) {
+                const lang = codes[i]
                 if (seen[lang]) continue
                 seen[lang] = true
-                items.push({ lang, src: t.file })
+                items.push({ lang, src: valid[i].file })
             }
             if (items.length === 0) return
 
@@ -419,24 +418,24 @@ class Provider {
         } catch (_e) {}
     }
 
-    private buildSubtitles(
+    private async buildSubtitles(
         tracks: { file: string; label?: string; kind?: string; default?: boolean }[] | undefined,
         ctx: { anilistId: number; episode: number }
-    ): VideoSubtitle[] {
+    ): Promise<VideoSubtitle[]> {
         const collected: VideoSubtitle[] = []
         if (!tracks || tracks.length === 0) return collected
 
         const anime = ctx.anilistId > 0 ? String(ctx.anilistId) : "unknown"
         const ep = ctx.episode > 0 ? String(ctx.episode) : "0"
+        const valid = tracks.filter((t) => t && t.file && (!t.kind || t.kind === "captions" || t.kind === "subtitles"))
+        const codes = await this.langCodes(valid.map((t) => t.label || "English"))
         const seenLang: { [key: string]: boolean } = {}
         let englishIdx = -1
         let defaultIdx = -1
 
-        for (let i = 0; i < tracks.length; i++) {
-            const t = tracks[i]
-            if (!t || !t.file) continue
-            if (t.kind && t.kind !== "captions" && t.kind !== "subtitles") continue
-            const lang = this.subLang(t.label)
+        for (let i = 0; i < valid.length; i++) {
+            const t = valid[i]
+            const lang = codes[i]
             if (seenLang[lang]) continue
             seenLang[lang] = true
             const idx = collected.length
@@ -446,7 +445,7 @@ class Provider {
                 language: t.label || "English",
                 isDefault: false,
             })
-            if (englishIdx === -1 && lang.indexOf("english") === 0) englishIdx = idx
+            if (englishIdx === -1 && lang === "en") englishIdx = idx
             if (defaultIdx === -1 && t.default === true) defaultIdx = idx
         }
 
@@ -456,9 +455,35 @@ class Provider {
         return collected.filter((s) => s.isDefault).concat(collected.filter((s) => !s.isDefault))
     }
 
-    private subLang(label: string | undefined): string {
-        const l = (label || "english").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
-        return l || "english"
+    private async langCodes(labels: string[]): Promise<string[]> {
+        const out: string[] = new Array(labels.length)
+        const missing: { idx: number; label: string }[] = []
+        for (let i = 0; i < labels.length; i++) {
+            const cached = this.readCache<string>(`anikoto:lang:${labels[i]}`, 604800000)
+            if (cached) out[i] = cached
+            else missing.push({ idx: i, label: labels[i] })
+        }
+        if (missing.length > 0) {
+            let codes: string[] = []
+            try {
+                const res = await fetch(`${this.subEndpoint}/lang`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ labels: missing.map((m) => m.label) }),
+                })
+                if (res.ok) codes = res.json<{ codes: string[] }>().codes || []
+            } catch (_e) {}
+            for (let k = 0; k < missing.length; k++) {
+                const code = codes[k] || this.fallbackCode(missing[k].label)
+                out[missing[k].idx] = code
+                this.writeCache(`anikoto:lang:${missing[k].label}`, code)
+            }
+        }
+        return out
+    }
+
+    private fallbackCode(label: string): string {
+        return (label || "english").toLowerCase().replace(/[^a-z]/g, "").slice(0, 2) || "en"
     }
 
     private withAudio(base: string, audio: string): string {
