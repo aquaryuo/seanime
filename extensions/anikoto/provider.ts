@@ -3,8 +3,9 @@ class Provider {
     private mirrors = ["https://anikototv.to", "https://anikoto.cz", "https://anikoto.me", "https://anikoto.net", "https://anikototv.se"]
     private cacheTtl = 900000
     private serverCacheTtl = 300000
-    private subtitleProxy = "{{subtitleProxy}}"
-    private defaultSubtitleProxy = "https://sub-ak.ryuo.to"
+    private subEndpoint = "https://sub.ryuo.to"
+    private curAnilistId = 0
+    private curEpisode = 0
 
     private async resolveBase(): Promise<string> {
         const all = [this.baseUrl].concat(this.mirrors).map((u) => u.replace(/\/+$/, ""))
@@ -69,7 +70,7 @@ class Provider {
             } catch (_e) {
                 html = ""
             }
-            if (html) this.parseSearchInto(LoadDoc(html), audio, opts.dub, seen, results)
+            if (html) this.parseSearchInto(LoadDoc(html), audio, opts.dub, opts.media.id, seen, results)
         }
 
         if (!anyOk) throw new Error("search failed")
@@ -95,6 +96,7 @@ class Provider {
         $: DocSelectionFunction,
         audio: string,
         dub: boolean,
+        anilistId: number,
         seen: { [key: string]: boolean },
         results: SearchResult[]
     ): void {
@@ -121,17 +123,17 @@ class Provider {
 
             seen[seriesUrl] = true
             const subOrDub: SubOrDub = hasSub && hasDub ? "both" : hasDub ? "dub" : "sub"
-            results.push({ id: this.withAudio(seriesUrl, audio), title, url: seriesUrl, subOrDub })
+            results.push({ id: this.withMeta(seriesUrl, audio, anilistId), title, url: seriesUrl, subOrDub })
         })
     }
 
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {
         this.baseUrl = await this.resolveBase()
-        const parsed = this.splitAudio(id)
+        const parsed = this.splitMeta(id)
         const audio = parsed.audio
         const seriesUrl = this.seriesUrl(this.absoluteUrl(parsed.base))
 
-        const cacheKey = `anikoto:eps:${seriesUrl}:${audio}`
+        const cacheKey = `anikoto:eps:${seriesUrl}:${audio}:${parsed.anilistId}`
         const cached = this.readCache<EpisodeDetails[]>(cacheKey)
         if (cached && cached.length > 0) return cached
 
@@ -168,7 +170,7 @@ class Provider {
             const title = a.find("span.d-title").first().text().trim()
 
             episodes.push({
-                id: this.withAudio(dataIds, audio),
+                id: this.withMeta(dataIds, audio, parsed.anilistId),
                 number,
                 url: `${seriesUrl}/ep-${slug}`,
                 title: title || undefined,
@@ -183,9 +185,11 @@ class Provider {
 
     async findEpisodeServer(episode: EpisodeDetails, server: string): Promise<EpisodeServer> {
         this.baseUrl = await this.resolveBase()
-        const parsed = this.splitAudio(episode.id)
+        const parsed = this.splitMeta(episode.id)
         const dataIds = parsed.base
         const audio = parsed.audio
+        this.curAnilistId = parsed.anilistId
+        this.curEpisode = episode.number
 
         if (server === "Auto" || server === "default" || !server) {
             const $ = await this.serverListDoc(dataIds)
@@ -315,28 +319,23 @@ class Provider {
         }
     }
 
-    private subtitleProxyBase(): string {
-        let p = (this.subtitleProxy || "").trim()
-        if (p === "" || p === "{{subtitleProxy}}") p = this.defaultSubtitleProxy
-        if (p.toLowerCase() === "off") return ""
-        if (p.indexOf("http://") !== 0 && p.indexOf("https://") !== 0) p = `https://${p}`
-        return p.replace(/\/+$/, "")
-    }
-
     private buildSubtitles(
         tracks: { file: string; label?: string; kind?: string; default?: boolean }[] | undefined
     ): VideoSubtitle[] {
         const collected: VideoSubtitle[] = []
-        const proxy = this.subtitleProxyBase()
-        if (!proxy || !tracks || tracks.length === 0) return collected
+        if (!tracks || tracks.length === 0) return collected
+
+        const anime = this.curAnilistId > 0 ? String(this.curAnilistId) : "unknown"
+        const ep = this.curEpisode > 0 ? String(this.curEpisode) : "0"
 
         for (let i = 0; i < tracks.length; i++) {
             const t = tracks[i]
             if (!t || !t.file) continue
             if (t.kind && t.kind !== "captions" && t.kind !== "subtitles") continue
+            const lang = this.subLang(t.label)
             collected.push({
-                id: `${t.label || "subtitle"}-${i}`,
-                url: `${proxy}/?url=${encodeURIComponent(t.file)}`,
+                id: `${lang}-${i}`,
+                url: `${this.subEndpoint}/s/${anime}/${ep}/${lang}.vtt?src=${encodeURIComponent(t.file)}`,
                 language: t.label || "English",
                 isDefault: t.default === true,
             })
@@ -345,6 +344,11 @@ class Provider {
         const ordered = collected.filter((s) => s.isDefault).concat(collected.filter((s) => !s.isDefault))
         for (let k = 0; k < ordered.length; k++) ordered[k].isDefault = k === 0
         return ordered
+    }
+
+    private subLang(label: string | undefined): string {
+        const l = (label || "english").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
+        return l || "english"
     }
 
     private withAudio(base: string, audio: string): string {
@@ -358,6 +362,23 @@ class Provider {
             if (a === "sub" || a === "dub") return { base: id.slice(0, i), audio: a }
         }
         return { base: id, audio: "sub" }
+    }
+
+    private withMeta(base: string, audio: string, anilistId: number): string {
+        const a = this.withAudio(base, audio)
+        return anilistId > 0 ? `${a}$al${anilistId}` : a
+    }
+
+    private splitMeta(id: string): { base: string; audio: string; anilistId: number } {
+        let rest = id
+        let anilistId = 0
+        const m = rest.match(/\$al(\d+)$/)
+        if (m) {
+            anilistId = parseInt(m[1], 10)
+            rest = rest.slice(0, rest.length - m[0].length)
+        }
+        const sa = this.splitAudio(rest)
+        return { base: sa.base, audio: sa.audio, anilistId }
     }
 
     private now(): number {
