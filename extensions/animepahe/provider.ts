@@ -4,10 +4,11 @@ class Provider {
     private browserFallback = ("{{browserFallback}}" as string) === "true"
     private cookieTtl = 10800000
     private epCacheTtl = 900000
+    private serverCacheTtl = 300000
 
     getSettings(): Settings {
         return {
-            episodeServers: ["Auto", "1080p", "720p", "480p", "360p"],
+            episodeServers: ["Auto", "1", "2", "3", "4", "5", "6", "7", "8"],
             supportsDub: true,
         }
     }
@@ -111,40 +112,50 @@ class Provider {
         if (!episodeSession || !animeSession) throw new Error("Invalid episode id.")
 
         const playUrl = `${this.baseUrl}/play/${animeSession}/${episodeSession}`
-        const html = await this.getText(playUrl, { Referer: `${this.baseUrl}/` })
-        const candidates = this.parsePlaySources(html, audio)
+        const candidates = await this.playSources(animeSession, episodeSession, audio, playUrl)
         if (candidates.length === 0) {
             if (audio === "dub") throw new Error("No dub source for this episode.")
             throw new Error("No source found for this episode.")
         }
 
-        const wantAuto = server === "Auto" || server === "default" || !server
-        const ordered = this.orderForRequest(candidates, server, wantAuto)
-
-        let lastErr: any
-        for (const c of ordered) {
-            try {
-                const m3u8 = await this.resolveKwik(c.url, playUrl)
-                if (!m3u8) continue
-                const label = wantAuto ? "Auto" : server
-                const origin = this.originOf(c.url)
-                return {
-                    server: label,
-                    headers: { Referer: `${origin}/`, Origin: origin },
-                    videoSources: [
-                        {
-                            url: m3u8,
-                            type: "m3u8",
-                            quality: c.label,
-                            subtitles: [],
-                        },
-                    ],
+        if (server === "Auto" || server === "default" || !server) {
+            let lastErr: any
+            for (const c of candidates) {
+                try {
+                    const m3u8 = await this.resolveKwik(c.url, playUrl)
+                    if (m3u8) return this.buildServer("Auto", c, m3u8)
+                } catch (e) {
+                    lastErr = e
                 }
-            } catch (e) {
-                lastErr = e
             }
+            throw new Error(lastErr ? `Could not resolve source: ${lastErr}` : "Could not resolve any source.")
         }
-        throw new Error(lastErr ? `Could not resolve source: ${lastErr}` : "Could not resolve any source.")
+
+        const idx = parseInt(server, 10)
+        if (isNaN(idx) || idx < 1 || idx > candidates.length) throw new Error(`No player for slot ${server}.`)
+        const chosen = candidates[idx - 1]
+        const m3u8 = await this.resolveKwik(chosen.url, playUrl)
+        if (!m3u8) throw new Error(`Could not resolve player ${server}.`)
+        return this.buildServer(chosen.label, chosen, m3u8)
+    }
+
+    private buildServer(label: string, c: PlaySource, m3u8: string): EpisodeServer {
+        const origin = this.originOf(c.url)
+        return {
+            server: label,
+            headers: { Referer: `${origin}/`, Origin: origin },
+            videoSources: [{ url: m3u8, type: "m3u8", quality: c.label, subtitles: [] }],
+        }
+    }
+
+    private async playSources(animeSession: string, episodeSession: string, audio: string, playUrl: string): Promise<PlaySource[]> {
+        const cacheKey = `apahe:play:${animeSession}:${episodeSession}`
+        let html = this.readCache<string>(cacheKey, this.serverCacheTtl)
+        if (!html) {
+            html = await this.getText(playUrl, { Referer: `${this.baseUrl}/` })
+            if (html) this.writeCache(cacheKey, html)
+        }
+        return this.parsePlaySources(html || "", audio)
     }
 
     private searchQueries(opts: SearchOptions): string[] {
@@ -201,33 +212,35 @@ class Provider {
         return out
     }
 
-    private orderForRequest(candidates: PlaySource[], server: string, wantAuto: boolean): PlaySource[] {
-        if (wantAuto) return candidates
-        const want = parseInt(server, 10)
-        if (isNaN(want)) return candidates
-        const exact = candidates.filter((c) => c.resolution === want)
-        const rest = candidates.filter((c) => c.resolution !== want)
-        return exact.concat(rest)
-    }
-
     private async resolveKwik(embedUrl: string, playUrl: string): Promise<string | undefined> {
-        const res = await this.fetchRetry(embedUrl, { headers: { Referer: playUrl } })
+        const cacheKey = `apahe:kwik:${embedUrl}`
+        const cached = this.readCache<string>(cacheKey, 600000)
+        if (cached) return cached
+
+        const res = await this.fetchRetry(embedUrl, { headers: { Referer: playUrl }, timeout: 12 })
         if (!res.ok) return undefined
         const html = res.text()
 
-        const direct = this.matchM3u8(html)
-        if (direct) return direct
-
-        for (const block of this.extractPacked(html)) {
-            const unpacked = this.unpack(block)
-            if (!unpacked) continue
-            const clean = unpacked.replace(/\\/g, "")
-            const fromSource = clean.match(/source\s*[:=]\s*['"]?([^'"\s]+\.m3u8[^'"\s]*)/i)
-            if (fromSource && fromSource[1]) return fromSource[1]
-            const generic = this.matchM3u8(clean)
-            if (generic) return generic
+        let found = this.matchM3u8(html)
+        if (!found) {
+            for (const block of this.extractPacked(html)) {
+                const unpacked = this.unpack(block)
+                if (!unpacked) continue
+                const clean = unpacked.replace(/\\/g, "")
+                const fromSource = clean.match(/source\s*[:=]\s*['"]?([^'"\s]+\.m3u8[^'"\s]*)/i)
+                if (fromSource && fromSource[1]) {
+                    found = fromSource[1]
+                    break
+                }
+                const generic = this.matchM3u8(clean)
+                if (generic) {
+                    found = generic
+                    break
+                }
+            }
         }
-        return undefined
+        if (found) this.writeCache(cacheKey, found)
+        return found
     }
 
     private matchM3u8(s: string): string | undefined {
@@ -333,7 +346,7 @@ class Provider {
         let res: FetchResponse | undefined
         for (let i = 0; i < 3; i++) {
             try {
-                res = await fetch(url, { headers: this.apiHeaders(cookie, extra) })
+                res = await fetch(url, { headers: this.apiHeaders(cookie, extra), timeout: 15 })
                 this.absorbCookies(res)
                 if (!this.isBlocked(res)) return res.text()
             } catch (e) {
