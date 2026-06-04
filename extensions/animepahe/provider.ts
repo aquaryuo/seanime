@@ -22,20 +22,29 @@ class Provider {
         let anyOk = false
 
         for (const q of queries) {
-            let json: { data?: AnimeData[] } | undefined
-            try {
-                json = await this.getJson<{ data?: AnimeData[] }>(`${this.baseUrl}/api?m=search&q=${encodeURIComponent(q)}`)
+            let data: AnimeData[] | undefined
+            const ckey = `apahe:srch:${q.toLowerCase()}`
+            const cachedData = this.readCache<AnimeData[]>(ckey, 300000)
+            if (cachedData) {
+                data = cachedData
                 anyOk = true
-            } catch (_e) {
-                json = undefined
+            } else {
+                try {
+                    const json = await this.getJson<{ data?: AnimeData[] }>(`${this.baseUrl}/api?m=search&q=${encodeURIComponent(q)}`)
+                    anyOk = true
+                    data = json && json.data ? json.data : []
+                    this.writeCache(ckey, data)
+                } catch (_e) {
+                    data = undefined
+                }
             }
-            if (!json || !json.data) continue
-            for (const item of json.data) {
+            if (!data) continue
+            for (const item of data) {
                 if (!item || !item.session || seen[item.session]) continue
                 seen[item.session] = true
                 results.push({
                     id: `${item.session}$${audio}`,
-                    title: this.titleWithMeta(item),
+                    title: item.title,
                     url: `${this.baseUrl}/anime/${item.session}`,
                     subOrDub: audio === "dub" ? "dub" : "sub",
                 })
@@ -142,22 +151,28 @@ class Provider {
         const raw = [opts.query, opts.media.romajiTitle, opts.media.englishTitle]
         const out: string[] = []
         const seen: { [key: string]: boolean } = {}
-        for (const t of raw) {
-            const q = (t || "").trim()
-            if (!q) continue
+        const add = (s: string): void => {
+            const q = (s || "").trim()
+            if (!q) return
             const key = q.toLowerCase()
-            if (seen[key]) continue
+            if (seen[key]) return
             seen[key] = true
             out.push(q)
         }
-        return out
+        for (const t of raw) add(t || "")
+        for (const t of raw) add(this.baseTitle(t || ""))
+        return out.slice(0, 6)
     }
 
-    private titleWithMeta(item: AnimeData): string {
-        const bits: string[] = []
-        if (item.type) bits.push(item.type)
-        if (item.year) bits.push(String(item.year))
-        return bits.length > 0 ? `${item.title} (${bits.join(", ")})` : item.title
+    private baseTitle(t: string): string {
+        if (!t) return ""
+        let s = t
+        s = s.replace(/[\(\[][^\)\]]*[\)\]]/g, " ")
+        s = s.replace(/\b(?:season|cour|part|saison|stagione|temporada)\s*\d+\b/gi, " ")
+        s = s.replace(/\s+(?:\d{1,2}|[ivx]{1,4})\s*$/i, " ")
+        s = s.replace(/[._:;,\-!?]+/g, " ")
+        s = s.replace(/\s+/g, " ").trim()
+        return s
     }
 
     private parsePlaySources(html: string, audio: string): PlaySource[] {
