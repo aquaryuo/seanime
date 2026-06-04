@@ -94,7 +94,39 @@ class Provider {
         }
 
         if (!anyOk) throw new Error("search failed")
-        return results
+        return this.filterBySeason(results, opts)
+    }
+
+    private filterBySeason(results: SearchResult[], opts: SearchOptions): SearchResult[] {
+        const target = this.targetSeason(opts)
+        if (target <= 1) return results
+        const matched = results.filter((r) => this.seasonOf(r.title) === target)
+        return matched.length > 0 ? matched : results
+    }
+
+    private targetSeason(opts: SearchOptions): number {
+        let target = 1
+        for (const s of [opts.query, opts.media.romajiTitle, opts.media.englishTitle]) {
+            if (!s) continue
+            const n = this.seasonOf(s)
+            if (n > target) target = n
+        }
+        return target
+    }
+
+    private seasonOf(title: string): number {
+        if (!title) return 1
+        const t = title.toLowerCase()
+        let m = t.match(/(?:season|saison|cour|part)\s*([0-9]{1,2})\b/)
+        if (m) return parseInt(m[1], 10)
+        m = t.match(/\b([0-9]{1,2})(?:st|nd|rd|th)\s+season\b/)
+        if (m) return parseInt(m[1], 10)
+        m = t.match(/\bs([0-9]{1,2})\b/)
+        if (m) return parseInt(m[1], 10)
+        if (/\b(movie|ova|ona|special|recap|film)\b/.test(t)) return 0
+        m = t.match(/\s([0-9]{1,2})\s*$/)
+        if (m) return parseInt(m[1], 10)
+        return 1
     }
 
     private searchQueries(opts: SearchOptions): string[] {
