@@ -2,6 +2,7 @@ class Provider {
     private baseUrl = "{{baseUrl}}"
     private mirrors = ["https://animepahe.pw", "https://animepahe.com", "https://animepahe.org"]
     private browserFallback = ("{{browserFallback}}" as string) === "true"
+    private solverUrl = ("{{solverUrl}}" as string)
     private cookieTtl = 10800000
     private epCacheTtl = 900000
     private serverCacheTtl = 300000
@@ -38,7 +39,7 @@ class Provider {
                     data = undefined
                     const msg = typeof e === "string" ? e : e && (e as any).message ? (e as any).message : "request failed"
                     lastErr = msg
-                    if (msg.indexOf("blocked") !== -1) blocked = true
+                    if (msg.indexOf("blocked") !== -1 || msg.indexOf("Cloudflare") !== -1 || msg.indexOf("challeng") !== -1) blocked = true
                 }
             }
             if (!data) continue
@@ -55,7 +56,7 @@ class Provider {
         }
 
         if (results.length === 0 && blocked) {
-            throw `AnimePahe is blocking requests (DDoS-Guard). Enable "Headless browser fallback" in this provider's settings, then retry. (${lastErr})`
+            throw `${this.blockedMessage()} (${lastErr})`
         }
         return this.filterBySeason(results, opts)
     }
@@ -248,9 +249,16 @@ class Provider {
         const cached = this.readCache<string>(cacheKey, 600000)
         if (cached) return cached
 
-        const res = await this.fetchRetry(embedUrl, { headers: { Referer: playUrl }, timeout: 12 })
-        if (!res.ok) return undefined
-        const html = res.text()
+        let html = ""
+        try {
+            const res = await this.fetchRetry(embedUrl, { headers: { Referer: playUrl }, timeout: 12 })
+            if (res.ok && !this.isBlocked(res)) html = res.text()
+        } catch (_e) {}
+        if (!html) {
+            const solved = await this.solveGet(embedUrl)
+            if (solved) html = solved
+        }
+        if (!html) return undefined
 
         let found = this.matchM3u8(html)
         if (!found) {
@@ -385,12 +393,14 @@ class Provider {
             }
             cookie = await this.harvestCookies(true)
         }
+        const solved = await this.solveGet(url)
+        if (solved) return solved
         if (this.browserFallback) {
             const html = await this.scrapeWithBrowser(url)
             if (html) return html
         }
         if (res && !this.isBlocked(res)) return res.text()
-        throw "blocked by DDoS-Guard"
+        throw this.blockedMessage()
     }
 
     private async getJson<T>(url: string): Promise<T> {
@@ -442,14 +452,58 @@ class Provider {
         }
     }
 
+    private solverEndpoint(): string {
+        const u = (this.solverUrl || "").trim()
+        if (u.indexOf("http") !== 0) return ""
+        const base = u.replace(/\/+$/, "")
+        return /\/v1$/.test(base) ? base : `${base}/v1`
+    }
+
+    private async solveGet(url: string): Promise<string | undefined> {
+        const ep = this.solverEndpoint()
+        if (!ep) return undefined
+        try {
+            const res = await fetch(ep, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ cmd: "request.get", url, maxTimeout: 60000 }),
+                timeout: 80,
+            })
+            if (!res.ok) return undefined
+            const data = res.json<{ solution?: { response?: string } }>()
+            const body = data && data.solution ? data.solution.response : undefined
+            if (body && !this.bodyIsChallenge(body)) return body
+        } catch (_e) {}
+        return undefined
+    }
+
+    private blockedMessage(): string {
+        if (this.solverEndpoint()) {
+            return "Cloudflare challenge could not be solved (even via the configured solver); AnimePahe is heavily challenging this connection."
+        }
+        return "Cloudflare is challenging requests. This connection (mobile/CGNAT or a flagged IP) is being hard-challenged. Set a 'Cloudflare solver endpoint' (FlareSolverr-compatible URL) in this provider's settings, use a wired/residential connection, or retry later."
+    }
+
     private isBlocked(res: FetchResponse): boolean {
         if (!res) return true
         if (res.status === 403 || res.status === 429 || res.status === 503) return true
-        if (res.ok) {
-            const body = res.text()
-            if (body.indexOf("DDoS-Guard") !== -1 || body.indexOf("ddg-cookie") !== -1 || body.indexOf("Checking your browser") !== -1) return true
-        }
+        if (res.ok && this.bodyIsChallenge(res.text())) return true
         return false
+    }
+
+    private bodyIsChallenge(body: string): boolean {
+        if (!body) return false
+        const b = body.toLowerCase()
+        return (
+            b.indexOf("ddos-guard") !== -1 ||
+            b.indexOf("ddg-cookie") !== -1 ||
+            b.indexOf("checking your browser") !== -1 ||
+            b.indexOf("just a moment") !== -1 ||
+            b.indexOf("cf-mitigated") !== -1 ||
+            b.indexOf("challenges.cloudflare.com") !== -1 ||
+            b.indexOf("enable javascript and cookies") !== -1 ||
+            b.indexOf("cf-browser-verification") !== -1
+        )
     }
 
     private browserHeaders(): { [key: string]: string } {
