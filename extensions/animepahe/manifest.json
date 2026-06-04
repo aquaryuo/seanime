@@ -22,10 +22,8 @@
         "default": "https://animepahe.pw",
         "options": [
           { "value": "https://animepahe.pw", "label": "animepahe.pw" },
-          { "value": "https://animepahe.ru", "label": "animepahe.ru" },
           { "value": "https://animepahe.com", "label": "animepahe.com" },
-          { "value": "https://animepahe.org", "label": "animepahe.org" },
-          { "value": "https://animepahe.si", "label": "animepahe.si" }
+          { "value": "https://animepahe.org", "label": "animepahe.org" }
         ]
       },
       {

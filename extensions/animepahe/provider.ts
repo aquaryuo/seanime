@@ -1,6 +1,6 @@
 class Provider {
     private baseUrl = "{{baseUrl}}"
-    private mirrors = ["https://animepahe.pw", "https://animepahe.ru", "https://animepahe.com", "https://animepahe.org", "https://animepahe.si"]
+    private mirrors = ["https://animepahe.pw", "https://animepahe.com", "https://animepahe.org"]
     private browserFallback = ("{{browserFallback}}" as string) === "true"
     private cookieTtl = 10800000
     private epCacheTtl = 900000
