@@ -20,7 +20,8 @@ class Provider {
 
         const results: SearchResult[] = []
         const seen: { [key: string]: boolean } = {}
-        let anyOk = false
+        let blocked = false
+        let lastErr = ""
 
         for (const q of queries) {
             let data: AnimeData[] | undefined
@@ -28,15 +29,16 @@ class Provider {
             const cachedData = this.readCache<AnimeData[]>(ckey, 300000)
             if (cachedData) {
                 data = cachedData
-                anyOk = true
             } else {
                 try {
                     const json = await this.getJson<{ data?: AnimeData[] }>(`${this.baseUrl}/api?m=search&q=${encodeURIComponent(q)}`)
-                    anyOk = true
                     data = json && json.data ? json.data : []
                     this.writeCache(ckey, data)
-                } catch (_e) {
+                } catch (e) {
                     data = undefined
+                    const msg = typeof e === "string" ? e : e && (e as any).message ? (e as any).message : "request failed"
+                    lastErr = msg
+                    if (msg.indexOf("blocked") !== -1) blocked = true
                 }
             }
             if (!data) continue
@@ -52,7 +54,9 @@ class Provider {
             }
         }
 
-        if (!anyOk) throw new Error("search failed")
+        if (results.length === 0 && blocked) {
+            throw `AnimePahe is blocking requests (DDoS-Guard). Enable "Headless browser fallback" in this provider's settings, then retry. (${lastErr})`
+        }
         return results
     }
 
@@ -61,14 +65,14 @@ class Provider {
         const parts = id.split("$")
         const animeSession = parts[0]
         const audio = parts[1] === "dub" ? "dub" : "sub"
-        if (!animeSession) throw new Error("Invalid anime id.")
+        if (!animeSession) throw "invalid anime id"
 
         const cacheKey = `apahe:eps:${animeSession}:${audio}`
         const cached = this.readCache<EpisodeDetails[]>(cacheKey, this.epCacheTtl)
         if (cached && cached.length > 0) return cached
 
         const first = await this.getJson<ReleaseResponse>(`${this.baseUrl}/api?m=release&id=${animeSession}&sort=episode_asc&page=1`)
-        if (!first) throw new Error("Empty episode response.")
+        if (!first) throw "empty episode list response"
 
         const all: EpisodeData[] = []
         if (first.data) for (const d of first.data) all.push(d)
@@ -97,7 +101,7 @@ class Provider {
             })
         }
 
-        if (episodes.length === 0) throw new Error("No episodes found.")
+        if (episodes.length === 0) throw "no episodes found"
         episodes.sort((a, b) => a.number - b.number)
         this.writeCache(cacheKey, episodes)
         return episodes
@@ -109,13 +113,13 @@ class Provider {
         const episodeSession = parts[0]
         const animeSession = parts[1]
         const audio = parts[2] === "dub" ? "dub" : "sub"
-        if (!episodeSession || !animeSession) throw new Error("Invalid episode id.")
+        if (!episodeSession || !animeSession) throw "invalid episode id"
 
         const playUrl = `${this.baseUrl}/play/${animeSession}/${episodeSession}`
         const candidates = await this.playSources(animeSession, episodeSession, audio, playUrl)
         if (candidates.length === 0) {
-            if (audio === "dub") throw new Error("No dub source for this episode.")
-            throw new Error("No source found for this episode.")
+            if (audio === "dub") throw "no dub source for this episode"
+            throw "no source found for this episode"
         }
 
         if (server === "Auto" || server === "default" || !server) {
@@ -128,14 +132,14 @@ class Provider {
                     lastErr = e
                 }
             }
-            throw new Error(lastErr ? `Could not resolve source: ${lastErr}` : "Could not resolve any source.")
+            throw lastErr ? `could not resolve source: ${lastErr}` : "could not resolve any source"
         }
 
         const idx = parseInt(server, 10)
-        if (isNaN(idx) || idx < 1 || idx > candidates.length) throw new Error(`No player for slot ${server}.`)
+        if (isNaN(idx) || idx < 1 || idx > candidates.length) throw `no player for slot ${server}`
         const chosen = candidates[idx - 1]
         const m3u8 = await this.resolveKwik(chosen.url, playUrl)
-        if (!m3u8) throw new Error(`Could not resolve player ${server}.`)
+        if (!m3u8) throw `could not resolve player ${server}`
         return this.buildServer(chosen.label, chosen, m3u8)
     }
 
@@ -346,7 +350,7 @@ class Provider {
         let res: FetchResponse | undefined
         for (let i = 0; i < 3; i++) {
             try {
-                res = await fetch(url, { headers: this.apiHeaders(cookie, extra), timeout: 15 })
+                res = await fetch(url, { headers: this.apiHeaders(cookie, extra) })
                 this.absorbCookies(res)
                 if (!this.isBlocked(res)) return res.text()
             } catch (e) {
@@ -359,13 +363,13 @@ class Provider {
             if (html) return html
         }
         if (res && !this.isBlocked(res)) return res.text()
-        throw new Error("request blocked by DDoS-Guard; enable the headless browser fallback in this provider's settings if it persists")
+        throw "blocked by DDoS-Guard"
     }
 
     private async getJson<T>(url: string): Promise<T> {
         const text = await this.getText(url, { Referer: `${this.baseUrl}/`, "X-Requested-With": "XMLHttpRequest", Accept: "application/json, text/javascript, */*; q=0.01" })
         const parsed = this.parseJson<T>(text)
-        if (parsed === undefined) throw new Error("invalid JSON response")
+        if (parsed === undefined) throw "response was not valid JSON"
         return parsed
     }
 
