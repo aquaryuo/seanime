@@ -1,7 +1,7 @@
 {
   "id": "animepahe",
   "name": "AnimePahe",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/animepahe/manifest.json",
   "language": "typescript",
   "type": "onlinestream-provider",
