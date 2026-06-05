@@ -23,6 +23,12 @@ class Provider {
         return candidates[0]
     }
 
+    private invalidateBase(): void {
+        try {
+            $store.set("anikoto:base", "")
+        } catch (_e) {}
+    }
+
     private pageHeaders(): { [key: string]: string } {
         return { Referer: `${this.baseUrl}/` }
     }
@@ -36,7 +42,8 @@ class Provider {
         for (let i = 0; i < tries; i++) {
             try {
                 const res = await fetch(url, opts)
-                if (res.ok || res.status < 500 || i === tries - 1) return res
+                const retryable = res.status === 408 || res.status === 429 || res.status >= 500
+                if (!retryable || i === tries - 1) return res
             } catch (e) {
                 lastErr = e
                 if (i === tries - 1) throw e
@@ -93,7 +100,10 @@ class Provider {
             if (html) this.parseSearchInto(LoadDoc(html), audio, opts.dub, opts.media.id, seen, results)
         }
 
-        if (!anyOk) throw new Error("search failed")
+        if (!anyOk) {
+            this.invalidateBase()
+            throw "anikoto: search failed (site unreachable)"
+        }
         return this.filterBySeason(results, opts)
     }
 
@@ -184,8 +194,14 @@ class Provider {
         const cached = this.readCache<EpisodeDetails[]>(cacheKey)
         if (cached && cached.length > 0) return cached
 
-        const page = await this.fetchRetry(seriesUrl, { headers: this.pageHeaders() })
-        if (!page.ok) throw new Error(`findEpisodes failed: status ${page.status}`)
+        let page: FetchResponse
+        try {
+            page = await this.fetchRetry(seriesUrl, { headers: this.pageHeaders(), timeout: 12 })
+        } catch (e) {
+            this.invalidateBase()
+            throw e
+        }
+        if (!page.ok) throw `anikoto: episode page failed (status ${page.status})`
 
         const pageHtml = page.text()
         let seriesId = this.firstAttr(LoadDoc(pageHtml), ["#watch-main", "[id*='watch'][data-id]", "main [data-id]"], "data-id")
@@ -193,14 +209,14 @@ class Provider {
             const m = pageHtml.match(/data-id="(\d+)"/)
             if (m) seriesId = m[1]
         }
-        if (!seriesId) throw new Error("Could not determine series id (#watch-main[data-id]).")
+        if (!seriesId) throw "anikoto: could not determine series id (site layout may have changed)"
 
         const listRes = await this.fetchRetry(`${this.baseUrl}/ajax/episode/list/${seriesId}`, {
-            headers: this.ajaxHeaders(),
+            headers: this.ajaxHeaders(), timeout: 12,
         })
-        if (!listRes.ok) throw new Error(`episode list failed: status ${listRes.status}`)
+        if (!listRes.ok) throw `anikoto: episode list failed (status ${listRes.status})`
         const listJson = listRes.json<{ status: number; result: string }>()
-        if (!listJson || !listJson.result) throw new Error("Empty episode list response.")
+        if (!listJson || !listJson.result) throw "anikoto: empty episode list response"
 
         const $ = LoadDoc(listJson.result)
         const episodes: EpisodeDetails[] = []
@@ -232,7 +248,7 @@ class Provider {
             })
         })
 
-        if (episodes.length === 0) throw new Error("No episodes found.")
+        if (episodes.length === 0) throw "anikoto: no episodes found"
         episodes.sort((x, y) => x.number - y.number)
         this.writeCache(cacheKey, episodes)
         if (parsed.anilistId > 0) {
@@ -253,7 +269,7 @@ class Provider {
             const $ = await this.serverListDoc(dataIds)
             const groups = audio === "dub" ? ["dub"] : ["sub", "hsub"]
             const candidates = this.collectServers($, groups)
-            if (candidates.length === 0) throw new Error("No server available for this episode.")
+            if (candidates.length === 0) throw "anikoto: no server available for this episode"
 
             const label = server === "Auto" ? "Auto" : ""
             let firstResolved: EpisodeServer | undefined
@@ -276,15 +292,15 @@ class Provider {
                 this.firePrefetch(ctx)
                 return firstResolved
             }
-            throw new Error("No playable server found for this episode.")
+            throw "anikoto: no playable server found for this episode"
         }
 
         const target = this.parseServerLabel(server, audio)
-        if (!target.ok) throw new Error("Server not available for this audio.")
+        if (!target.ok) throw "anikoto: that server is not available for this audio track"
 
         const $ = await this.serverListDoc(dataIds)
         const picked = this.collectServers($, [target.group]).filter((c) => c.name === target.name)[0]
-        if (!picked) throw new Error("Server not available for this episode.")
+        if (!picked) throw "anikoto: that server is not available for this episode"
         const result = await this.resolveServer(picked.linkId, target.label, ctx)
         this.firePrefetch(ctx)
         return result
@@ -302,11 +318,11 @@ class Provider {
         if (!html) {
             const slRes = await fetch(
                 `${this.baseUrl}/ajax/server/list?servers=${encodeURIComponent(dataIds)}`,
-                { headers: this.ajaxHeaders() }
+                { headers: this.ajaxHeaders(), timeout: 12 }
             )
-            if (!slRes.ok) throw new Error(`server list failed: status ${slRes.status}`)
+            if (!slRes.ok) throw `anikoto: server list failed (status ${slRes.status})`
             html = slRes.json<{ status: number; result: string }>().result || ""
-            if (html) this.writeCache(cacheKey, html)
+            if (html && html.indexOf("data-link-id") !== -1) this.writeCache(cacheKey, html)
         }
         return LoadDoc(html || "")
     }
@@ -328,7 +344,7 @@ class Provider {
 
     private async resolveServer(linkId: string, serverName: string, ctx: { anilistId: number; episode: number }): Promise<EpisodeServer> {
         const got = await this.fetchSources(linkId)
-        if (!got || !got.file) throw new Error("Could not resolve the player URL.")
+        if (!got || !got.file) throw "anikoto: could not resolve the player URL (source may be encrypted or down)"
         const subtitles = await this.buildSubtitles(got.tracks, ctx)
         this.fireWarmEpisode(ctx, got.tracks)
         return {
@@ -349,7 +365,7 @@ class Provider {
         const src = server.videoSources[0]
         if (!src || !src.url) return false
         try {
-            const res = await fetch(src.url, { headers: server.headers, timeout: 10 })
+            const res = await fetch(src.url, { headers: server.headers, timeout: 7 })
             if (!res.ok) return false
             return res.text().indexOf("#EXTM3U") !== -1
         } catch (_e) {
@@ -360,8 +376,12 @@ class Provider {
     private async fetchSources(
         linkId: string
     ): Promise<{ origin: string; file?: string; tracks?: { file: string; label?: string; kind?: string; default?: boolean }[] } | undefined> {
+        const cacheKey = `anikoto:src:${linkId}`
+        const cachedSrc = this.readCache<{ origin: string; file?: string; tracks?: { file: string; label?: string; kind?: string; default?: boolean }[] }>(cacheKey, this.serverCacheTtl)
+        if (cachedSrc) return cachedSrc
+
         const psRes = await this.fetchRetry(`${this.baseUrl}/ajax/server?get=${encodeURIComponent(linkId)}`, {
-            headers: this.ajaxHeaders(),
+            headers: this.ajaxHeaders(), timeout: 12,
         })
         if (!psRes.ok) return undefined
         const ps = psRes.json<{ status: number; result: { url: string } }>()
@@ -369,7 +389,7 @@ class Provider {
         if (!embedUrl) return undefined
 
         const origin = this.originOf(embedUrl)
-        const embedRes = await this.fetchRetry(embedUrl, { headers: { Referer: `${this.baseUrl}/` } })
+        const embedRes = await this.fetchRetry(embedUrl, { headers: { Referer: `${this.baseUrl}/` }, timeout: 12 })
         if (!embedRes.ok) return undefined
 
         const ehtml = embedRes.text()
@@ -381,7 +401,7 @@ class Provider {
         if (!dataId) return undefined
 
         const srcRes = await this.fetchRetry(`${origin}/stream/getSources?id=${encodeURIComponent(dataId)}`, {
-            headers: { Referer: embedUrl, "X-Requested-With": "XMLHttpRequest" },
+            headers: { Referer: embedUrl, "X-Requested-With": "XMLHttpRequest" }, timeout: 12,
         })
         if (!srcRes.ok) return undefined
         const data = srcRes.json<{
@@ -389,7 +409,9 @@ class Provider {
             tracks?: { file: string; label?: string; kind?: string; default?: boolean }[]
         }>()
         const file = Array.isArray(data.sources) ? (data.sources[0] || ({} as any)).file : data.sources.file
-        return { origin, file, tracks: data.tracks }
+        const result = { origin, file, tracks: data.tracks }
+        if (file) this.writeCache(cacheKey, result)
+        return result
     }
 
     private firePrefetch(ctx: { anilistId: number; episode: number }): void {
@@ -558,9 +580,10 @@ class Provider {
                 if (res.ok) codes = res.json<{ codes: string[] }>().codes || []
             } catch (_e) {}
             for (let k = 0; k < missing.length; k++) {
-                const code = codes[k] || this.fallbackCode(missing[k].label)
+                const fromServer = codes[k]
+                const code = fromServer || this.fallbackCode(missing[k].label)
                 out[missing[k].idx] = code
-                this.writeCache(`anikoto:lang:${missing[k].label}`, code)
+                if (fromServer) this.writeCache(`anikoto:lang:${missing[k].label}`, code)
             }
         }
         return out
@@ -639,6 +662,7 @@ class Provider {
     }
 
     private originOf(u: string): string {
+        if (u && u.indexOf("//") === 0) u = `https:${u}`
         const m = u.match(/^(https?:\/\/[^/]+)/i)
         return m ? m[1] : this.baseUrl
     }
