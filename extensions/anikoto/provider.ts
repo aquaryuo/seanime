@@ -50,7 +50,7 @@ class Provider {
                 if (i === tries - 1) throw e
             }
         }
-        throw lastErr
+        throw lastErr || `anikoto: fetch failed (${url})`
     }
 
     private firstAttr($: DocSelectionFunction, selectors: string[], attr: string): string {
@@ -325,7 +325,8 @@ class Provider {
                 { headers: this.ajaxHeaders(), timeout: 12 }
             )
             if (!slRes.ok) throw `anikoto: server list failed (status ${slRes.status})`
-            html = slRes.json<{ status: number; result: string }>().result || ""
+            const sl = slRes.json<{ status: number; result: string }>()
+            html = (sl && sl.result) || ""
             if (html && html.indexOf("data-link-id") !== -1) this.writeCache(cacheKey, html)
         }
         return LoadDoc(html || "")
@@ -412,6 +413,7 @@ class Provider {
             sources: { file: string } | { file: string }[]
             tracks?: { file: string; label?: string; kind?: string; default?: boolean }[]
         }>()
+        if (!data || !data.sources) return undefined
         const file = Array.isArray(data.sources) ? (data.sources[0] || ({} as any)).file : data.sources.file
         const result = { origin, file, tracks: data.tracks }
         if (file) this.writeCache(cacheKey, result)
@@ -534,9 +536,10 @@ class Provider {
     ): Promise<VideoSubtitle[]> {
         const collected: VideoSubtitle[] = []
         if (!tracks || tracks.length === 0) return collected
+        if (ctx.anilistId <= 0) return collected
 
-        const anime = ctx.anilistId > 0 ? String(ctx.anilistId) : "unknown"
-        const ep = ctx.episode > 0 ? String(ctx.episode) : "0"
+        const anime = String(ctx.anilistId)
+        const ep = String(ctx.episode)
         const valid = tracks.filter((t) => t && t.file && (!t.kind || t.kind === "captions" || t.kind === "subtitles"))
         const codes = await this.langCodes(valid.map((t) => t.label || "English"))
         const seenLang: { [key: string]: boolean } = {}
@@ -569,7 +572,7 @@ class Provider {
         const out: string[] = new Array(labels.length)
         const missing: { idx: number; label: string }[] = []
         for (let i = 0; i < labels.length; i++) {
-            const cached = this.readCache<string>(`anikoto:lang:${labels[i]}`, 604800000)
+            const cached = this.readCache<string>(`anikoto:lang:${labels[i]}`, 86400000)
             if (cached) out[i] = cached
             else missing.push({ idx: i, label: labels[i] })
         }
@@ -581,7 +584,10 @@ class Provider {
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ labels: missing.map((m) => m.label) }),
                 })
-                if (res.ok) codes = res.json<{ codes: string[] }>().codes || []
+                if (res.ok) {
+                    const j = res.json<{ codes: string[] }>()
+                    codes = (j && j.codes) || []
+                }
             } catch (_e) {}
             for (let k = 0; k < missing.length; k++) {
                 const fromServer = codes[k]
@@ -594,7 +600,35 @@ class Provider {
     }
 
     private fallbackCode(label: string): string {
-        return (label || "english").toLowerCase().replace(/[^a-z]/g, "").slice(0, 2) || "en"
+        const k = (label || "english").toLowerCase().replace(/[^a-z]/g, "")
+        if (!k) return "en"
+        const map: { [key: string]: string } = {
+            eng: "en", english: "en",
+            por: "pt", portuguese: "pt", brazilian: "pt",
+            spa: "es", esp: "es", spanish: "es", castilian: "es",
+            ger: "de", deu: "de", german: "de",
+            fre: "fr", fra: "fr", french: "fr",
+            dut: "nl", nld: "nl", dutch: "nl",
+            chi: "zh", zho: "zh", chinese: "zh", mandarin: "zh",
+            jpn: "ja", japanese: "ja",
+            kor: "ko", korean: "ko",
+            ind: "id", indonesian: "id",
+            may: "ms", msa: "ms", malay: "ms",
+            gre: "el", ell: "el", greek: "el",
+            cze: "cs", ces: "cs", czech: "cs",
+            rum: "ro", ron: "ro", romanian: "ro",
+            swe: "sv", swedish: "sv",
+            ara: "ar", arabic: "ar",
+            rus: "ru", russian: "ru",
+            ita: "it", italian: "it",
+            pol: "pl", polish: "pl",
+            tur: "tr", turkish: "tr",
+            tha: "th", thai: "th",
+            vie: "vi", vietnamese: "vi",
+            ukr: "uk", ukrainian: "uk",
+            hin: "hi", hindi: "hi",
+        }
+        return map[k] || k.slice(0, 2) || "en"
     }
 
     private withAudio(base: string, audio: string): string {
