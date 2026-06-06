@@ -4,6 +4,7 @@ class Provider {
     private cacheTtl = 900000
     private serverCacheTtl = 300000
     private subEndpoint = "https://sub.ryuo.to"
+    private preferredAudio = "{{preferredAudio}}"
 
     private async resolveBase(): Promise<string> {
         const all = [this.baseUrl].concat(this.mirrors).map((u) => u.replace(/\/+$/, ""))
@@ -77,7 +78,8 @@ class Provider {
 
     async search(opts: SearchOptions): Promise<SearchResult[]> {
         this.baseUrl = await this.resolveBase()
-        const audio = opts.dub ? "dub" : "sub"
+        const wantDub = this.preferredAudio === "dub" || opts.dub
+        const audio = wantDub ? "dub" : "sub"
         const queries = this.searchQueries(opts)
 
         const results: SearchResult[] = []
@@ -97,7 +99,7 @@ class Provider {
             } catch (_e) {
                 html = ""
             }
-            if (html) this.parseSearchInto(LoadDoc(html), audio, opts.dub, opts.media.id, seen, results)
+            if (html) this.parseSearchInto(LoadDoc(html), audio, wantDub, opts.media.id, seen, results)
         }
 
         if (!anyOk) {
@@ -269,7 +271,7 @@ class Provider {
             const $ = await this.serverListDoc(dataIds)
             const groups = audio === "dub" ? ["dub"] : ["sub", "hsub"]
             const candidates = this.collectServers($, groups)
-            if (candidates.length === 0) throw "anikoto: no server available for this episode"
+            if (candidates.length === 0) throw audio === "dub" ? "anikoto: no dub is available for this episode" : "anikoto: no server available for this episode"
 
             await Promise.all(candidates.map((c) => this.fetchSources(c.linkId).catch(() => undefined)))
 
