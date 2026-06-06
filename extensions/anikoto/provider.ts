@@ -367,7 +367,7 @@ class Provider {
         const src = server.videoSources[0]
         if (!src || !src.url) return false
         try {
-            const res = await fetch(src.url, { headers: server.headers, timeout: 7 })
+            const res = await fetch(src.url, { headers: server.headers, timeout: 3 })
             if (!res.ok) return false
             return res.text().indexOf("#EXTM3U") !== -1
         } catch (_e) {
@@ -383,7 +383,7 @@ class Provider {
         if (cachedSrc) return cachedSrc
 
         const psRes = await this.fetchRetry(`${this.baseUrl}/ajax/server?get=${encodeURIComponent(linkId)}`, {
-            headers: this.ajaxHeaders(), timeout: 12,
+            headers: this.ajaxHeaders(), timeout: 3,
         })
         if (!psRes.ok) return undefined
         const ps = psRes.json<{ status: number; result: { url: string } }>()
@@ -391,7 +391,7 @@ class Provider {
         if (!embedUrl) return undefined
 
         const origin = this.originOf(embedUrl)
-        const embedRes = await this.fetchRetry(embedUrl, { headers: { Referer: `${this.baseUrl}/` }, timeout: 12 })
+        const embedRes = await this.fetchRetry(embedUrl, { headers: { Referer: `${this.baseUrl}/` }, timeout: 3 })
         if (!embedRes.ok) return undefined
 
         const ehtml = embedRes.text()
@@ -403,7 +403,7 @@ class Provider {
         if (!dataId) return undefined
 
         const srcRes = await this.fetchRetry(`${origin}/stream/getSources?id=${encodeURIComponent(dataId)}`, {
-            headers: { Referer: embedUrl, "X-Requested-With": "XMLHttpRequest" }, timeout: 12,
+            headers: { Referer: embedUrl, "X-Requested-With": "XMLHttpRequest" }, timeout: 3,
         })
         if (!srcRes.ok) return undefined
         const data = srcRes.json<{
