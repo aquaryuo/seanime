@@ -271,6 +271,8 @@ class Provider {
             const candidates = this.collectServers($, groups)
             if (candidates.length === 0) throw "anikoto: no server available for this episode"
 
+            await Promise.all(candidates.map((c) => this.fetchSources(c.linkId).catch(() => undefined)))
+
             const label = server === "Auto" ? "Auto" : ""
             let firstResolved: EpisodeServer | undefined
             for (const c of candidates) {
