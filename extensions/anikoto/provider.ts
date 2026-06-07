@@ -253,10 +253,6 @@ class Provider {
         if (episodes.length === 0) throw "anikoto: no episodes found"
         episodes.sort((x, y) => x.number - y.number)
         this.writeCache(cacheKey, episodes)
-        if (parsed.anilistId > 0) {
-            const list = episodes.map((e) => ({ id: e.id, number: e.number }))
-            this.writeCache(`anikoto:eplist:${parsed.anilistId}`, list)
-        }
         return episodes
     }
 
@@ -288,12 +284,10 @@ class Provider {
                 if (label) resolved.server = label
                 if (!firstResolved) firstResolved = resolved
                 if (await this.isPlayable(resolved)) {
-                    this.firePrefetch(ctx)
                     return resolved
                 }
             }
             if (firstResolved) {
-                this.firePrefetch(ctx)
                 return firstResolved
             }
             throw "anikoto: no playable server found for this episode"
@@ -307,7 +301,6 @@ class Provider {
         if (!picked) throw "anikoto: that server is not available for this episode"
         const result = await this.resolveServer(picked.linkId, target.label, ctx)
         if (!(await this.isPlayable(result))) throw "anikoto: that server did not return a playable stream"
-        this.firePrefetch(ctx)
         return result
     }
 
@@ -352,7 +345,6 @@ class Provider {
         const got = await this.fetchSources(linkId)
         if (!got || !got.file) throw "anikoto: could not resolve the player URL (source may be encrypted or down)"
         const subtitles = await this.buildSubtitles(got.tracks, ctx)
-        this.fireWarmEpisode(ctx, got.tracks)
         return {
             server: serverName,
             headers: { Referer: `${got.origin}/`, Origin: got.origin },
@@ -419,116 +411,6 @@ class Provider {
         const result = { origin, file, tracks: data.tracks }
         if (file) this.writeCache(cacheKey, result)
         return result
-    }
-
-    private firePrefetch(ctx: { anilistId: number; episode: number }): void {
-        try {
-            void this.prefetchSeries(ctx)
-        } catch (_e) {}
-    }
-
-    private fireWarmEpisode(
-        ctx: { anilistId: number; episode: number },
-        tracks: { file: string; label?: string; kind?: string; default?: boolean }[] | undefined
-    ): void {
-        try {
-            void this.warmEpisode(ctx, tracks)
-        } catch (_e) {}
-    }
-
-    private async warmEpisode(
-        ctx: { anilistId: number; episode: number },
-        tracks: { file: string; label?: string; kind?: string; default?: boolean }[] | undefined
-    ): Promise<void> {
-        if (ctx.anilistId <= 0 || !tracks || tracks.length === 0) return
-        const valid = tracks.filter((t) => t && t.file && (!t.kind || t.kind === "captions" || t.kind === "subtitles"))
-        if (valid.length === 0) return
-        const codes = await this.langCodes(valid.map((t) => t.label || "English"))
-        const items: { episode: number; lang: string; src: string }[] = []
-        const seen: { [key: string]: boolean } = {}
-        for (let i = 0; i < valid.length; i++) {
-            const lang = codes[i]
-            if (seen[lang]) continue
-            seen[lang] = true
-            items.push({ episode: ctx.episode, lang, src: valid[i].file })
-        }
-        if (items.length === 0) return
-        try {
-            await fetch(`${this.subEndpoint}/warm`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ anilist: ctx.anilistId, items }),
-            })
-        } catch (_e) {}
-    }
-
-    private async prefetchSeries(ctx: { anilistId: number; episode: number }): Promise<void> {
-        if (ctx.anilistId <= 0) return
-        const eplist = this.readCache<{ id: string; number: number }[]>(`anikoto:eplist:${ctx.anilistId}`)
-        if (!eplist || eplist.length === 0) return
-
-        const cached: { [key: number]: boolean } = {}
-        try {
-            const res = await fetch(`${this.subEndpoint}/cached/${ctx.anilistId}`)
-            if (res.ok) {
-                const data = res.json<{ episodes: number[] }>()
-                if (data && data.episodes) for (const e of data.episodes) cached[e] = true
-            }
-        } catch (_e) {}
-
-        const big = eplist.length > 50
-        const cap = big ? 8 : 20
-        const pending: { id: string; number: number }[] = []
-        for (const ep of eplist) {
-            if (ep.number === ctx.episode) continue
-            if (cached[ep.number]) continue
-            if (this.readCache<boolean>(`anikoto:ew:${ctx.anilistId}:${ep.number}`, 21600000)) continue
-            pending.push(ep)
-            if (pending.length >= cap) break
-        }
-        if (pending.length === 0) return
-
-        try {
-            const items: { episode: number; lang: string; src: string }[] = []
-            for (const ep of pending) {
-                this.writeCache(`anikoto:ew:${ctx.anilistId}:${ep.number}`, true)
-                const parsed = this.splitMeta(ep.id)
-                const tracks = await this.resolveTracksFor(parsed.base, parsed.audio)
-                if (!tracks || tracks.length === 0) continue
-                const valid = tracks.filter((t) => t && t.file && (!t.kind || t.kind === "captions" || t.kind === "subtitles"))
-                const codes = await this.langCodes(valid.map((t) => t.label || "English"))
-                const seen: { [key: string]: boolean } = {}
-                for (let i = 0; i < valid.length; i++) {
-                    const lang = codes[i]
-                    if (seen[lang]) continue
-                    seen[lang] = true
-                    items.push({ episode: ep.number, lang, src: valid[i].file })
-                }
-            }
-            if (items.length === 0) return
-
-            await fetch(`${this.subEndpoint}/warm`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ anilist: ctx.anilistId, items }),
-            })
-        } catch (_e) {}
-    }
-
-    private async resolveTracksFor(
-        dataIds: string,
-        audio: string
-    ): Promise<{ file: string; label?: string; kind?: string; default?: boolean }[] | undefined> {
-        const $ = await this.serverListDoc(dataIds)
-        const groups = audio === "dub" ? ["dub"] : ["sub", "hsub"]
-        const candidates = this.collectServers($, groups)
-        for (const c of candidates) {
-            try {
-                const got = await this.fetchSources(c.linkId)
-                if (got && got.tracks && got.tracks.length > 0) return got.tracks
-            } catch (_e) {}
-        }
-        return undefined
     }
 
     private async buildSubtitles(
