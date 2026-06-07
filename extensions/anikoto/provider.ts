@@ -448,7 +448,18 @@ class Provider {
         if (collected.length === 0) return collected
         const pick = englishIdx !== -1 ? englishIdx : defaultIdx !== -1 ? defaultIdx : 0
         collected[pick].isDefault = true
+        this.cacheAllLanguages(collected, ctx)
         return collected.filter((s) => s.isDefault).concat(collected.filter((s) => !s.isDefault))
+    }
+
+    private cacheAllLanguages(subs: VideoSubtitle[], ctx: { anilistId: number; episode: number }): void {
+        if (subs.length <= 1 || ctx.anilistId <= 0) return
+        const key = `anikoto:lw:${ctx.anilistId}:${ctx.episode}`
+        if (this.readCache<boolean>(key, this.serverCacheTtl)) return
+        this.writeCache(key, true)
+        try {
+            void Promise.all(subs.map((s) => fetch(s.url, { timeout: 8 }).catch(() => undefined)))
+        } catch (_e) {}
     }
 
     private async langCodes(labels: string[]): Promise<string[]> {
