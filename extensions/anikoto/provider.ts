@@ -306,6 +306,7 @@ class Provider {
         const picked = this.collectServers($, [target.group]).filter((c) => c.name === target.name)[0]
         if (!picked) throw "anikoto: that server is not available for this episode"
         const result = await this.resolveServer(picked.linkId, target.label, ctx)
+        if (!(await this.isPlayable(result))) throw "anikoto: that server did not return a playable stream"
         this.firePrefetch(ctx)
         return result
     }
@@ -628,7 +629,7 @@ class Provider {
             ukr: "uk", ukrainian: "uk",
             hin: "hi", hindi: "hi",
         }
-        return map[k] || k.slice(0, 2) || "en"
+        return map[k] || "en"
     }
 
     private withAudio(base: string, audio: string): string {
