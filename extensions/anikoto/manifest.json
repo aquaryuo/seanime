@@ -27,16 +27,6 @@
           { "value": "https://anikoto.net", "label": "anikoto.net" },
           { "value": "https://anikototv.se", "label": "anikototv.se" }
         ]
-      },
-      {
-        "type": "select",
-        "name": "preferredAudio",
-        "label": "Preferred audio",
-        "default": "sub",
-        "options": [
-          { "value": "sub", "label": "Subtitles (default)" },
-          { "value": "dub", "label": "Dubbed (persist my choice)" }
-        ]
       }
     ]
   }
