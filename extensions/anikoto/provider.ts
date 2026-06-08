@@ -251,6 +251,23 @@ class Provider {
         })
 
         if (episodes.length === 0) throw "anikoto: no episodes found"
+
+        if (parsed.anilistId && episodes.some((e) => !e.title)) {
+            try {
+                const metaRes = await fetch(`${this.subEndpoint}/meta/${parsed.anilistId}`, { timeout: 8 })
+                if (metaRes.ok) {
+                    const meta = metaRes.json<{ episodeTitles?: { [key: string]: string } }>()
+                    const titles = meta && meta.episodeTitles
+                    if (titles) {
+                        for (const e of episodes) {
+                            const t = titles[String(e.number)]
+                            if (!e.title && t) e.title = t
+                        }
+                    }
+                }
+            } catch (e) {}
+        }
+
         episodes.sort((x, y) => x.number - y.number)
         this.writeCache(cacheKey, episodes)
         return episodes
