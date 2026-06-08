@@ -4,24 +4,43 @@ class Provider {
     private cacheTtl = 900000
     private serverCacheTtl = 300000
     private subEndpoint = "https://sub.ryuo.to"
-    private preferredAudio = "{{preferredAudio}}"
 
-    private async resolveBase(): Promise<string> {
-        const all = [this.baseUrl].concat(this.mirrors).map((u) => u.replace(/\/+$/, ""))
-        const candidates = all.filter((u, idx) => all.indexOf(u) === idx)
-        if (candidates.length === 1) return candidates[0]
+    private normBase(u: string): string {
+        return u.replace(/\/+$/, "")
+    }
+
+    private candidateBases(): string[] {
+        const configured = this.normBase(this.baseUrl)
+        const out: string[] = [configured]
+        const seen: { [key: string]: boolean } = {}
+        seen[configured] = true
         const cached = $store.get<string>("anikoto:base")
-        if (cached && candidates.indexOf(cached) !== -1) return cached
-        for (const c of candidates) {
-            try {
-                const res = await fetch(c, { method: "HEAD", timeout: 8 })
-                if (res.ok) {
-                    $store.set("anikoto:base", c)
-                    return c
-                }
-            } catch (_e) {}
+        if (cached && !seen[cached]) {
+            seen[cached] = true
+            out.push(cached)
         }
-        return candidates[0]
+        for (const m of this.mirrors) {
+            const u = this.normBase(m)
+            if (!seen[u]) {
+                seen[u] = true
+                out.push(u)
+            }
+        }
+        return out
+    }
+
+    private currentBase(): string {
+        const configured = this.normBase(this.baseUrl)
+        const cached = $store.get<string>("anikoto:base")
+        if (cached && (cached === configured || this.mirrors.indexOf(cached) !== -1)) return cached
+        return configured
+    }
+
+    private rememberBase(base: string): void {
+        this.baseUrl = base
+        try {
+            $store.set("anikoto:base", base)
+        } catch (_e) {}
     }
 
     private invalidateBase(): void {
@@ -77,78 +96,100 @@ class Provider {
     }
 
     async search(opts: SearchOptions): Promise<SearchResult[]> {
-        this.baseUrl = await this.resolveBase()
-        const wantDub = this.preferredAudio === "dub" || opts.dub
+        const wantDub = opts.dub
         const audio = wantDub ? "dub" : "sub"
-        const queries = this.searchQueries(opts)
+        const sq = this.searchQueries(opts)
 
-        const results: SearchResult[] = []
-        const seen: { [key: string]: boolean } = {}
-        let anyOk = false
+        for (const base of this.candidateBases()) {
+            this.baseUrl = base
+            const results: SearchResult[] = []
+            const seen: { [key: string]: boolean } = {}
+            let anyOk = false
 
-        for (const q of queries) {
-            let html = ""
-            try {
-                const res = await fetch(`${this.baseUrl}/filter?keyword=${encodeURIComponent(q)}`, {
-                    headers: this.pageHeaders(),
-                })
-                if (res.ok) {
-                    anyOk = true
-                    html = res.text()
+            for (const q of sq.queries) {
+                let html = ""
+                try {
+                    const res = await fetch(`${base}/filter?keyword=${encodeURIComponent(q)}`, {
+                        headers: this.pageHeaders(),
+                    })
+                    if (res.ok) {
+                        anyOk = true
+                        html = res.text()
+                    }
+                } catch (_e) {
+                    html = ""
                 }
-            } catch (_e) {
-                html = ""
+                if (html) this.parseSearchInto(LoadDoc(html), audio, wantDub, opts.media.id, seen, results)
             }
-            if (html) this.parseSearchInto(LoadDoc(html), audio, wantDub, opts.media.id, seen, results)
+
+            if (anyOk) {
+                this.rememberBase(base)
+                return this.filterBySeason(results, sq.season, sq.part)
+            }
         }
 
-        if (!anyOk) {
-            this.invalidateBase()
-            throw "anikoto: search failed (site unreachable)"
-        }
-        return this.filterBySeason(results, opts)
+        this.invalidateBase()
+        throw "anikoto: search failed (site unreachable)"
     }
 
-    private filterBySeason(results: SearchResult[], opts: SearchOptions): SearchResult[] {
-        const target = this.targetOrdinal(opts)
-        if (target <= 1) return results
-        const matched = results.filter((r) => this.ordinalOf(r.title) === target)
+    private filterBySeason(results: SearchResult[], season: number, part: number): SearchResult[] {
+        if (season < 2 && part < 2) return results
+        const matched = results.filter((r) => {
+            let resultSeason = -1
+            let resultPart = -1
+            try {
+                const n = $scannerUtils.normalizeTitle(r.title)
+                if (n) {
+                    resultSeason = n.season
+                    resultPart = n.part
+                }
+            } catch (_e) {}
+            const seasonOk = season < 2 || resultSeason === season
+            const partOk = part < 2 || resultPart === part
+            return seasonOk && partOk
+        })
         return matched.length > 0 ? matched : results
     }
 
-    private targetOrdinal(opts: SearchOptions): number {
-        let target = 1
-        for (const s of [opts.query, opts.media.romajiTitle, opts.media.englishTitle]) {
-            if (!s) continue
-            const n = this.ordinalOf(s)
-            if (n > target) target = n
-        }
-        return target
-    }
-
-    private ordinalOf(title: string): number {
-        if (!title) return 1
-        try {
-            const n = $scannerUtils.normalizeTitle(title)
-            if (n && n.season >= 2) return n.season
-            if (n && n.part >= 2) return n.part
-        } catch (_e) {}
-        return 1
-    }
-
-    private searchQueries(opts: SearchOptions): string[] {
-        const raw = [opts.query, opts.media.romajiTitle, opts.media.englishTitle]
-        const out: string[] = []
-        const seen: { [key: string]: boolean } = {}
-        for (const t of raw) {
+    private searchQueries(opts: SearchOptions): { queries: string[]; season: number; part: number } {
+        const raw: string[] = []
+        const rawSeen: { [key: string]: boolean } = {}
+        for (const t of [opts.query, opts.media.romajiTitle, opts.media.englishTitle]) {
             const q = (t || "").trim()
             if (!q) continue
             const key = q.toLowerCase()
-            if (seen[key]) continue
-            seen[key] = true
-            out.push(q)
+            if (rawSeen[key]) continue
+            rawSeen[key] = true
+            raw.push(q)
         }
-        return out
+
+        const queries: string[] = []
+        const seen: { [key: string]: boolean } = {}
+        const add = (s: string): void => {
+            const q = (s || "").trim()
+            if (!q) return
+            const key = q.toLowerCase()
+            if (seen[key]) return
+            seen[key] = true
+            queries.push(q)
+        }
+
+        let season = 0
+        let part = 0
+        try {
+            const smart = $scannerUtils.buildSmartSearchTitles(raw)
+            if (smart) {
+                season = smart.season || 0
+                part = smart.part || 0
+                if (smart.titles) {
+                    for (const t of smart.titles) add(t)
+                }
+            }
+        } catch (_e) {}
+
+        for (const t of raw) add(t)
+
+        return { queries: queries.slice(0, 3), season, part }
     }
 
     private parseSearchInto(
@@ -187,7 +228,7 @@ class Provider {
     }
 
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {
-        this.baseUrl = await this.resolveBase()
+        this.baseUrl = this.currentBase()
         const parsed = this.splitMeta(id)
         const audio = parsed.audio
         const seriesUrl = this.seriesUrl(this.absoluteUrl(parsed.base))
@@ -274,7 +315,7 @@ class Provider {
     }
 
     async findEpisodeServer(episode: EpisodeDetails, server: string): Promise<EpisodeServer> {
-        this.baseUrl = await this.resolveBase()
+        this.baseUrl = this.currentBase()
         const parsed = this.splitMeta(episode.id)
         const dataIds = parsed.base
         const audio = parsed.audio
@@ -316,9 +357,7 @@ class Provider {
         const $ = await this.serverListDoc(dataIds)
         const picked = this.collectServers($, [target.group]).filter((c) => c.name === target.name)[0]
         if (!picked) throw "anikoto: that server is not available for this episode"
-        const result = await this.resolveServer(picked.linkId, target.label, ctx)
-        if (!(await this.isPlayable(result))) throw "anikoto: that server did not return a playable stream"
-        return result
+        return await this.resolveServer(picked.linkId, target.label, ctx)
     }
 
     private parseServerLabel(server: string, audio: string): { group: string; name: string; label: string; ok: boolean } {
