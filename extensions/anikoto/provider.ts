@@ -337,7 +337,7 @@ class Provider {
             seen[dedupeKey] = true
 
             const num = parseInt(a.attr("data-num") || "", 10)
-            const number = isNaN(num) ? i + 1 : num
+            const number = !Number.isInteger(num) || num < 1 || num > 10000 ? i + 1 : num
             const slug = a.attr("data-slug") || String(number)
 
             const title = a.find("span.d-title").first().text().trim()
@@ -371,7 +371,9 @@ class Provider {
                             const K = parseInt(k, 10)
                             if (isNaN(K)) continue
                             const m = map[k]
-                            const src = (m.ep != null ? byNum[m.ep] : undefined) || (m.abs != null ? byNum[m.abs] : undefined) || byNum[K]
+                            const ep = typeof m.ep === "number" && m.ep > 0 ? byNum[m.ep] : undefined
+                            const abs = typeof m.abs === "number" && m.abs > 0 ? byNum[m.abs] : undefined
+                            const src = ep || abs || byNum[K]
                             if (!src) continue
                             remapped.push({ id: src.id, number: K, url: src.url, title: titles[String(K)] || src.title })
                         }
@@ -531,7 +533,7 @@ class Provider {
             const m = ehtml.match(/data-id="([^"]+)"/)
             if (m) dataId = m[1]
         }
-        if (!dataId) return undefined
+        if (!dataId || !/^[\w.-]{1,256}$/.test(dataId)) return undefined
 
         const srcRes = await this.fetchRetry(`${origin}/stream/getSources?id=${encodeURIComponent(dataId)}`, {
             headers: { Referer: embedUrl, "X-Requested-With": "XMLHttpRequest" }, timeout: 3,
@@ -542,8 +544,9 @@ class Provider {
             tracks?: { file: string; label?: string; kind?: string; default?: boolean }[]
         }>()
         if (!data || !data.sources) return undefined
-        const file = Array.isArray(data.sources) ? (data.sources[0] || ({} as any)).file : data.sources.file
-        const result = { origin, file, tracks: data.tracks }
+        const raw = Array.isArray(data.sources) ? (data.sources[0] || ({} as any)).file : data.sources.file
+        const file = typeof raw === "string" && /^https?:\/\//i.test(raw) ? raw : undefined
+        const result = { origin, file, tracks: Array.isArray(data.tracks) ? data.tracks : undefined }
         if (file) this.writeCache(cacheKey, result)
         return result
     }
@@ -558,7 +561,7 @@ class Provider {
 
         const anime = String(ctx.anilistId)
         const ep = String(ctx.episode)
-        const valid = tracks.filter((t) => t && t.file && (!t.kind || t.kind === "captions" || t.kind === "subtitles"))
+        const valid = tracks.filter((t) => t && typeof t.file === "string" && /^https?:\/\//i.test(t.file) && (!t.kind || t.kind === "captions" || t.kind === "subtitles"))
         const codes = await this.langCodes(valid.map((t) => t.label || "English"))
         const seenLang: { [key: string]: boolean } = {}
         let englishIdx = -1
