@@ -548,7 +548,7 @@ class Provider {
         })
         if (!psRes.ok) return undefined
         const ps = psRes.json<{ status: number; result: { url: string } }>()
-        const embedUrl = ps && ps.result ? ps.result.url : undefined
+        let embedUrl = ps && ps.result ? ps.result.url : undefined
         if (!embedUrl) return undefined
 
         const origin = this.originOf(embedUrl)
@@ -560,6 +560,22 @@ class Provider {
         if (!dataId) {
             const m = ehtml.match(/data-id="([^"]+)"/)
             if (m) dataId = m[1]
+        }
+        if (!dataId) {
+            const ifr = ehtml.match(/<iframe[^>]+\bsrc="([^"]*\/stream\/[^"]*)"/i)
+            const inner = ifr ? this.absoluteUrl(ifr[1]) : ""
+            if (inner && this.originOf(inner) === origin) {
+                const innerRes = await this.fetchRetry(inner, { headers: { Referer: embedUrl }, timeout: 3 })
+                if (innerRes.ok) {
+                    const ih = innerRes.text()
+                    dataId = this.firstAttr(LoadDoc(ih), ["#megaplay-player", "[id*='player'][data-id]"], "data-id")
+                    if (!dataId) {
+                        const m2 = ih.match(/data-id="([^"]+)"/)
+                        if (m2) dataId = m2[1]
+                    }
+                    if (dataId) embedUrl = inner
+                }
+            }
         }
         if (!dataId || !/^[\w.-]{1,256}$/.test(dataId)) return undefined
 
