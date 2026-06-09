@@ -293,17 +293,37 @@ class Provider {
 
         if (episodes.length === 0) throw "anikoto: no episodes found"
 
-        if (parsed.anilistId && episodes.some((e) => !e.title)) {
+        if (parsed.anilistId) {
             try {
                 const metaRes = await fetch(`${this.subEndpoint}/meta/${parsed.anilistId}`, { timeout: 8 })
                 if (metaRes.ok) {
-                    const meta = metaRes.json<{ episodeTitles?: { [key: string]: string } }>()
-                    const titles = meta && meta.episodeTitles
-                    if (titles) {
-                        for (const e of episodes) {
-                            const t = titles[String(e.number)]
-                            if (!e.title && t) e.title = t
+                    const meta = metaRes.json<{
+                        episodeTitles?: { [key: string]: string }
+                        episodeMap?: { [key: string]: { ep: number | null; abs: number | null } }
+                    }>()
+                    const titles = (meta && meta.episodeTitles) || {}
+                    const map = (meta && meta.episodeMap) || {}
+                    const mapKeys = Object.keys(map)
+                    if (mapKeys.length > 0) {
+                        const byNum: { [key: number]: EpisodeDetails } = {}
+                        for (const e of episodes) byNum[e.number] = e
+                        const remapped: EpisodeDetails[] = []
+                        for (const k of mapKeys) {
+                            const K = parseInt(k, 10)
+                            if (isNaN(K)) continue
+                            const m = map[k]
+                            const src = (m.ep != null ? byNum[m.ep] : undefined) || (m.abs != null ? byNum[m.abs] : undefined) || byNum[K]
+                            if (!src) continue
+                            remapped.push({ id: src.id, number: K, url: src.url, title: titles[String(K)] || src.title })
                         }
+                        if (remapped.length >= Math.ceil(mapKeys.length / 2)) {
+                            episodes.length = 0
+                            for (const e of remapped) episodes.push(e)
+                        }
+                    }
+                    for (const e of episodes) {
+                        const t = titles[String(e.number)]
+                        if (!e.title && t) e.title = t
                     }
                 }
             } catch (e) {}
