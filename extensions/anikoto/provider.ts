@@ -152,8 +152,6 @@ class Provider {
         return matched.length > 0 ? matched : results
     }
 
-    // Title scoring (mirrors the server matcher). When one candidate clearly dominates, return only it
-    // so the host can't fall back to a worse entry — e.g. a multi-episode TV arc for a 1-episode movie.
     private dominantMatch(results: SearchResult[], media: Media): SearchResult | null {
         const targets: string[] = []
         for (const t of [media.romajiTitle, media.englishTitle]) {
@@ -286,10 +284,40 @@ class Provider {
         })
     }
 
+    private async resolveFromServer(anilistId: number, audio: string): Promise<EpisodeDetails[] | null> {
+        const cacheKey = `anikoto:resolve:${anilistId}:${audio}`
+        const cached = this.readCache<EpisodeDetails[]>(cacheKey)
+        if (cached && cached.length > 0) return cached
+        try {
+            const res = await fetch(`${this.subEndpoint}/resolve/${anilistId}`, { timeout: 8 })
+            if (!res.ok) return null
+            const data = res.json<{ episodes?: { number: number; dataIds: string; title?: string }[] }>()
+            const eps = data && data.episodes
+            if (!eps || eps.length === 0) return null
+            const out: EpisodeDetails[] = []
+            for (const e of eps) {
+                if (!e || typeof e.number !== "number" || !e.dataIds) continue
+                out.push({ id: this.withMeta(e.dataIds, audio, anilistId), number: e.number, url: `${this.baseUrl}/`, title: e.title || undefined })
+            }
+            out.sort((a, b) => a.number - b.number)
+            if (out.length === 0) return null
+            this.writeCache(cacheKey, out)
+            return out
+        } catch (_e) {
+            return null
+        }
+    }
+
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {
         this.baseUrl = this.currentBase()
         const parsed = this.splitMeta(id)
         const audio = parsed.audio
+
+        if (parsed.anilistId && audio !== "dub") {
+            const fromServer = await this.resolveFromServer(parsed.anilistId, audio)
+            if (fromServer && fromServer.length > 0) return fromServer
+        }
+
         const seriesUrl = this.seriesUrl(this.absoluteUrl(parsed.base))
 
         const cacheKey = `anikoto:eps:${seriesUrl}:${audio}:${parsed.anilistId}`
