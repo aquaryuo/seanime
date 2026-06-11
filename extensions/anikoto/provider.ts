@@ -1,5 +1,6 @@
 class Provider {
     private baseUrl = "{{baseUrl}}"
+    private loadSubtitles = "{{loadSubtitles}}"
     private mirrors = ["https://anikototv.to", "https://anikoto.cz", "https://anikoto.me", "https://anikoto.net", "https://anikototv.se"]
     private cacheTtl = 900000
     private serverCacheTtl = 300000
@@ -607,6 +608,7 @@ class Provider {
         ctx: { anilistId: number; episode: number }
     ): Promise<VideoSubtitle[]> {
         const collected: VideoSubtitle[] = []
+        if (this.loadSubtitles === "disabled") return collected
         if (!tracks || tracks.length === 0) return collected
         if (ctx.anilistId <= 0) return collected
 
