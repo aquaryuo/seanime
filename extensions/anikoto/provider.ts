@@ -435,7 +435,11 @@ class Provider {
         if (server === "Auto" || server === "default" || !server) {
             const $ = await this.serverListDoc(dataIds)
             const groups = audio === "dub" ? ["dub"] : ["sub", "hsub"]
-            const candidates = this.collectServers($, groups)
+            let candidates = this.collectServers($, groups)
+            if (audio === "dub") {
+                const DUB_SERVERS = ["HD-1", "Vidstream-2", "VidCloud-1"]
+                candidates = candidates.filter((c) => DUB_SERVERS.indexOf(c.name) !== -1)
+            }
             if (candidates.length === 0) throw audio === "dub" ? "anikoto: no dub is available for this episode" : "anikoto: no server available for this episode"
 
             await Promise.all(candidates.map((c) => this.fetchSources(c.linkId).catch(() => undefined)))
