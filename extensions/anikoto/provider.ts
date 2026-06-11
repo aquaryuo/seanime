@@ -361,6 +361,7 @@ class Provider {
             const epId = a.attr("data-id") || ""
             const dataIds = a.attr("data-ids")
             if (!dataIds) return
+            if ((audio === "dub" ? a.attr("data-dub") : a.attr("data-sub")) === "0") return
 
             const dedupeKey = epId || dataIds
             if (seen[dedupeKey]) return
