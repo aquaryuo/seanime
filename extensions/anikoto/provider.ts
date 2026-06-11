@@ -600,6 +600,11 @@ class Provider {
         return result
     }
 
+    private fixTrackUrl(file: string): string {
+        if (file.indexOf("/subtitles/") !== -1) return file
+        return file.replace(/^(https?:\/\/[^/]*nekostream\.site\/[0-9a-f]{16,}\/)([^/?#]+\.(?:vtt|ass|srt))/i, "$1subtitles/$2")
+    }
+
     private async buildSubtitles(
         tracks: { file: string; label?: string; kind?: string; default?: boolean }[] | undefined,
         ctx: { anilistId: number; episode: number }
@@ -627,7 +632,7 @@ class Provider {
             const idx = collected.length
             collected.push({
                 id: `${lang}-${idx}`,
-                url: `${this.subEndpoint}/s/${anime}/${ep}/${lang}.vtt?src=${encodeURIComponent(t.file)}${tokParam}`,
+                url: `${this.subEndpoint}/s/${anime}/${ep}/${lang}.vtt?src=${encodeURIComponent(this.fixTrackUrl(t.file))}${tokParam}`,
                 language: t.label || "English",
                 isDefault: false,
             })
