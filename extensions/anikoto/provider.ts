@@ -3,6 +3,7 @@ class Provider {
     private mirrors = ["https://anikototv.to", "https://anikoto.cz", "https://anikoto.me", "https://anikoto.net", "https://anikototv.se"]
     private cacheTtl = 900000
     private serverCacheTtl = 300000
+    private tokenTtl = 18000000
     private subEndpoint = "https://sub.ryuo.to"
 
     private normBase(u: string): string {
@@ -291,7 +292,8 @@ class Provider {
         try {
             const res = await fetch(`${this.subEndpoint}/resolve/${anilistId}`, { timeout: 8 })
             if (!res.ok) return null
-            const data = res.json<{ episodes?: { number: number; dataIds: string; title?: string }[] }>()
+            const data = res.json<{ episodes?: { number: number; dataIds: string; title?: string }[]; token?: string }>()
+            if (data && typeof data.token === "string" && data.token) this.writeCache(`anikoto:tok:${anilistId}`, data.token)
             const eps = data && data.episodes
             if (!eps || eps.length === 0) return null
             const out: EpisodeDetails[] = []
@@ -605,6 +607,8 @@ class Provider {
 
         const anime = String(ctx.anilistId)
         const ep = String(ctx.episode)
+        const tok = ctx.anilistId > 0 ? this.readCache<string>(`anikoto:tok:${ctx.anilistId}`, this.tokenTtl) : undefined
+        const tokParam = tok ? `&t=${encodeURIComponent(tok)}` : ""
         const valid = tracks.filter((t) => t && typeof t.file === "string" && /^https?:\/\//i.test(t.file) && (!t.kind || t.kind === "captions" || t.kind === "subtitles"))
         const codes = await this.langCodes(valid.map((t) => t.label || "English"))
         const seenLang: { [key: string]: boolean } = {}
@@ -619,7 +623,7 @@ class Provider {
             const idx = collected.length
             collected.push({
                 id: `${lang}-${idx}`,
-                url: `${this.subEndpoint}/s/${anime}/${ep}/${lang}.vtt?src=${encodeURIComponent(t.file)}`,
+                url: `${this.subEndpoint}/s/${anime}/${ep}/${lang}.vtt?src=${encodeURIComponent(t.file)}${tokParam}`,
                 language: t.label || "English",
                 isDefault: false,
             })
