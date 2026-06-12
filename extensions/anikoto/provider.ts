@@ -514,7 +514,7 @@ class Provider {
     private async resolveServer(linkId: string, serverName: string, ctx: { anilistId: number; episode: number }): Promise<EpisodeServer> {
         const got = await this.fetchSources(linkId)
         if (!got || !got.file) throw "anikoto: could not resolve the player URL (source may be encrypted or down)"
-        const subtitles = await this.buildSubtitles(got.tracks, ctx)
+        const subtitles = await this.buildSubtitles(got.tracks, ctx, got.origin)
         return {
             server: serverName,
             headers: { Referer: `${got.origin}/`, Origin: got.origin },
@@ -607,7 +607,8 @@ class Provider {
 
     private async buildSubtitles(
         tracks: { file: string; label?: string; kind?: string; default?: boolean }[] | undefined,
-        ctx: { anilistId: number; episode: number }
+        ctx: { anilistId: number; episode: number },
+        embedOrigin?: string
     ): Promise<VideoSubtitle[]> {
         const collected: VideoSubtitle[] = []
         if (this.loadSubtitles === "disabled") return collected
@@ -618,6 +619,7 @@ class Provider {
         const ep = String(ctx.episode)
         const tok = ctx.anilistId > 0 ? this.readCache<string>(`anikoto:tok:${ctx.anilistId}`, this.tokenTtl) : undefined
         const tokParam = tok ? `&t=${encodeURIComponent(tok)}` : ""
+        const refParam = embedOrigin ? `&ref=${encodeURIComponent(embedOrigin)}` : ""
         const valid = tracks.filter((t) => t && typeof t.file === "string" && /^https?:\/\//i.test(t.file) && (!t.kind || t.kind === "captions" || t.kind === "subtitles"))
         const codes = await this.langCodes(valid.map((t) => t.label || "English"))
         const seenLang: { [key: string]: boolean } = {}
@@ -632,7 +634,7 @@ class Provider {
             const idx = collected.length
             collected.push({
                 id: `${lang}-${idx}`,
-                url: `${this.subEndpoint}/s/${anime}/${ep}/${lang}.vtt?src=${encodeURIComponent(this.fixTrackUrl(t.file))}${tokParam}`,
+                url: `${this.subEndpoint}/s/${anime}/${ep}/${lang}.vtt?src=${encodeURIComponent(this.fixTrackUrl(t.file))}${tokParam}${refParam}`,
                 language: t.label || "English",
                 isDefault: false,
             })
