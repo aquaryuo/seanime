@@ -364,11 +364,14 @@ class Provider {
             if (!dataIds) return
             if ((audio === "dub" ? a.attr("data-dub") : a.attr("data-sub")) === "0") return
 
+            const rawNum = a.attr("data-num") || ""
+            if (/^\d+\.\d+$/.test(rawNum)) return
+
             const dedupeKey = epId || dataIds
             if (seen[dedupeKey]) return
             seen[dedupeKey] = true
 
-            const num = parseInt(a.attr("data-num") || "", 10)
+            const num = parseInt(rawNum, 10)
             const number = !Number.isInteger(num) || num < 1 || num > 10000 ? i + 1 : num
             const slug = a.attr("data-slug") || String(number)
 
@@ -389,22 +392,31 @@ class Provider {
                 const metaRes = await fetch(`${this.subEndpoint}/meta/${parsed.anilistId}`, { timeout: 8 })
                 if (metaRes.ok) {
                     const meta = metaRes.json<{
+                        episodes?: number
                         episodeTitles?: { [key: string]: string }
                         episodeMap?: { [key: string]: { ep: number | null; abs: number | null } }
                     }>()
                     const titles = (meta && meta.episodeTitles) || {}
                     const map = (meta && meta.episodeMap) || {}
+                    const aniTotal = (meta && meta.episodes) || 0
                     const mapKeys = Object.keys(map)
-                    if (mapKeys.length > 0) {
+                    const mapCoversSeries = !(aniTotal > 0 && mapKeys.length < aniTotal && episodes.length > mapKeys.length)
+                    if (mapKeys.length > 0 && mapCoversSeries) {
                         const byNum: { [key: number]: EpisodeDetails } = {}
                         for (const e of episodes) byNum[e.number] = e
+                        let maxTarget = 0
+                        for (const k of mapKeys) {
+                            const m = map[k]
+                            maxTarget = Math.max(maxTarget, m.ep || 0, m.abs || 0)
+                        }
+                        const perPart = episodes.length < maxTarget
                         const remapped: EpisodeDetails[] = []
                         for (const k of mapKeys) {
                             const K = parseInt(k, 10)
                             if (isNaN(K)) continue
                             const m = map[k]
-                            const ep = typeof m.ep === "number" && m.ep > 0 ? byNum[m.ep] : undefined
-                            const abs = typeof m.abs === "number" && m.abs > 0 ? byNum[m.abs] : undefined
+                            const ep = !perPart && typeof m.ep === "number" && m.ep > 0 ? byNum[m.ep] : undefined
+                            const abs = !perPart && typeof m.abs === "number" && m.abs > 0 ? byNum[m.abs] : undefined
                             const src = ep || abs || byNum[K]
                             if (!src) continue
                             remapped.push({ id: src.id, number: K, url: src.url, title: titles[String(K)] || src.title })
