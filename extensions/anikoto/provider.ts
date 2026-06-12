@@ -164,7 +164,7 @@ class Provider {
         const isMovie = (media.format || "").toUpperCase() === "MOVIE"
         const scored = results
             .map((r) => {
-                const cn = this.normTitle(this.cleanCandidate(r.title))
+                const cn = this.normTitle(r.title)
                 let s = 0
                 for (const t of targets) {
                     const v = this.simNorm(cn, t)
@@ -293,13 +293,14 @@ class Provider {
         try {
             const res = await fetch(`${this.subEndpoint}/resolve/${anilistId}`, { timeout: 8 })
             if (!res.ok) return null
-            const data = res.json<{ episodes?: { number: number; dataIds: string; title?: string }[]; token?: string }>()
+            const data = res.json<{ episodes?: { number: number; dataIds: string; title?: string; hasSub?: boolean; hasDub?: boolean }[]; token?: string }>()
             if (data && typeof data.token === "string" && data.token) this.writeCache(`anikoto:tok:${anilistId}`, data.token)
             const eps = data && data.episodes
             if (!eps || eps.length === 0) return null
             const out: EpisodeDetails[] = []
             for (const e of eps) {
                 if (!e || typeof e.number !== "number" || !e.dataIds) continue
+                if (audio === "dub" ? e.hasDub === false : e.hasSub === false) continue
                 out.push({ id: this.withMeta(e.dataIds, audio, anilistId), number: e.number, url: `${this.baseUrl}/`, title: e.title || undefined })
             }
             out.sort((a, b) => a.number - b.number)
@@ -316,7 +317,7 @@ class Provider {
         const parsed = this.splitMeta(id)
         const audio = parsed.audio
 
-        if (parsed.anilistId && audio !== "dub") {
+        if (parsed.anilistId) {
             const fromServer = await this.resolveFromServer(parsed.anilistId, audio)
             if (fromServer && fromServer.length > 0) return fromServer
         }
