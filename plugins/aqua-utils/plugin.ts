@@ -3,24 +3,23 @@
 /// <reference path="./d.ts/app.d.ts" />
 /// <reference path="./d.ts/plugin.d.ts" />
 
-const SEH_MARKER = "SEHERRv1"
-const SEH_MAX_KEEP = 100
-const SEH_MAX_SEEN = 500
-const SEH_POLL_MS = 6000
-const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
-
-const FS_CONTAINER = "flaresolverr"
-const FS_IMAGE = "ghcr.io/flaresolverr/flaresolverr:latest"
-const FS_VERSION = "v3.5.0"
-const FS_DEFAULT_HOST = "127.0.0.1"
-const FS_DEFAULT_PORT = "8191"
-const FS_DEFAULT_SESSION = "seanime"
-const FS_POLL_MS = 5000
-
 type SehError = { id: string; t: number; ext: string; scope: string; msg: string }
 
 function init() {
     $ui.register((ctx) => {
+        const SEH_MARKER = "SEHERRv1"
+        const SEH_MAX_KEEP = 100
+        const SEH_MAX_SEEN = 500
+        const SEH_POLL_MS = 6000
+        const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
+        const FS_CONTAINER = "flaresolverr"
+        const FS_IMAGE = "ghcr.io/flaresolverr/flaresolverr:latest"
+        const FS_VERSION = "v3.5.0"
+        const FS_DEFAULT_HOST = "127.0.0.1"
+        const FS_DEFAULT_PORT = "8191"
+        const FS_DEFAULT_SESSION = "seanime"
+        const FS_POLL_MS = 5000
+
         const view = ctx.state<string>("errors")
 
         const appBase = ctx.state<string>($storage.get<string>("seh.appBase") || SEH_DEFAULT_APP)
