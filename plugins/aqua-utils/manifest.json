@@ -1,0 +1,33 @@
+{
+  "id": "aqua-utils",
+  "name": "Aqua's Utils",
+  "version": "1.0.0",
+  "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aqua-utils/manifest.json",
+  "language": "typescript",
+  "type": "plugin",
+  "description": "A toolbox plugin: surfaces extension errors as toasts/tray, and launches & manages a local or remote FlareSolverr for Cloudflare-protected sites.",
+  "author": "aquaryuo",
+  "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aqua-utils/icon.png",
+  "website": "https://github.com/aquaryuo/seanime",
+  "lang": "multi",
+  "payloadURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aqua-utils/plugin.ts",
+  "plugin": {
+    "version": "1",
+    "permissions": {
+      "scopes": ["system", "storage", "notification"],
+      "allow": {
+        "networkAccess": {
+          "allowedDomains": ["*"],
+          "reasoning": "Reads the local Seanime log API (loopback) to collect reported extension errors; talks to a local or user-configured remote FlareSolverr to manage sessions; and downloads the FlareSolverr release from GitHub for the no-Docker binary mode."
+        },
+        "commandScopes": [
+          { "command": "docker", "description": "Start/stop the local FlareSolverr container (Docker mode).", "args": [{ "validator": "$ARGS" }] },
+          { "command": "sh", "description": "Launch the downloaded FlareSolverr binary on Linux/macOS (Binary mode).", "args": [{ "value": "-c" }, { "validator": "$ARGS" }] },
+          { "command": "cmd", "description": "Launch the downloaded FlareSolverr binary on Windows (Binary mode).", "args": [{ "value": "/c" }, { "validator": "$ARGS" }] }
+        ],
+        "readPaths": ["$CACHE", "$CACHE/**"],
+        "writePaths": ["$CACHE/seanime-flaresolverr", "$CACHE/seanime-flaresolverr/**"]
+      }
+    }
+  }
+}
