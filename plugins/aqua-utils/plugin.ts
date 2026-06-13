@@ -43,7 +43,7 @@ function init() {
         let fsBinary: $os.Cmd | null = null
 
         const tray = ctx.newTray({
-            iconUrl: "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aqua-utils/icon.png",
+            iconUrl: "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/animepahe/icon.png",
             withContent: true,
             width: "480px",
         })

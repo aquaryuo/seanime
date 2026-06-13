@@ -1,0 +1,47 @@
+{
+  "id": "animepahe",
+  "name": "AnimePahe",
+  "version": "1.0.7",
+  "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/animepahe/manifest.json",
+  "language": "typescript",
+  "type": "onlinestream-provider",
+  "description": "Only animepahe compatibility layer you'll ever need",
+  "author": "aquaryuo",
+  "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/animepahe/icon.png",
+  "website": "https://animepahe.pw",
+  "lang": "en",
+  "payloadURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/animepahe/provider.ts",
+  "userConfig": {
+    "version": 1,
+    "requiresConfig": false,
+    "fields": [
+      {
+        "type": "select",
+        "name": "baseUrl",
+        "label": "Site / mirror domain",
+        "default": "https://animepahe.pw",
+        "options": [
+          { "value": "https://animepahe.pw", "label": "animepahe.pw" },
+          { "value": "https://animepahe.com", "label": "animepahe.com" },
+          { "value": "https://animepahe.org", "label": "animepahe.org" }
+        ]
+      },
+      {
+        "type": "select",
+        "name": "browserFallback",
+        "label": "Headless browser fallback (needs Chrome; rarely beats Cloudflare)",
+        "default": "false",
+        "options": [
+          { "value": "false", "label": "Disabled" },
+          { "value": "true", "label": "Enabled" }
+        ]
+      },
+      {
+        "type": "text",
+        "name": "solverUrl",
+        "label": "Cloudflare solver endpoint (FlareSolverr-compatible). Defaults to the local FlareSolverr that Aqua's Utils manages; change for a remote solver.",
+        "default": "http://127.0.0.1:8191/v1"
+      }
+    ]
+  }
+}
