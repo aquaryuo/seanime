@@ -7,6 +7,7 @@
   "type": "plugin",
   "description": "A toolbox plugin: surfaces extension errors as toasts/tray, and launches & manages a local or remote FlareSolverr for Cloudflare-protected sites.",
   "author": "aquaryuo",
+  "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aqua-utils/icon.png",
   "website": "https://github.com/aquaryuo/seanime",
   "lang": "multi",
   "payloadURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aqua-utils/plugin.ts",
