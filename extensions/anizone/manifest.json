@@ -7,7 +7,6 @@
   "type": "onlinestream-provider",
   "description": "Only anizone compatibility layer you'll ever need",
   "author": "aquaryuo",
-  "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/anizone/icon.png",
   "website": "https://anizone.to",
   "lang": "en",
   "payloadURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/anizone/provider.ts",
