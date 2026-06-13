@@ -8,6 +8,7 @@
   "description": "Only anizone compatibility layer you'll ever need",
   "author": "aquaryuo",
   "website": "https://anizone.to",
+  "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/anizone/icon.png",
   "lang": "en",
   "payloadURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/anizone/provider.ts",
   "userConfig": {
