@@ -2,15 +2,15 @@
   "id": "centralized-error-handler",
   "name": "Centralized Error Handler",
   "version": "1.0.0",
-  "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/seanime/centralized-error-handler/manifest.json",
+  "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/seanime/errorhandler/manifest.json",
   "language": "typescript",
   "type": "plugin",
   "description": "Surfaces custom errors that provider extensions report (via a console.error convention) as toasts and a tray list. Works around Seanime swallowing provider errors before they reach the client.",
   "author": "aquaryuo",
-  "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/seanime/centralized-error-handler/icon.png",
+  "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/seanime/errorhandler/icon.png",
   "website": "https://github.com/aquaryuo/seanime",
   "lang": "multi",
-  "payloadURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/seanime/centralized-error-handler/plugin.ts",
+  "payloadURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/seanime/errorhandler/plugin.ts",
   "plugin": {
     "version": "1",
     "permissions": {

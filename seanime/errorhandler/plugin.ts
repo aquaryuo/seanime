@@ -20,7 +20,7 @@ function init() {
         let authWarned = false
 
         const tray = ctx.newTray({
-            iconUrl: "https://raw.githubusercontent.com/aquaryuo/seanime/beta/seanime/centralized-error-handler/icon.png",
+            iconUrl: "https://raw.githubusercontent.com/aquaryuo/seanime/beta/seanime/errorhandler/icon.png",
             withContent: true,
             width: "440px",
         })
