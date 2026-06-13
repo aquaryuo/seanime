@@ -58,9 +58,7 @@ class Provider {
         }
 
         if (results.length === 0 && blocked) {
-            const m = `${this.blockedMessage()} (${lastErr})`
-            this.reportError("search", m)
-            throw m
+            throw this.fail("search", `${this.blockedMessage()} (${lastErr})`)
         }
         return this.filterBySeason(results, opts)
     }
@@ -97,14 +95,14 @@ class Provider {
         const parts = id.split("$")
         const animeSession = parts[0]
         const audio = parts[1] === "dub" ? "dub" : "sub"
-        if (!animeSession) throw "invalid anime id"
+        if (!animeSession) throw this.fail("episodes", "invalid anime id")
 
         const cacheKey = `apahe:eps:${animeSession}:${audio}`
         const cached = this.readCache<EpisodeDetails[]>(cacheKey, this.epCacheTtl)
         if (cached && cached.length > 0) return cached
 
         const first = await this.getJson<ReleaseResponse>(`${this.baseUrl}/api?m=release&id=${animeSession}&sort=episode_asc&page=1`)
-        if (!first) throw "empty episode list response"
+        if (!first) throw this.fail("episodes", "empty episode list response")
 
         const all: EpisodeData[] = []
         if (first.data) for (const d of first.data) all.push(d)
@@ -133,7 +131,7 @@ class Provider {
             })
         }
 
-        if (episodes.length === 0) throw "no episodes found"
+        if (episodes.length === 0) throw this.fail("episodes", "no episodes found")
         episodes.sort((a, b) => a.number - b.number)
         this.writeCache(cacheKey, episodes)
         return episodes
@@ -145,13 +143,13 @@ class Provider {
         const episodeSession = parts[0]
         const animeSession = parts[1]
         const audio = parts[2] === "dub" ? "dub" : "sub"
-        if (!episodeSession || !animeSession) throw "invalid episode id"
+        if (!episodeSession || !animeSession) throw this.fail("server", "invalid episode id")
 
         const playUrl = `${this.baseUrl}/play/${animeSession}/${episodeSession}`
         const candidates = await this.playSources(animeSession, episodeSession, audio, playUrl)
         if (candidates.length === 0) {
-            if (audio === "dub") throw "no dub source for this episode"
-            throw "no source found for this episode"
+            if (audio === "dub") throw this.fail("server", "no dub source for this episode")
+            throw this.fail("server", "no source found for this episode")
         }
 
         if (server === "Auto" || server === "default" || !server) {
@@ -164,14 +162,14 @@ class Provider {
                     lastErr = e
                 }
             }
-            throw lastErr ? `could not resolve source: ${lastErr}` : "could not resolve any source"
+            throw this.fail("server", lastErr ? `could not resolve source: ${lastErr}` : "could not resolve any source")
         }
 
         const idx = parseInt(server, 10)
-        if (isNaN(idx) || idx < 1 || idx > candidates.length) throw `no player for slot ${server}`
+        if (isNaN(idx) || idx < 1 || idx > candidates.length) throw this.fail("server", `no player for slot ${server}`)
         const chosen = candidates[idx - 1]
         const m3u8 = await this.resolveKwik(chosen.url, playUrl)
-        if (!m3u8) throw `could not resolve player ${server}`
+        if (!m3u8) throw this.fail("server", `could not resolve player ${server}`)
         return this.buildServer(chosen.label, chosen, m3u8)
     }
 
@@ -393,7 +391,7 @@ class Provider {
                 this.absorbCookies(res)
                 if (!this.isBlocked(res)) return res.text()
             } catch (e) {
-                if (i === 2 && !this.browserFallback) throw e
+                if (i === 2 && !this.browserFallback) throw this.fail("fetch", String(e))
             }
             cookie = await this.harvestCookies(true)
         }
@@ -404,15 +402,13 @@ class Provider {
             if (html) return html
         }
         if (res && !this.isBlocked(res)) return res.text()
-        const blocked = this.blockedMessage()
-        this.reportError("fetch", blocked)
-        throw blocked
+        throw this.fail("fetch", this.blockedMessage())
     }
 
     private async getJson<T>(url: string): Promise<T> {
         const text = await this.getText(url, { Referer: `${this.baseUrl}/`, "X-Requested-With": "XMLHttpRequest", Accept: "application/json, text/javascript, */*; q=0.01" })
         const parsed = this.parseJson<T>(text)
-        if (parsed === undefined) throw "response was not valid JSON"
+        if (parsed === undefined) throw this.fail("parse", "response was not valid JSON")
         return parsed
     }
 
@@ -487,6 +483,11 @@ class Provider {
         try {
             console.error("SEHERRv1 " + JSON.stringify({ t: this.now(), ext: "animepahe", scope: scope, msg: String(message) }))
         } catch (_e) {}
+    }
+
+    private fail(scope: string, message: string): string {
+        this.reportError(scope, message)
+        return message
     }
 
     private blockedMessage(): string {
