@@ -254,6 +254,14 @@ function init() {
             fsBinary = null
         }
 
+        function downloaderReady(): boolean {
+            try {
+                return typeof $downloader !== "undefined" && !!$downloader && typeof $downloader.download === "function"
+            } catch (_e) {
+                return false
+            }
+        }
+
         function binaryEnsureAndStart(): void {
             if (fsBusy) return
             const pick = binaryAsset()
@@ -283,6 +291,13 @@ function init() {
             try {
                 $os.mkdirAll(dir, 493)
             } catch (_e) {}
+            if (!downloaderReady()) {
+                fsStatus.set("down")
+                fsNote.set("Auto-download is blocked by Seanime's secure mode. Install Docker, switch to Remote mode, or disable extension secure mode in Seanime settings.")
+                ctx.toast.warning(fsNote.get())
+                tray.update()
+                return
+            }
             fsBusy = true
             fsStatus.set("starting")
             fsNote.set("Downloading FlareSolverr " + FS_VERSION + "…")
@@ -294,7 +309,8 @@ function init() {
             } catch (_e) {
                 fsBusy = false
                 fsStatus.set("down")
-                fsNote.set("Download not authorized or failed.")
+                fsNote.set("Download blocked: " + String(_e) + " — try Docker or Remote mode, or disable Seanime secure mode.")
+                ctx.toast.error(fsNote.get())
                 tray.update()
                 return
             }
