@@ -1,7 +1,7 @@
 {
   "id": "aqua-utils",
   "name": "Aqua's Utils",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aqua-utils/manifest.json",
   "language": "typescript",
   "type": "plugin",
@@ -22,6 +22,13 @@
         },
         "commandScopes": [
           { "command": "docker", "description": "Start/stop the local FlareSolverr container (Docker mode).", "args": [{ "validator": "$ARGS" }] },
+          { "command": "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe", "description": "Docker CLI at its standard Windows install path (used when Docker isn't on PATH).", "args": [{ "validator": "$ARGS" }] },
+          { "command": "C:\\Program Files\\Docker\\Docker\\resources\\docker.exe", "description": "Docker CLI at an alternate Windows install path.", "args": [{ "validator": "$ARGS" }] },
+          { "command": "/usr/local/bin/docker", "description": "Docker CLI at its common macOS/Linux path.", "args": [{ "validator": "$ARGS" }] },
+          { "command": "/usr/bin/docker", "description": "Docker CLI at its common Linux path.", "args": [{ "validator": "$ARGS" }] },
+          { "command": "/opt/homebrew/bin/docker", "description": "Docker CLI at the Homebrew (Apple Silicon) path.", "args": [{ "validator": "$ARGS" }] },
+          { "command": "/snap/bin/docker", "description": "Docker CLI installed via snap.", "args": [{ "validator": "$ARGS" }] },
+          { "command": "/Applications/Docker.app/Contents/Resources/bin/docker", "description": "Docker CLI bundled inside Docker Desktop on macOS.", "args": [{ "validator": "$ARGS" }] },
           { "command": "sh", "description": "Launch the downloaded FlareSolverr binary on Linux/macOS (Binary mode).", "args": [{ "value": "-c" }, { "validator": "$ARGS" }] },
           { "command": "cmd", "description": "Launch the downloaded FlareSolverr binary on Windows (Binary mode).", "args": [{ "value": "/c" }, { "validator": "$ARGS" }] }
         ],

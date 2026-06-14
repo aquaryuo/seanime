@@ -42,6 +42,8 @@ function init() {
         const fsSessionRef = ctx.fieldRef<string>(fsSession.get())
         let fsBusy = false
         let fsBinary: $os.Cmd | null = null
+        const dockerExe = ctx.state<string>("docker")
+        let dockerResolved = false
 
         const tray = ctx.newTray({
             iconUrl: "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/animepahe/icon.png",
@@ -177,47 +179,102 @@ function init() {
             tray.update()
         }
 
+        function dockerCandidates(): string[] {
+            if ($os.platform === "windows") {
+                return ["docker", "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe", "C:\\Program Files\\Docker\\Docker\\resources\\docker.exe"]
+            }
+            return ["docker", "/usr/local/bin/docker", "/usr/bin/docker", "/opt/homebrew/bin/docker", "/snap/bin/docker", "/Applications/Docker.app/Contents/Resources/bin/docker"]
+        }
+
+        function resolveDocker(cb: (exe: string | null, up: boolean) => void): void {
+            const cands = dockerCandidates()
+            let i = 0
+            function tryNext(): void {
+                if (i >= cands.length) {
+                    cb(null, false)
+                    return
+                }
+                const cand = cands[i++]
+                let done = false
+                try {
+                    const probe = $osExtra.asyncCmd(cand, "info")
+                    probe.run((_d, _e, code, _s) => {
+                        if (code === undefined || done) return
+                        done = true
+                        cb(cand, code === 0)
+                    })
+                } catch (_e) {
+                    tryNext()
+                }
+            }
+            tryNext()
+        }
+
+        function ensureDockerExe(cb: (exe: string | null) => void): void {
+            if (dockerResolved) {
+                cb(dockerExe.get() || null)
+                return
+            }
+            resolveDocker((exe, _up) => {
+                dockerResolved = true
+                if (exe) dockerExe.set(exe)
+                cb(exe)
+            })
+        }
+
         function dockerStart(): void {
             if (fsBusy) return
-            fsBusy = true
-            fsStatus.set("starting")
-            fsNote.set("Starting FlareSolverr container…")
-            tray.update()
-            const run = $osExtra.asyncCmd("docker", "run", "-d", "--name", FS_CONTAINER, "-p", fsPort.get() + ":8191", "-e", "LOG_LEVEL=info", "--restart", "unless-stopped", FS_IMAGE)
-            run.run((_d, _e, code, _s) => {
-                if (code === undefined) return
-                if (code === 0) {
-                    fsBusy = false
-                    fsNote.set("Container created; waiting for it to come up…")
+            ensureDockerExe((exe) => {
+                if (!exe) {
+                    fsStatus.set("down")
+                    fsNote.set("Docker not found. Install Docker Desktop and restart Seanime, or use Binary/Remote mode.")
+                    ctx.toast.error(fsNote.get())
                     tray.update()
                     return
                 }
-                const start = $osExtra.asyncCmd("docker", "start", FS_CONTAINER)
-                start.run((_d2, _e2, code2, _s2) => {
-                    if (code2 === undefined) return
-                    fsBusy = false
-                    if (code2 === 0) {
-                        fsNote.set("Container started; waiting for it to come up…")
-                    } else {
-                        fsStatus.set("down")
-                        fsNote.set("Could not start the container — is Docker installed and running?")
-                        ctx.toast.error(fsNote.get())
+                fsBusy = true
+                fsStatus.set("starting")
+                fsNote.set("Starting FlareSolverr container…")
+                tray.update()
+                const run = $osExtra.asyncCmd(exe, "run", "-d", "--name", FS_CONTAINER, "-p", fsPort.get() + ":8191", "-e", "LOG_LEVEL=info", "--restart", "unless-stopped", FS_IMAGE)
+                run.run((_d, _e, code, _s) => {
+                    if (code === undefined) return
+                    if (code === 0) {
+                        fsBusy = false
+                        fsNote.set("Container created; waiting for it to come up…")
+                        tray.update()
+                        return
                     }
-                    tray.update()
+                    const start = $osExtra.asyncCmd(exe, "start", FS_CONTAINER)
+                    start.run((_d2, _e2, code2, _s2) => {
+                        if (code2 === undefined) return
+                        fsBusy = false
+                        if (code2 === 0) {
+                            fsNote.set("Container started; waiting for it to come up…")
+                        } else {
+                            fsStatus.set("down")
+                            fsNote.set("Could not start the container — is the Docker daemon running?")
+                            ctx.toast.error(fsNote.get())
+                        }
+                        tray.update()
+                    })
                 })
             })
         }
 
         function dockerStop(): void {
             if (fsBusy) return
-            fsBusy = true
-            const stop = $osExtra.asyncCmd("docker", "stop", FS_CONTAINER)
-            stop.run((_d, _e, code, _s) => {
-                if (code === undefined) return
-                fsBusy = false
-                fsStatus.set("down")
-                fsNote.set(code === 0 ? "Container stopped." : "Stop failed — the container may not exist.")
-                tray.update()
+            ensureDockerExe((exe) => {
+                if (!exe) return
+                fsBusy = true
+                const stop = $osExtra.asyncCmd(exe, "stop", FS_CONTAINER)
+                stop.run((_d, _e, code, _s) => {
+                    if (code === undefined) return
+                    fsBusy = false
+                    fsStatus.set("down")
+                    fsNote.set(code === 0 ? "Container stopped." : "Stop failed — the container may not exist.")
+                    tray.update()
+                })
             })
         }
 
@@ -264,6 +321,13 @@ function init() {
 
         function binaryEnsureAndStart(): void {
             if (fsBusy) return
+            if (typeof $os === "undefined" || typeof $downloader === "undefined") {
+                fsStatus.set("down")
+                fsNote.set("Seanime's strict secure mode blocks local file & download access — only Remote mode works here. Turn off strict secure mode in Seanime settings, or use Remote mode with a FlareSolverr you run yourself.")
+                ctx.toast.warning(fsNote.get())
+                tray.update()
+                return
+            }
             const pick = binaryAsset()
             if (!pick) {
                 fsNote.set("Binary mode supports Linux/Windows x64 only. Use Docker or Remote here.")
@@ -293,14 +357,14 @@ function init() {
             } catch (_e) {}
             if (!downloaderReady()) {
                 fsStatus.set("down")
-                fsNote.set("Auto-download is blocked by Seanime's secure mode. Install Docker, switch to Remote mode, or disable extension secure mode in Seanime settings.")
+                fsNote.set("FlareSolverr auto-download isn't available here. Use Docker or Remote mode.")
                 ctx.toast.warning(fsNote.get())
                 tray.update()
                 return
             }
             fsBusy = true
             fsStatus.set("starting")
-            fsNote.set("Downloading FlareSolverr " + FS_VERSION + "…")
+            fsNote.set("Downloading FlareSolverr " + FS_VERSION + " — if Seanime asks, click Allow to permit the download.")
             tray.update()
             const url = "https://github.com/FlareSolverr/FlareSolverr/releases/download/" + FS_VERSION + "/" + pick.asset
             let id = ""
@@ -309,7 +373,13 @@ function init() {
             } catch (_e) {
                 fsBusy = false
                 fsStatus.set("down")
-                fsNote.set("Download blocked: " + String(_e) + " — try Docker or Remote mode, or disable Seanime secure mode.")
+                const em = String(_e)
+                let msg = "Download blocked: " + em + " — try Docker or Remote mode."
+                if (em.indexOf("denied") >= 0) msg = "Download declined. Re-run setup and click Allow on the Seanime popup, or use Docker/Remote mode."
+                else if (em.indexOf("unavailable") >= 0) msg = "Seanime couldn't show the permission popup (no app window connected). Open the Seanime app window, then re-run setup."
+                else if (em.indexOf("deadline") >= 0 || em.indexOf("timeout") >= 0 || em.indexOf("context") >= 0) msg = "The permission popup timed out. Re-run setup and click Allow."
+                else if (em.indexOf("not authorized") >= 0) msg = "Download path not authorized — please report this (plugin bug)."
+                fsNote.set(msg)
                 ctx.toast.error(fsNote.get())
                 tray.update()
                 return
@@ -370,35 +440,31 @@ function init() {
             }
         }
 
-        function dockerAvailable(cb: (ok: boolean) => void): void {
-            try {
-                const probe = $osExtra.asyncCmd("docker", "info")
-                probe.run((_d, _e, code, _s) => {
-                    if (code === undefined) return
-                    cb(code === 0)
-                })
-            } catch (_e) {
-                cb(false)
-            }
-        }
-
         function simpleSetup(): void {
             void fsRefresh().then(() => {
                 if (fsStatus.get() === "up") return
                 fsNote.set("Setting up Cloudflare bypass automatically…")
                 tray.update()
-                dockerAvailable((ok) => {
-                    if (ok) {
+                resolveDocker((exe, up) => {
+                    if (exe) {
+                        dockerResolved = true
+                        dockerExe.set(exe)
+                    }
+                    if (exe && up) {
                         fsMode.set("docker")
                         fsAutoStart.set(true)
                         fsPersist()
                         dockerStart()
-                    } else {
-                        fsMode.set("binary")
-                        fsAutoStart.set(true)
-                        fsPersist()
-                        binaryEnsureAndStart()
+                        return
                     }
+                    if (exe) {
+                        fsNote.set("Docker is installed but its daemon isn't running — start Docker Desktop, then re-run setup. Using the bundled binary for now…")
+                        tray.update()
+                    }
+                    fsMode.set("binary")
+                    fsAutoStart.set(true)
+                    fsPersist()
+                    binaryEnsureAndStart()
                 })
             })
         }

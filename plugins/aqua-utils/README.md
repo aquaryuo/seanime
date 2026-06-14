@@ -34,8 +34,14 @@ Most providers don't need this — try in order:
 
 The tab has two modes (toggle in the tab, persisted):
 
-- **Simple** *(default)* — zero-config. On plugin load it brings FlareSolverr up automatically: Docker if the daemon is reachable (`docker info` exit 0), otherwise it downloads + runs the self-contained binary. It binds the default port `8191`, which is the default `solverUrl` consumers (e.g. animepahe) route to, so they're covered with no setup. The tab shows only status + Re-run/Re-check. The auto-download path needs Seanime's **extension secure mode off (non-strict)** — strict mode never binds `$downloader`, so use Docker or Remote there; the tab says so if it's blocked.
+- **Simple** *(default)* — zero-config. On plugin load it brings FlareSolverr up automatically: Docker if it's installed and the daemon is up, otherwise it downloads + runs the self-contained binary. It binds the default port `8191`, which is the default `solverUrl` consumers (e.g. animepahe) route to, so they're covered with no setup. The tab shows only status + Re-run/Re-check.
 - **Advanced** — exposes the full controls below.
+
+**Docker detection** — `docker` is resolved by probing, in order: `docker` on the Seanime process's `PATH`, then the well-known install paths (Windows `%ProgramFiles%\Docker\Docker\resources\bin\docker.exe`, macOS/Linux `/usr/local/bin`, `/usr/bin`, `/opt/homebrew/bin`, `/snap/bin`, `Docker.app`). Those paths are declared as `commandScopes`, so Seanime authorizes the exact path and `exec` runs it directly — no PATH edit needed. A command that isn't found makes the probe throw (skipped); "found but exits non-zero" means Docker is installed but its **daemon isn't running** (start Docker Desktop). If your Docker lives somewhere non-standard, add it to `PATH` and restart Seanime.
+
+**Secure mode & consent** — the binary auto-download is gated by Seanime's extension secure mode:
+- *Non-strict, secure mode on*: Seanime pops an **Allow / Don't Allow** prompt when the download starts — click **Allow** (remembered ~3 min). No need to disable secure mode. The prompt only shows in Seanime's **main app window/tab**.
+- *Strict mode*: `$os`, `$osExtra`, and `$downloader` are all unbound, so Docker and Binary both fail — **only Remote mode works**. Turn off strict secure mode, or point Remote at a FlareSolverr you run yourself.
 
 **Launch modes** *(Advanced)* — pick one in the tab, persisted:
 
@@ -77,5 +83,5 @@ async function cfGet(url: string): Promise<{ html: string; cookies: { name: stri
 
 - Scopes: `system`, `storage`, `notification`.
 - `networkAccess: ["*"]` — loopback (log API) + configured remote FlareSolverr + GitHub release download. Narrow to `127.0.0.1`/`localhost` for Errors + local FlareSolverr only.
-- `commandScopes`: `docker` (Docker mode), `sh`/`cmd` (Binary launch) — decline `sh`/`cmd` if not using Binary.
+- `commandScopes`: `docker` plus its well-known absolute install paths (Docker mode, so it's found off-PATH), `sh`/`cmd` (Binary launch) — decline `sh`/`cmd` if not using Binary.
 - `readPaths`/`writePaths`: `$CACHE/seanime-flaresolverr` (Binary download/extract).
