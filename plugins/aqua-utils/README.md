@@ -38,6 +38,8 @@ Most providers don't need this — try in order:
 - **Docker** — `docker run/start/stop` a `flaresolverr` container. Needs Docker.
 - **Binary** *(experimental)* — downloads the GitHub release into your cache dir and runs it. **Linux/Windows x64 only**, still needs Chrome/Chromium. Launched via `sh -c` / `cmd /c` (Seanime allows commands by exact name only) — hence the broad `sh`/`cmd` permission; avoid it with Remote/Docker.
 
+**Auto-start on launch** — a toggle in the tab. When on (Docker/Binary mode), FlareSolverr is started on plugin load if not already up, so consumers that auto-route blocked requests through it (e.g. animepahe, default `solverUrl` = local FlareSolverr) always have it ready. No-op in Remote mode (you run that solver yourself).
+
 Consumer side — hit FlareSolverr's API directly (no plugin IPC); reuse `cookies` + `userAgent` on follow-up requests:
 
 ```ts
