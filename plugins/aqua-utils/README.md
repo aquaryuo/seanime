@@ -32,13 +32,18 @@ Most providers don't need this — try in order:
 2. **`ChromeDP`** (built-in) — drives an installed browser, no Docker. For harder JS challenges.
 3. **FlareSolverr** — only for interactive challenges ("Verifying you are human" / Turnstile); needs a real browser, so not dependency-free.
 
-**Launch modes** (pick one in the tab, persisted):
+The tab has two modes (toggle in the tab, persisted):
 
-- **Remote** *(default)* — point at a FlareSolverr you run yourself (binary / another box / NAS); the plugin only manages sessions + status. Set Host/Port.
+- **Simple** *(default)* — zero-config. On plugin load it brings FlareSolverr up automatically: Docker if the daemon is reachable (`docker info` exit 0), otherwise it downloads + runs the self-contained binary. It binds the default port `8191`, which is the default `solverUrl` consumers (e.g. animepahe) route to, so they're covered with no setup. The tab shows only status + Re-run/Re-check.
+- **Advanced** — exposes the full controls below.
+
+**Launch modes** *(Advanced)* — pick one in the tab, persisted:
+
+- **Remote** — point at a FlareSolverr you run yourself (binary / another box / NAS); the plugin only manages sessions + status. Set Host/Port.
 - **Docker** — `docker run/start/stop` a `flaresolverr` container. Needs Docker.
-- **Binary** *(experimental)* — downloads the GitHub release into your cache dir and runs it. **Linux/Windows x64 only**, still needs Chrome/Chromium. Launched via `sh -c` / `cmd /c` (Seanime allows commands by exact name only) — hence the broad `sh`/`cmd` permission; avoid it with Remote/Docker.
+- **Binary** — downloads the GitHub release into your cache dir and runs it. **Linux/Windows x64 only**, still needs Chrome/Chromium. Launched via `sh -c` / `cmd /c` (Seanime allows commands by exact name only) — hence the broad `sh`/`cmd` permission; avoid it with Remote.
 
-**Auto-start on launch** — a toggle in the tab. When on (Docker/Binary mode), FlareSolverr is started on plugin load if not already up, so consumers that auto-route blocked requests through it (e.g. animepahe, default `solverUrl` = local FlareSolverr) always have it ready. No-op in Remote mode (you run that solver yourself).
+**Auto-start on launch** *(Advanced)* — a toggle in the tab. When on (Docker/Binary mode), FlareSolverr is started on plugin load if not already up. Simple mode always auto-starts; this toggle only matters once you've switched to Advanced and picked Remote.
 
 Consumer side — hit FlareSolverr's API directly (no plugin IPC); reuse `cookies` + `userAgent` on follow-up requests:
 

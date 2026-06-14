@@ -21,6 +21,7 @@ function init() {
         const FS_POLL_MS = 5000
 
         const view = ctx.state<string>("errors")
+        const uiMode = ctx.state<string>($storage.get<string>("ui.mode") || "simple")
 
         const appBase = ctx.state<string>($storage.get<string>("seh.appBase") || SEH_DEFAULT_APP)
         const errors = ctx.state<SehError[]>($storage.get<SehError[]>("seh.errors") || [])
@@ -353,6 +354,39 @@ function init() {
             }
         }
 
+        function dockerAvailable(cb: (ok: boolean) => void): void {
+            try {
+                const probe = $osExtra.asyncCmd("docker", "info")
+                probe.run((_d, _e, code, _s) => {
+                    if (code === undefined) return
+                    cb(code === 0)
+                })
+            } catch (_e) {
+                cb(false)
+            }
+        }
+
+        function simpleSetup(): void {
+            void fsRefresh().then(() => {
+                if (fsStatus.get() === "up") return
+                fsNote.set("Setting up Cloudflare bypass automatically…")
+                tray.update()
+                dockerAvailable((ok) => {
+                    if (ok) {
+                        fsMode.set("docker")
+                        fsAutoStart.set(true)
+                        fsPersist()
+                        dockerStart()
+                    } else {
+                        fsMode.set("binary")
+                        fsAutoStart.set(true)
+                        fsPersist()
+                        binaryEnsureAndStart()
+                    }
+                })
+            })
+        }
+
         ctx.registerEventHandler("view-errors", () => view.set("errors"))
         ctx.registerEventHandler("view-cf", () => view.set("cf"))
 
@@ -399,6 +433,13 @@ function init() {
             fsPersist()
             tray.update()
         })
+        ctx.registerEventHandler("ui-mode-toggle", () => {
+            uiMode.set(uiMode.get() === "simple" ? "advanced" : "simple")
+            $storage.set("ui.mode", uiMode.get())
+            if (uiMode.get() === "simple") simpleSetup()
+            tray.update()
+        })
+        ctx.registerEventHandler("fs-simple-setup", () => simpleSetup())
         ctx.registerEventHandler("fs-save", () => {
             fsHost.set((fsHostRef.current || "").trim() || FS_DEFAULT_HOST)
             fsPort.set((fsPortRef.current || "").trim() || FS_DEFAULT_PORT)
@@ -437,6 +478,16 @@ function init() {
             const rows: any[] = []
             rows.push(tray.text(fsStatusLabel()))
             if (fsNote.get()) rows.push(tray.text(fsNote.get()))
+            if (uiMode.get() !== "advanced") {
+                const up = fsStatus.get() === "up"
+                rows.push(tray.text(up ? "Cloudflare bypass is ready — nothing to configure." : "Cloudflare bypass is set up automatically. If it stays down, install Docker or use a Chrome-equipped machine."))
+                rows.push(tray.flex([
+                    tray.button({ label: up ? "Re-check" : "Re-run setup", onClick: "fs-simple-setup", intent: "success", size: "sm" }),
+                    tray.button({ label: "Advanced", onClick: "ui-mode-toggle", intent: "gray", size: "sm" }),
+                ]))
+                return rows
+            }
+            rows.push(tray.button({ label: "← Simple mode", onClick: "ui-mode-toggle", intent: "gray", size: "sm" }))
             rows.push(tray.text("Launch mode: " + fsMode.get()))
             rows.push(tray.flex([
                 tray.button({ label: "Remote", onClick: "fs-mode-remote", intent: fsMode.get() === "remote" ? "primary" : "gray", size: "sm" }),
@@ -483,7 +534,9 @@ function init() {
         ctx.jobs.poll("aqua-seh-poll", sehPoll, SEH_POLL_MS, { immediate: true })
         ctx.jobs.poll("aqua-fs-poll", fsRefresh, FS_POLL_MS, { immediate: true })
 
-        if (fsAutoStart.get() && fsMode.get() !== "remote") {
+        if (uiMode.get() !== "advanced") {
+            simpleSetup()
+        } else if (fsAutoStart.get() && fsMode.get() !== "remote") {
             void fsRefresh().then(() => {
                 if (fsStatus.get() !== "up") fsStart()
             })
