@@ -32,6 +32,7 @@ function init() {
         const fsHost = ctx.state<string>($storage.get<string>("fs.host") || FS_DEFAULT_HOST)
         const fsPort = ctx.state<string>($storage.get<string>("fs.port") || FS_DEFAULT_PORT)
         const fsSession = ctx.state<string>($storage.get<string>("fs.session") || FS_DEFAULT_SESSION)
+        const fsAutoStart = ctx.state<boolean>($storage.get<boolean>("fs.autoStart") || false)
         const fsStatus = ctx.state<string>("unknown")
         const fsSessions = ctx.state<string[]>([])
         const fsNote = ctx.state<string>("")
@@ -137,6 +138,7 @@ function init() {
             $storage.set("fs.host", fsHost.get())
             $storage.set("fs.port", fsPort.get())
             $storage.set("fs.session", fsSession.get())
+            $storage.set("fs.autoStart", fsAutoStart.get())
         }
 
         async function fsApi(cmd: string, extra: { [k: string]: any }): Promise<any> {
@@ -392,6 +394,11 @@ function init() {
             fsPersist()
             tray.update()
         })
+        ctx.registerEventHandler("fs-autostart-toggle", () => {
+            fsAutoStart.set(!fsAutoStart.get())
+            fsPersist()
+            tray.update()
+        })
         ctx.registerEventHandler("fs-save", () => {
             fsHost.set((fsHostRef.current || "").trim() || FS_DEFAULT_HOST)
             fsPort.set((fsPortRef.current || "").trim() || FS_DEFAULT_PORT)
@@ -441,6 +448,15 @@ function init() {
                 tray.button({ label: "Stop", onClick: "fs-stop", intent: "alert", size: "sm" }),
                 tray.button({ label: "Refresh", onClick: "fs-refresh", intent: "gray", size: "sm" }),
             ]))
+            rows.push(
+                tray.button({
+                    label: fsAutoStart.get() ? "Auto-start on launch: ON" : "Auto-start on launch: OFF",
+                    onClick: "fs-autostart-toggle",
+                    intent: fsAutoStart.get() ? "primary" : "gray",
+                    size: "sm",
+                }),
+            )
+            if (fsAutoStart.get() && fsMode.get() === "remote") rows.push(tray.text("Auto-start needs Docker or Binary mode — Remote points at a solver you run yourself."))
             const ss = fsSessions.get()
             rows.push(tray.text("Sessions: " + (ss.length ? ss.join(", ") : "none")))
             rows.push(tray.button({ label: "Create \"" + (fsSession.get() || FS_DEFAULT_SESSION) + "\" session", onClick: "fs-create-session", intent: "gray", size: "sm" }))
@@ -466,5 +482,11 @@ function init() {
 
         ctx.jobs.poll("aqua-seh-poll", sehPoll, SEH_POLL_MS, { immediate: true })
         ctx.jobs.poll("aqua-fs-poll", fsRefresh, FS_POLL_MS, { immediate: true })
+
+        if (fsAutoStart.get() && fsMode.get() !== "remote") {
+            void fsRefresh().then(() => {
+                if (fsStatus.get() !== "up") fsStart()
+            })
+        }
     })
 }
