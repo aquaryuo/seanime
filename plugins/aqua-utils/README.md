@@ -41,7 +41,7 @@ The tab has two modes (toggle in the tab, persisted):
 
 **Secure mode & consent** — the binary auto-download is gated by Seanime's extension secure mode:
 - *Non-strict, secure mode on*: Seanime pops an **Allow / Don't Allow** prompt when the download starts — click **Allow** (remembered ~3 min). No need to disable secure mode. The prompt only shows in Seanime's **main app window/tab**.
-- *Strict mode*: `$os`, `$osExtra`, and `$downloader` are all unbound, so Docker and Binary both fail — **only Remote mode works**. Turn off strict secure mode, or point Remote at a FlareSolverr you run yourself.
+- *Strict mode*: `$os`, `$osExtra`, and the file downloader (`ctx.downloader`) are all unbound, so Docker and Binary both fail — **only Remote mode works**. Turn off strict secure mode, or point Remote at a FlareSolverr you run yourself.
 
 **Launch modes** *(Advanced)* — pick one in the tab, persisted:
 

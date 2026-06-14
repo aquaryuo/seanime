@@ -44,6 +44,7 @@ function init() {
         let fsBinary: $os.Cmd | null = null
         const dockerExe = ctx.state<string>("docker")
         let dockerResolved = false
+        const dl = (ctx as any).downloader
 
         const tray = ctx.newTray({
             iconUrl: "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/animepahe/icon.png",
@@ -313,7 +314,7 @@ function init() {
 
         function downloaderReady(): boolean {
             try {
-                return typeof $downloader !== "undefined" && !!$downloader && typeof $downloader.download === "function"
+                return !!dl && typeof dl.download === "function"
             } catch (_e) {
                 return false
             }
@@ -321,7 +322,7 @@ function init() {
 
         function binaryEnsureAndStart(): void {
             if (fsBusy) return
-            if (typeof $os === "undefined" || typeof $downloader === "undefined") {
+            if (typeof $os === "undefined" || typeof $osExtra === "undefined" || !dl) {
                 fsStatus.set("down")
                 fsNote.set("Seanime's strict secure mode blocks local file & download access — only Remote mode works here. Turn off strict secure mode in Seanime settings, or use Remote mode with a FlareSolverr you run yourself.")
                 ctx.toast.warning(fsNote.get())
@@ -369,7 +370,7 @@ function init() {
             const url = "https://github.com/FlareSolverr/FlareSolverr/releases/download/" + FS_VERSION + "/" + pick.asset
             let id = ""
             try {
-                id = $downloader.download(url, archive)
+                id = dl.download(url, archive)
             } catch (_e) {
                 fsBusy = false
                 fsStatus.set("down")
@@ -384,7 +385,7 @@ function init() {
                 tray.update()
                 return
             }
-            const cancel = $downloader.watch(id, (p) => {
+            const cancel = dl.watch(id, (p: $downloader.DownloadProgress | undefined) => {
                 if (!p) return
                 if (p.status === "downloading") {
                     fsNote.set("Downloading… " + Math.round(p.percentage) + "%")
