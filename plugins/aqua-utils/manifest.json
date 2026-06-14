@@ -1,7 +1,7 @@
 {
   "id": "aqua-utils",
   "name": "Aqua's Utils",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aqua-utils/manifest.json",
   "language": "typescript",
   "type": "plugin",
@@ -26,7 +26,7 @@
           { "command": "cmd", "description": "Launch the downloaded FlareSolverr binary on Windows (Binary mode).", "args": [{ "value": "/c" }, { "validator": "$ARGS" }] }
         ],
         "readPaths": ["$CACHE", "$CACHE/**"],
-        "writePaths": ["$CACHE/seanime-flaresolverr", "$CACHE/seanime-flaresolverr/**"]
+        "writePaths": ["$CACHE/seanime-flaresolverr", "$CACHE/seanime-flaresolverr/*", "$CACHE/seanime-flaresolverr/**"]
       }
     }
   }

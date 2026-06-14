@@ -34,7 +34,7 @@ Most providers don't need this — try in order:
 
 The tab has two modes (toggle in the tab, persisted):
 
-- **Simple** *(default)* — zero-config. On plugin load it brings FlareSolverr up automatically: Docker if the daemon is reachable (`docker info` exit 0), otherwise it downloads + runs the self-contained binary. It binds the default port `8191`, which is the default `solverUrl` consumers (e.g. animepahe) route to, so they're covered with no setup. The tab shows only status + Re-run/Re-check.
+- **Simple** *(default)* — zero-config. On plugin load it brings FlareSolverr up automatically: Docker if the daemon is reachable (`docker info` exit 0), otherwise it downloads + runs the self-contained binary. It binds the default port `8191`, which is the default `solverUrl` consumers (e.g. animepahe) route to, so they're covered with no setup. The tab shows only status + Re-run/Re-check. The auto-download path needs Seanime's **extension secure mode off (non-strict)** — strict mode never binds `$downloader`, so use Docker or Remote there; the tab says so if it's blocked.
 - **Advanced** — exposes the full controls below.
 
 **Launch modes** *(Advanced)* — pick one in the tab, persisted:
