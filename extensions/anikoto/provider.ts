@@ -86,9 +86,11 @@ class Provider {
         return {
             episodeServers: [
                 "Auto",
+                "VidPlay-1",
                 "HD-1",
                 "Vidstream-2",
                 "VidCloud-1",
+                "HS: VidPlay-1",
                 "HS: HD-1",
                 "HS: Vidstream-2",
                 "HS: VidCloud-1",
@@ -450,8 +452,10 @@ class Provider {
         if (server === "Auto" || server === "default" || !server) {
             const $ = await this.serverListDoc(dataIds)
             const groups = audio === "dub" ? ["dub"] : ["sub", "hsub"]
-            const KNOWN_SERVERS = ["HD-1", "Vidstream-2", "VidCloud-1"]
-            const candidates = this.collectServers($, groups).filter((c) => KNOWN_SERVERS.indexOf(c.name) !== -1)
+            const KNOWN_SERVERS = ["VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1"]
+            const candidates = this.collectServers($, groups)
+                .filter((c) => KNOWN_SERVERS.indexOf(c.name) !== -1)
+                .sort((a, b) => KNOWN_SERVERS.indexOf(a.name) - KNOWN_SERVERS.indexOf(b.name))
             if (candidates.length === 0) throw audio === "dub" ? "anikoto: no dub is available for this episode" : "anikoto: no server available for this episode"
 
             await Promise.all(candidates.map((c) => this.fetchSources(c.linkId).catch(() => undefined)))
@@ -546,12 +550,32 @@ class Provider {
         const src = server.videoSources[0]
         if (!src || !src.url) return false
         try {
-            const res = await fetch(src.url, { headers: server.headers, timeout: 3 })
+            const res = await fetch(src.url, { headers: server.headers, timeout: 4 })
             if (!res.ok) return false
-            return res.text().indexOf("#EXTM3U") !== -1
+            const body = res.text()
+            if (body.indexOf("#EXTM3U") === -1) return false
+            const variants = this.variantLevelUrls(body, src.url)
+            if (variants.length === 0) return true
+            const checks = await Promise.all(
+                variants.map((v) => fetch(v, { headers: server.headers, timeout: 4 }).then((r) => r.ok).catch(() => false))
+            )
+            return checks.every((ok) => ok)
         } catch (_e) {
             return false
         }
+    }
+
+    private variantLevelUrls(master: string, masterUrl: string): string[] {
+        const out: string[] = []
+        const lines = master.split(/\r?\n/)
+        const dir = masterUrl.replace(/[?#].*$/, "").replace(/[^/]*$/, "")
+        for (let i = 0; i < lines.length; i++) {
+            if (lines[i].indexOf("#EXT-X-STREAM-INF") === 0) {
+                const u = (lines[i + 1] || "").trim()
+                if (u && u.charAt(0) !== "#") out.push(/^https?:\/\//i.test(u) ? u : dir + u)
+            }
+        }
+        return out
     }
 
     private async fetchSources(
