@@ -458,8 +458,6 @@ class Provider {
                 .sort((a, b) => KNOWN_SERVERS.indexOf(a.name) - KNOWN_SERVERS.indexOf(b.name))
             if (candidates.length === 0) throw audio === "dub" ? "anikoto: no dub is available for this episode" : "anikoto: no server available for this episode"
 
-            await Promise.all(candidates.map((c) => this.fetchSources(c.linkId).catch(() => undefined)))
-
             const label = server === "Auto" ? "Auto" : ""
             let firstResolved: EpisodeServer | undefined
             for (const c of candidates) {
