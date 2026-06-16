@@ -581,6 +581,57 @@ function init() {
             fsBinary = null
         }
 
+        function aquatilsDir(): string {
+            return $filepath.join($os.cacheDir(), "aquatils")
+        }
+
+        function dirExists(p: string): boolean {
+            try { return !!$os.stat(p) } catch (_e) { return false }
+        }
+
+        // chromiumDownloadedHere: a Chromium WE fetched into the cache is present
+        // (distinct from a system-installed browser, which we never remove).
+        function chromiumDownloadedHere(): boolean {
+            try { return chromiumCachedPath() !== "" || dirExists($filepath.join(aquatilsDir(), "chromium")) } catch (_e) { return false }
+        }
+
+        // removeSolverDownloads deletes every downloaded solver version (but not
+        // Chromium). Seanime's plugin-uninstall leaves these on disk, so this is
+        // how the user reclaims the space.
+        function removeSolverDownloads(): void {
+            fsManualStop = true
+            binaryStop()
+            setStatus("down")
+            let removed = false
+            try {
+                const base = aquatilsDir()
+                let entries: $os.DirEntry[] = []
+                try { entries = $os.readDir(base) } catch (_e) {}
+                if (entries.length) {
+                    for (const e of entries) {
+                        if (e.isDir() && e.name() !== "chromium") {
+                            try { $os.removeAll($filepath.join(base, e.name())); removed = true } catch (_e) {}
+                        }
+                    }
+                } else {
+                    try { $os.removeAll($filepath.join(base, FS_VERSION)); removed = true } catch (_e) {}
+                }
+            } catch (_e) {}
+            fsNote.set(removed ? "Removed the downloaded solver. Press Start to fetch it again." : "No solver download was present.")
+            tray.update()
+        }
+
+        function removeChromiumDownloads(): void {
+            const present = chromiumDownloadedHere()
+            fsManualStop = true
+            binaryStop()
+            setStatus("down")
+            try { $os.removeAll($filepath.join(aquatilsDir(), "chromium")) } catch (_e) {}
+            chromiumOverride = ""
+            fsNote.set(present ? "Removed the downloaded Chromium." : "No Chromium download was present.")
+            tray.update()
+        }
+
         function downloaderReady(): boolean {
             try {
                 return !!dl && typeof dl.download === "function"
@@ -857,6 +908,8 @@ function init() {
             fsConsent.set(!fsConsent.get())
             tray.update()
         })
+        ctx.registerEventHandler("fs-remove-solver", () => removeSolverDownloads())
+        ctx.registerEventHandler("fs-remove-chromium", () => removeChromiumDownloads())
         ctx.registerEventHandler("fs-copy", () => {
             const text = fsErr.get() || fsNote.get()
             if (!text) return
@@ -1112,6 +1165,19 @@ function init() {
                 items: [
                     tray.button({ label: "Test", onClick: "fs-test", intent: "gray-subtle", size: "xs" }),
                     tray.button({ label: "Doctor", onClick: "fs-doctor", intent: "gray-subtle", size: "xs" }),
+                ],
+                gap: 2,
+            }))
+
+            rows.push(divider())
+            rows.push(heading("Downloads"))
+            rows.push(dim("Uninstalling the plugin doesn't delete these — remove them here first if you want the disk space back."))
+            const solverHere = binaryDownloaded()
+            const chrHere = chromiumDownloadedHere()
+            rows.push(tray.flex({
+                items: [
+                    tray.button({ label: solverHere ? "Remove solver" : "Solver: none", onClick: "fs-remove-solver", intent: solverHere ? "alert-subtle" : "gray-subtle", size: "xs", disabled: !solverHere }),
+                    tray.button({ label: chrHere ? "Remove Chromium" : "Chromium: none", onClick: "fs-remove-chromium", intent: chrHere ? "alert-subtle" : "gray-subtle", size: "xs", disabled: !chrHere }),
                 ],
                 gap: 2,
             }))
