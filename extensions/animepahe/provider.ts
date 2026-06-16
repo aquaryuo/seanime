@@ -489,6 +489,7 @@ class Provider {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload),
                 timeout: 60,
+                noCloudflareBypass: true,
             })
             if (!res.ok) return undefined
             this.solverDown = false
@@ -502,7 +503,7 @@ class Provider {
     private async solveGet(url: string): Promise<string | undefined> {
         const ep = this.solverEndpoint()
         if (!ep) { this.lastSolver = { ran: false, http: 0, snippet: "" }; return undefined }
-        const data = await this.solverPost(ep, { cmd: "request.get", url, maxTimeout: 45000 })
+        const data = await this.solverPost(ep, { cmd: "request.get", url, maxTimeout: 28000 })
         const body = data && data.solution ? data.solution.response : undefined
         const http = data && data.solution && typeof data.solution.status === "number" ? data.solution.status : 0
         this.lastSolver = { ran: true, http: http, snippet: this.snip(body || "") }
