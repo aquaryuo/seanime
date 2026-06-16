@@ -8,6 +8,7 @@ class Provider {
     private lastResp: { url: string; status: number; statusText: string; ct: string; len: number; redirected: boolean; finalUrl: string; snippet: string; hit: string } | undefined = undefined
     private lastSolver: { ran: boolean; http: number; snippet: string } | undefined = undefined
     private cookieTtl = 10800000
+    private baseTtl = 21600000
     private epCacheTtl = 900000
     private serverCacheTtl = 300000
 
@@ -43,7 +44,7 @@ class Provider {
                     data = undefined
                     const msg = typeof e === "string" ? e : e && (e as any).message ? (e as any).message : "request failed"
                     lastErr = msg
-                    if (msg.indexOf("blocked") !== -1 || msg.indexOf("Cloudflare") !== -1 || msg.indexOf("challeng") !== -1) blocked = true
+                    if ((this.lastResp && this.lastResp.hit) || msg.indexOf("blocked") !== -1 || msg.indexOf("Cloudflare") !== -1) blocked = true
                 }
             }
             if (!data) continue
@@ -59,8 +60,9 @@ class Provider {
             }
         }
 
-        if (results.length === 0 && blocked) {
-            throw this.fail("search", `${this.blockedMessage()} (${lastErr})`)
+        if (results.length === 0 && lastErr) {
+            if (blocked) throw this.fail("search", `${this.blockedMessage()} (${lastErr})`)
+            throw this.fail("search", lastErr)
         }
         return this.filterBySeason(results, opts)
     }
@@ -249,10 +251,6 @@ class Provider {
     }
 
     private async resolveKwik(embedUrl: string, playUrl: string): Promise<string | undefined> {
-        const cacheKey = `apahe:kwik:${embedUrl}`
-        const cached = this.readCache<string>(cacheKey, 600000)
-        if (cached) return cached
-
         let html = ""
         try {
             const res = await this.fetchRetry(embedUrl, { headers: { Referer: playUrl }, timeout: 12 })
@@ -282,7 +280,6 @@ class Provider {
                 }
             }
         }
-        if (found) this.writeCache(cacheKey, found)
         return found
     }
 
@@ -353,12 +350,18 @@ class Provider {
         return u.replace(/^https?:\/\/animepahe\.(com|org)\b/i, "https://animepahe.pw")
     }
 
+    private invalidateBase(): void {
+        try { $store.set("apahe:base2", { at: 0, host: "" }) } catch (_e) {}
+    }
+
     private async resolveBase(): Promise<string> {
         const all = [this.baseUrl].concat(this.mirrors).map((u) => u.replace(/\/+$/, ""))
         const candidates = all.filter((u, i) => all.indexOf(u) === i)
-        if (candidates.length === 1) return this.preferredBase(candidates[0])
-        const cached = $store.get<string>("apahe:base2")
-        if (cached && /animepahe/i.test(cached)) return this.preferredBase(cached)
+        const cached = $store.get<{ at: number; host: string }>("apahe:base2")
+        const t = this.now()
+        if (cached && cached.host && /animepahe/i.test(cached.host) && t > 0 && cached.at > 0 && t - cached.at < this.baseTtl) {
+            return this.preferredBase(cached.host)
+        }
         let fallback = ""
         for (const c of candidates) {
             try {
@@ -366,7 +369,7 @@ class Provider {
                 if (res && res.ok) {
                     const canon = this.preferredBase(this.canonicalOrigin(res.url, c))
                     this.absorbCookies(res)
-                    $store.set("apahe:base2", canon)
+                    $store.set("apahe:base2", { at: this.now(), host: canon })
                     return canon
                 }
                 if (res && !fallback && (res.status === 403 || res.status === 503)) {
@@ -376,7 +379,7 @@ class Provider {
             } catch (_e) {}
         }
         if (fallback) {
-            $store.set("apahe:base2", fallback)
+            $store.set("apahe:base2", { at: this.now(), host: fallback })
             return fallback
         }
         return this.preferredBase(candidates[0])
@@ -389,12 +392,15 @@ class Provider {
             return this.cookieHeader(cached.map)
         }
         let map = cached && cached.map ? cached.map : {}
+        const before = this.cookieHeader(map)
         try {
             const res = await fetch(`${this.baseUrl}/`, { headers: this.browserHeaders(), timeout: 15 })
             map = this.mergeCookieMap(map, this.cookiesFrom(res))
         } catch (_e) {}
-        $store.set("apahe:ck", { at: this.now(), map })
-        return this.cookieHeader(map)
+        const after = this.cookieHeader(map)
+        const at = (after === before && cached && cached.at && cached.at > 0) ? cached.at : this.now()
+        $store.set("apahe:ck", { at: at, map })
+        return after
     }
 
     private async getText(url: string, extra?: { [k: string]: string }): Promise<string> {
@@ -411,9 +417,9 @@ class Provider {
         }
         const solved = await this.solveGet(url)
         if (solved) return solved
-        if (res && !this.isBlocked(res)) return res.text()
         if (!this.solverEndpoint()) throw this.fail("server", "Solver endpoint not set — configure it in the extension settings and run it via Aqua's Utils.")
         if (this.solverDown) throw this.fail("server", "Aqua's Utils solver isn't reachable at " + this.solverEndpoint() + " — open Aqua's Utils and start it.")
+        this.invalidateBase()
         throw this.fail("fetch", "The solver couldn't get past the site's protection — retry, or check Aqua's Utils.")
     }
 
@@ -429,7 +435,9 @@ class Provider {
             parsed = this.parseJson<T>(solved)
             if (parsed !== undefined) return parsed
         }
-        throw this.fail("parse", this.parseDiag(url))
+        const diag = this.parseDiag(url)
+        this.invalidateBase()
+        throw this.fail("parse", diag)
     }
 
     private parseJson<T>(text: string): T | undefined {
@@ -468,7 +476,7 @@ class Provider {
 
     private solverEndpoint(): string {
         const u = (this.solverUrl || "").trim()
-        if (u.indexOf("http") !== 0) return ""
+        if (!/^https?:\/\/[^\s/]+/i.test(u)) return ""
         const base = u.replace(/\/+$/, "")
         return /\/v1$/.test(base) ? base : `${base}/v1`
     }
@@ -481,8 +489,8 @@ class Provider {
                 body: JSON.stringify(payload),
                 timeout: 60,
             })
-            this.solverDown = false
             if (!res.ok) return undefined
+            this.solverDown = false
             return res.json<any>()
         } catch (_e) {
             this.solverDown = true
@@ -567,7 +575,7 @@ class Provider {
     }
 
     private parseDiag(url: string): string {
-        const cb = $store.get<string>("apahe:base2") || "-"
+        const cb = ($store.get<{ at: number; host: string }>("apahe:base2") || { host: "-" }).host || "-"
         const ck = $store.get<{ at: number; map: { [k: string]: string } }>("apahe:ck")
         const ckSize = ck && ck.map ? this.mapSize(ck.map) : 0
         let ddg = 0
