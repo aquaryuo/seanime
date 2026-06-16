@@ -348,24 +348,29 @@ class Provider {
         return /animepahe/i.test(m[1]) ? m[1].replace(/\/+$/, "") : fallback
     }
 
+    private preferredBase(u: string): string {
+        if (!u) return u
+        return u.replace(/^https?:\/\/animepahe\.(com|org)\b/i, "https://animepahe.pw")
+    }
+
     private async resolveBase(): Promise<string> {
         const all = [this.baseUrl].concat(this.mirrors).map((u) => u.replace(/\/+$/, ""))
         const candidates = all.filter((u, i) => all.indexOf(u) === i)
-        if (candidates.length === 1) return candidates[0]
+        if (candidates.length === 1) return this.preferredBase(candidates[0])
         const cached = $store.get<string>("apahe:base2")
-        if (cached && /animepahe/i.test(cached)) return cached
+        if (cached && /animepahe/i.test(cached)) return this.preferredBase(cached)
         let fallback = ""
         for (const c of candidates) {
             try {
                 const res = await fetch(`${c}/`, { headers: this.browserHeaders(), timeout: 10 })
                 if (res && res.ok) {
-                    const canon = this.canonicalOrigin(res.url, c)
+                    const canon = this.preferredBase(this.canonicalOrigin(res.url, c))
                     this.absorbCookies(res)
                     $store.set("apahe:base2", canon)
                     return canon
                 }
                 if (res && !fallback && (res.status === 403 || res.status === 503)) {
-                    fallback = this.canonicalOrigin(res.url, c)
+                    fallback = this.preferredBase(this.canonicalOrigin(res.url, c))
                     this.absorbCookies(res)
                 }
             } catch (_e) {}
@@ -374,7 +379,7 @@ class Provider {
             $store.set("apahe:base2", fallback)
             return fallback
         }
-        return candidates[0]
+        return this.preferredBase(candidates[0])
     }
 
     private async harvestCookies(force: boolean): Promise<string> {
@@ -407,9 +412,9 @@ class Provider {
         const solved = await this.solveGet(url)
         if (solved) return solved
         if (res && !this.isBlocked(res)) return res.text()
-        if (!this.solverEndpoint()) throw this.fail("server", "FlareSolverr endpoint not set — configure it in the extension settings and run it via Aqua's Utils.")
-        if (this.solverDown) throw this.fail("server", "FlareSolverr is not reachable at " + this.solverEndpoint() + " — open Aqua's Utils and start it.")
-        throw this.fail("fetch", "FlareSolverr could not get past the site's protection.")
+        if (!this.solverEndpoint()) throw this.fail("server", "Solver endpoint not set — configure it in the extension settings and run it via Aqua's Utils.")
+        if (this.solverDown) throw this.fail("server", "Aqua's Utils solver isn't reachable at " + this.solverEndpoint() + " — open Aqua's Utils and start it.")
+        throw this.fail("fetch", "The solver couldn't get past the site's protection — retry, or check Aqua's Utils.")
     }
 
     private async getJson<T>(url: string): Promise<T> {
@@ -511,7 +516,7 @@ class Provider {
         if (this.solverEndpoint()) {
             return "Cloudflare challenge could not be solved (even via the configured solver); AnimePahe is heavily challenging this connection."
         }
-        return "Cloudflare is challenging requests. This connection (mobile/CGNAT or a flagged IP) is being hard-challenged. Set a 'Cloudflare solver endpoint' (FlareSolverr-compatible URL) in this provider's settings, use a wired/residential connection, or retry later."
+        return "Cloudflare is challenging requests. This connection (mobile/CGNAT or a flagged IP) is being hard-challenged. Set a solver endpoint (run it via Aqua's Utils) in this provider's settings, use a wired/residential connection, or retry later."
     }
 
     private isBlocked(res: FetchResponse): boolean {
