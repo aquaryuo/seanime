@@ -455,28 +455,33 @@ class Provider {
         if (server === "Auto" || server === "default" || !server) {
             const $ = await this.serverListDoc(dataIds)
             const groups = audio === "dub" ? ["dub"] : ["sub", "hsub"]
-            const KNOWN_SERVERS = ["VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1"]
+            const KNOWN_SERVERS = audio === "dub" ? ["HD-1", "Vidstream-2", "VidCloud-1", "VidPlay-1"] : ["VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1"]
             const candidates = this.collectServers($, groups)
                 .filter((c) => KNOWN_SERVERS.indexOf(c.name) !== -1)
                 .sort((a, b) => KNOWN_SERVERS.indexOf(a.name) - KNOWN_SERVERS.indexOf(b.name))
             if (candidates.length === 0) throw audio === "dub" ? "anikoto: no dub is available for this episode" : "anikoto: no server available for this episode"
 
             const label = server === "Auto" ? "Auto" : ""
+            const wantSubs = this.loadSubtitles !== "disabled"
             let firstResolved: EpisodeServer | undefined
+            let playableNoSubs: EpisodeServer | undefined
             for (const c of candidates) {
                 let resolved: EpisodeServer | undefined
                 try {
-                    resolved = await this.resolveServer(c.linkId, c.name, ctx)
+                    resolved = await this.resolveServer(c.linkId, c.name, ctx, audio)
                 } catch (_e) {
                     resolved = undefined
                 }
                 if (!resolved) continue
                 if (label) resolved.server = label
                 if (!firstResolved) firstResolved = resolved
-                if (await this.isPlayable(resolved)) {
-                    return resolved
+                if (await this.isPlayable(resolved, !playableNoSubs)) {
+                    const vs = resolved.videoSources[0]
+                    if (!wantSubs || (vs && vs.subtitles && vs.subtitles.length > 0)) return resolved
+                    if (!playableNoSubs) playableNoSubs = resolved
                 }
             }
+            if (playableNoSubs) return playableNoSubs
             if (firstResolved) {
                 return firstResolved
             }
@@ -489,7 +494,7 @@ class Provider {
         const $ = await this.serverListDoc(dataIds)
         const picked = this.collectServers($, [target.group]).filter((c) => c.name === target.name)[0]
         if (!picked) throw "anikoto: that server is not available for this episode"
-        return await this.resolveServer(picked.linkId, target.label, ctx)
+        return await this.resolveServer(picked.linkId, target.label, ctx, audio)
     }
 
     private parseServerLabel(server: string, audio: string): { group: string; name: string; label: string; ok: boolean } {
@@ -529,9 +534,10 @@ class Provider {
         return out
     }
 
-    private async resolveServer(linkId: string, serverName: string, ctx: { anilistId: number; episode: number }): Promise<EpisodeServer> {
+    private async resolveServer(linkId: string, serverName: string, ctx: { anilistId: number; episode: number }, audio: string): Promise<EpisodeServer> {
         const got = await this.fetchSources(linkId)
         if (!got || !got.file) throw "anikoto: could not resolve the player URL (source may be encrypted or down)"
+        if (audio === "dub" && (await this.dubLooksWrong(got.tracks, got.origin))) throw "anikoto: dub source resolved to the subbed (Japanese) track"
         const subtitles = await this.buildSubtitles(got.tracks, ctx, got.origin)
         return {
             server: serverName,
@@ -547,12 +553,33 @@ class Provider {
         }
     }
 
-    private async isPlayable(server: EpisodeServer): Promise<boolean> {
+    private async dubLooksWrong(
+        tracks: { file: string; label?: string; kind?: string; default?: boolean }[] | undefined,
+        origin: string
+    ): Promise<boolean> {
+        if (!tracks || tracks.length === 0) return false
+        const caps = tracks.filter((t) => t && typeof t.file === "string" && /^https?:\/\//i.test(t.file) && (!t.kind || t.kind === "captions" || t.kind === "subtitles"))
+        if (caps.length === 0) return false
+        const track = caps.filter((t) => t.default === true)[0] || caps[0]
+        if (!track || !/eng/i.test(track.label || "English")) return false
+        const file = this.fixTrackUrl(track.file)
+        try {
+            const res = await fetch(file, { headers: { Referer: `${origin}/`, Origin: origin }, timeout: 4 })
+            if (!res.ok) return false
+            const body = res.text()
+            const cues = (body.match(/-->/g) || []).length
+            return cues >= 60 && body.length >= 8000
+        } catch (_e) {
+            return false
+        }
+    }
+
+    private async isPlayable(server: EpisodeServer, allowSolver: boolean = true): Promise<boolean> {
         const src = server.videoSources[0]
         if (!src || !src.url) return false
         try {
             let body = await this.fetchPlaylist(src.url, server.headers)
-            if (body === undefined && this.solverEnabled()) {
+            if (body === undefined && allowSolver && this.solverEnabled()) {
                 const cl = await this.solverClearance(src.url)
                 if (cl) {
                     server.headers = this.withClearance(server.headers, cl)
@@ -600,8 +627,8 @@ class Provider {
             const res = await fetch(ep, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ cmd: "request.get", url: url, maxTimeout: 45000 }),
-                timeout: 60,
+                body: JSON.stringify({ cmd: "request.get", url: url, maxTimeout: 32000 }),
+                timeout: 35,
             })
             if (!res.ok) {
                 this.solverDown = res.status === 0
@@ -714,6 +741,22 @@ class Provider {
         return e === "ass" || e === "srt" ? e : "vtt"
     }
 
+    private async ensureServeToken(anilistId: number): Promise<string | undefined> {
+        const key = `anikoto:tok:${anilistId}`
+        const cached = this.readCache<string>(key, this.tokenTtl)
+        if (cached) return cached
+        try {
+            const res = await fetch(`${this.subEndpoint}/resolve/${anilistId}`, { timeout: 8 })
+            if (!res.ok) return undefined
+            const data = res.json<{ token?: string }>()
+            if (data && typeof data.token === "string" && data.token) {
+                this.writeCache(key, data.token)
+                return data.token
+            }
+        } catch (_e) {}
+        return undefined
+    }
+
     private async buildSubtitles(
         tracks: { file: string; label?: string; kind?: string; default?: boolean }[] | undefined,
         ctx: { anilistId: number; episode: number },
@@ -722,14 +765,17 @@ class Provider {
         const collected: VideoSubtitle[] = []
         if (this.loadSubtitles === "disabled") return collected
         if (!tracks || tracks.length === 0) return collected
+
         if (ctx.anilistId <= 0) return collected
 
         const anime = String(ctx.anilistId)
         const ep = String(ctx.episode)
-        const tok = ctx.anilistId > 0 ? this.readCache<string>(`anikoto:tok:${ctx.anilistId}`, this.tokenTtl) : undefined
-        const tokParam = tok ? `&t=${encodeURIComponent(tok)}` : ""
         const refParam = embedOrigin ? `&ref=${encodeURIComponent(embedOrigin)}` : ""
         const valid = tracks.filter((t) => t && typeof t.file === "string" && /^https?:\/\//i.test(t.file) && (!t.kind || t.kind === "captions" || t.kind === "subtitles"))
+        if (valid.length === 0) return collected
+        let tok = this.readCache<string>(`anikoto:tok:${ctx.anilistId}`, this.tokenTtl)
+        if (!tok) tok = await this.ensureServeToken(ctx.anilistId)
+        const tokParam = tok ? `&t=${encodeURIComponent(tok)}` : ""
         const codes = await this.langCodes(valid.map((t) => t.label || "English"))
         const seenLang: { [key: string]: boolean } = {}
         let englishIdx = -1
@@ -784,6 +830,7 @@ class Provider {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ labels: missing.map((m) => m.label) }),
+                    timeout: 6,
                 })
                 if (res.ok) {
                     const j = res.json<{ codes: string[] }>()
