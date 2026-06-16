@@ -33,6 +33,7 @@ function init() {
         const fsPort = ctx.state<string>($storage.get<string>("fs.port") || FS_DEFAULT_PORT)
         const fsSession = ctx.state<string>($storage.get<string>("fs.session") || FS_DEFAULT_SESSION)
         const fsAutoStart = ctx.state<boolean>($storage.get<boolean>("fs.autoStart") === true)
+        const fsWantChromium = ctx.state<boolean>($storage.get<boolean>("fs.wantChromium") === true)
         const fsStatus = ctx.state<string>("unknown")
         const fsSessions = ctx.state<string[]>([])
         const fsNote = ctx.state<string>("")
@@ -191,6 +192,7 @@ function init() {
             $storage.set("fs.port", fsPort.get())
             $storage.set("fs.session", fsSession.get())
             $storage.set("fs.autoStart", fsAutoStart.get())
+            $storage.set("fs.wantChromium", fsWantChromium.get())
         }
 
         async function fsApi(cmd: string, extra: { [k: string]: any }, timeoutSec?: number): Promise<any> {
@@ -391,24 +393,6 @@ function init() {
 
         let chromiumOverride = ""
 
-        function systemChromiumPath(): string {
-            let cands: string[] = []
-            if ($os.platform === "windows") cands = [
-                "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-                "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
-                "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-                "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-            ]
-            else if ($os.platform === "darwin") cands = [
-                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-                "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-                "/Applications/Chromium.app/Contents/MacOS/Chromium",
-            ]
-            else cands = ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium", "/usr/bin/chromium-browser", "/snap/bin/chromium", "/opt/google/chrome/chrome"]
-            for (const c of cands) { try { if ($os.stat(c)) return c } catch (_e) {} }
-            return ""
-        }
-
         function chromiumCfTPlatform(): string {
             if ($os.platform === "windows" && $os.arch === "amd64") return "win64"
             if ($os.platform === "linux" && $os.arch === "amd64") return "linux64"
@@ -428,11 +412,6 @@ function init() {
             return ""
         }
 
-        // chromiumDetected: a usable Chromium is present (an installed browser, or one we fetched).
-        function chromiumDetected(): boolean {
-            try { return systemChromiumPath() !== "" || chromiumCachedPath() !== "" } catch (_e) { return false }
-        }
-
         async function chromiumURL(plt: string): Promise<string> {
             try {
                 const res = await ctx.fetch("https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json", { method: "GET", timeout: 20 })
@@ -444,16 +423,17 @@ function init() {
             return ""
         }
 
-        // ensureChromium yields a SOLVER_CHROME path. "" => the solver resolves a
-        // system browser itself (or Stage B is unavailable). A minimal
-        // chrome-headless-shell is fetched only when no Chromium is present.
+        // ensureChromium yields a SOLVER_CHROME path for the spawned solver. "" =>
+        // the solver finds a system browser itself. The plugin never probes paths
+        // outside its own cache; the user opts in (fsWantChromium) to fetch a
+        // minimal Chromium into the cache when they have no Chrome/Edge.
         function ensureChromium(cb: (path: string) => void): void {
-            if (systemChromiumPath() !== "") { cb(""); return }
             const cached = chromiumCachedPath()
             if (cached) { cb(cached); return }
+            if (!fsWantChromium.get()) { cb(""); return }
             const plt = chromiumCfTPlatform()
             if (!plt || !downloaderReady()) { cb(""); return }
-            fsNote.set("No Chrome/Edge found — fetching a minimal Chromium…")
+            fsNote.set("Fetching a minimal Chromium…")
             tray.update()
             void chromiumURL(plt).then((url) => {
                 if (!url) { cb(""); return }
@@ -908,6 +888,11 @@ function init() {
             fsConsent.set(!fsConsent.get())
             tray.update()
         })
+        ctx.registerEventHandler("fs-chromium-toggle", () => {
+            fsWantChromium.set(!fsWantChromium.get())
+            fsPersist()
+            tray.update()
+        })
         ctx.registerEventHandler("fs-remove-solver", () => removeSolverDownloads())
         ctx.registerEventHandler("fs-remove-chromium", () => removeChromiumDownloads())
         ctx.registerEventHandler("fs-copy", () => {
@@ -1070,11 +1055,15 @@ function init() {
                 const needsDownload = st !== "up" && st !== "starting" && !binaryDownloaded()
                 if (needsDownload) {
                     rows.push(dim("aquatils-solver runs locally to get blocked sources (Cloudflare / DDoS-Guard) loading. It's downloaded from GitHub and only contacts the sites you stream."))
-                    if (!chromiumDetected()) {
-                        rows.push(dim("⚠ No Chrome/Edge found here. Hard JS challenges (interactive Turnstile) need a Chromium browser, so a minimal one (~80 MB) will also be downloaded into the plugin's cache."))
-                    }
+                    rows.push(dim("Hard JS challenges (interactive Turnstile) need a Chromium browser. If you have Chrome or Edge, leave the box below off. If you don't, tick it to also fetch a minimal Chromium (~80 MB) into the plugin's cache."))
                     rows.push(tray.button({
-                        label: fsConsent.get() ? "☑ I understand" : "☐ I understand — tap to confirm",
+                        label: (fsWantChromium.get() ? "☑" : "☐") + " I have no Chrome/Edge — fetch a minimal Chromium",
+                        onClick: "fs-chromium-toggle",
+                        intent: fsWantChromium.get() ? "primary-subtle" : "gray-subtle",
+                        size: "sm",
+                    }))
+                    rows.push(tray.button({
+                        label: (fsConsent.get() ? "☑" : "☐") + " I understand — tap to confirm",
                         onClick: "fs-consent-toggle",
                         intent: fsConsent.get() ? "success-subtle" : "gray-subtle",
                         size: "sm",
@@ -1133,9 +1122,9 @@ function init() {
             }))
             if (fsAutoStart.get() && m === "remote") rows.push(dim("Auto-start is ignored in Remote mode."))
             if (m !== "remote") {
-                rows.push(dim(chromiumDetected()
-                    ? "Stage B ready: a Chromium browser is available, so hard JS gates (interactive Turnstile) are handled automatically when uTLS can't."
-                    : "No Chrome/Edge detected — a minimal Chromium downloads automatically the first time a hard JS gate needs it."))
+                rows.push(dim(chromiumDownloadedHere()
+                    ? "Stage B: a minimal Chromium is in the cache — hard JS gates (interactive Turnstile) are handled automatically when uTLS can't."
+                    : "Stage B uses your installed Chrome/Edge for hard JS gates (Turnstile). With none, enable 'fetch a minimal Chromium' at first download."))
             }
 
             rows.push(divider())
