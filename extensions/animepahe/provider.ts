@@ -3,8 +3,8 @@ declare const console: { log(...args: any[]): void; info(...args: any[]): void; 
 class Provider {
     private baseUrl = "{{baseUrl}}"
     private mirrors = ["https://animepahe.pw", "https://animepahe.com", "https://animepahe.org"]
-    private browserFallback = ("{{browserFallback}}" as string) === "true"
     private solverUrl = ("{{solverUrl}}" as string)
+    private solverDown = false
     private cookieTtl = 10800000
     private epCacheTtl = 900000
     private serverCacheTtl = 300000
@@ -385,24 +385,20 @@ class Provider {
     private async getText(url: string, extra?: { [k: string]: string }): Promise<string> {
         let cookie = await this.harvestCookies(false)
         let res: FetchResponse | undefined
-        for (let i = 0; i < 3; i++) {
+        for (let i = 0; i < 2; i++) {
             try {
-                res = await fetch(url, { headers: this.apiHeaders(cookie, extra) })
+                res = await fetch(url, { headers: this.apiHeaders(cookie, extra), timeout: 10 })
                 this.absorbCookies(res)
                 if (!this.isBlocked(res)) return res.text()
-            } catch (e) {
-                if (i === 2 && !this.browserFallback) throw this.fail("fetch", String(e))
-            }
+            } catch (_e) {}
             cookie = await this.harvestCookies(true)
         }
         const solved = await this.solveGet(url)
         if (solved) return solved
-        if (this.browserFallback) {
-            const html = await this.scrapeWithBrowser(url)
-            if (html) return html
-        }
         if (res && !this.isBlocked(res)) return res.text()
-        throw this.fail("fetch", this.blockedMessage())
+        if (!this.solverEndpoint()) throw this.fail("server", "FlareSolverr endpoint not set — configure it in the extension settings and run it via Aqua's Utils.")
+        if (this.solverDown) throw this.fail("server", "FlareSolverr is not reachable at " + this.solverEndpoint() + " — open Aqua's Utils and start it.")
+        throw this.fail("fetch", "FlareSolverr could not get past the site's protection.")
     }
 
     private async getJson<T>(url: string): Promise<T> {
@@ -446,14 +442,6 @@ class Provider {
         throw lastErr
     }
 
-    private async scrapeWithBrowser(url: string): Promise<string | undefined> {
-        try {
-            return await ChromeDP.scrape(url, { timeout: 45, waitDuration: 4000, headless: true })
-        } catch (_e) {
-            return undefined
-        }
-    }
-
     private solverEndpoint(): string {
         const u = (this.solverUrl || "").trim()
         if (u.indexOf("http") !== 0) return ""
@@ -461,21 +449,29 @@ class Provider {
         return /\/v1$/.test(base) ? base : `${base}/v1`
     }
 
-    private async solveGet(url: string): Promise<string | undefined> {
-        const ep = this.solverEndpoint()
-        if (!ep) return undefined
+    private async solverPost(ep: string, payload: { [k: string]: any }): Promise<any> {
         try {
             const res = await fetch(ep, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ cmd: "request.get", url, maxTimeout: 60000 }),
-                timeout: 80,
+                body: JSON.stringify(payload),
+                timeout: 60,
             })
+            this.solverDown = false
             if (!res.ok) return undefined
-            const data = res.json<{ solution?: { response?: string } }>()
-            const body = data && data.solution ? data.solution.response : undefined
-            if (body && !this.bodyIsChallenge(body)) return body
-        } catch (_e) {}
+            return res.json<any>()
+        } catch (_e) {
+            this.solverDown = true
+            return undefined
+        }
+    }
+
+    private async solveGet(url: string): Promise<string | undefined> {
+        const ep = this.solverEndpoint()
+        if (!ep) return undefined
+        const data = await this.solverPost(ep, { cmd: "request.get", url, maxTimeout: 45000 })
+        const body = data && data.solution ? data.solution.response : undefined
+        if (body && !this.bodyIsChallenge(body)) return body
         return undefined
     }
 

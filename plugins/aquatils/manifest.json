@@ -1,0 +1,32 @@
+{
+  "id": "aquatils",
+  "name": "Aqua's Utils",
+  "version": "0.6.2",
+  "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/manifest.json",
+  "language": "typescript",
+  "type": "plugin",
+  "description": "A toolbox plugin: surfaces extension errors as toasts/tray, and launches & manages a self-contained aquatils-solver (or a remote one you run) for Cloudflare/DDoS-Guard sites.",
+  "author": "aquaryuo",
+  "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/icon.png",
+  "website": "https://github.com/aquaryuo/seanime",
+  "lang": "multi",
+  "payloadURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/plugin.ts",
+  "plugin": {
+    "version": "1",
+    "permissions": {
+      "scopes": ["system", "storage", "notification"],
+      "allow": {
+        "networkAccess": {
+          "allowedDomains": ["*"],
+          "reasoning": "Reads the local Seanime log API (loopback) to collect reported extension errors; talks to a local or user-configured remote solver to manage sessions; downloads the aquatils-solver release from GitHub for the self-contained binary mode."
+        },
+        "commandScopes": [
+          { "command": "sh", "description": "Launch the downloaded aquatils-solver binary on Linux/macOS (Binary mode); strips macOS quarantine and chmods before exec.", "args": [{ "value": "-c" }, { "validator": "$ARGS" }] },
+          { "command": "cmd", "description": "Launch the downloaded aquatils-solver binary on Windows (Binary mode), and stop processes via taskkill.", "args": [{ "value": "/c" }, { "validator": "$ARGS" }] }
+        ],
+        "readPaths": ["$CACHE", "$CACHE/aquatils", "$CACHE/aquatils/*", "$CACHE/aquatils/**"],
+        "writePaths": ["$CACHE/aquatils", "$CACHE/aquatils/*", "$CACHE/aquatils/**"]
+      }
+    }
+  }
+}
