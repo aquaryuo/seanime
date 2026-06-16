@@ -115,6 +115,23 @@ function init() {
             } catch (_e) {}
         }
 
+        function buildDiagnostics(): string {
+            const out: string[] = ["aquatils diagnostics"]
+            try { out.push("os=" + ($os.platform || "?") + "/" + ($os.arch || "?")) } catch (_e) { out.push("os=unavailable (strict mode?)") }
+            out.push("mode=" + fsMode.get())
+            out.push("endpoint=" + fsBase() + "/v1")
+            out.push("status=" + fsStatus.get())
+            out.push("solver: bundled=" + SOLVER_VERSION + " running=" + (fsVersion.get() || "?"))
+            try { out.push("downloaded: solver=" + binaryDownloaded() + " chromium=" + (chromiumDownloadedHere() ? chromiumCachedVersion() : "none")) } catch (_e) {}
+            const err = fsErr.get()
+            if (err) out.push("lastError=" + err)
+            const note = fsNote.get()
+            if (note && note !== err) out.push("note=" + note)
+            const log = currentLog()
+            if (log) { out.push("--- log tail ---"); out.push(log.split("\n").slice(-30).join("\n")) }
+            return out.join("\n")
+        }
+
         const tray = ctx.newTray({
             iconUrl: "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/icon.png",
             withContent: true,
@@ -1058,6 +1075,14 @@ function init() {
             tray.update()
             fsStart()
         })
+        ctx.registerEventHandler("fs-copy-diag", () => {
+            try {
+                ctx.dom.clipboard.write(buildDiagnostics())
+                ctx.toast.success("Diagnostics copied — paste them when reporting an issue.")
+            } catch (_e) {
+                ctx.toast.error("Couldn't copy to clipboard")
+            }
+        })
         ctx.registerEventHandler("fs-copy", () => {
             const text = fsErr.get() || fsNote.get()
             if (!text) return
@@ -1333,6 +1358,7 @@ function init() {
                 items: [
                     tray.button({ label: "Test", onClick: "fs-test", intent: "gray-subtle", size: "xs" }),
                     tray.button({ label: "Doctor", onClick: "fs-doctor", intent: "gray-subtle", size: "xs" }),
+                    tray.button({ label: "Copy diagnostics", onClick: "fs-copy-diag", intent: "gray-subtle", size: "xs" }),
                 ],
                 gap: 2,
             }))
