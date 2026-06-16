@@ -1,0 +1,59 @@
+{
+  "id": "anikoto",
+  "name": "Anikoto [BETA]",
+  "version": "1.3.45",
+  "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/anikoto/manifest.json",
+  "language": "typescript",
+  "type": "onlinestream-provider",
+  "description": "Only anikoto compatibility layer you'll ever need",
+  "author": "aquaryuo",
+  "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/anikoto/icon.png",
+  "website": "https://anikototv.to",
+  "lang": "en",
+  "payloadURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/anikoto/provider.ts",
+  "userConfig": {
+    "version": 3,
+    "requiresConfig": false,
+    "fields": [
+      {
+        "type": "select",
+        "name": "baseUrl",
+        "label": "Site / mirror domain",
+        "default": "https://anikototv.to",
+        "options": [
+          { "value": "https://anikototv.to", "label": "anikototv.to" },
+          { "value": "https://anikoto.cz", "label": "anikoto.cz" },
+          { "value": "https://anikoto.me", "label": "anikoto.me" },
+          { "value": "https://anikoto.net", "label": "anikoto.net" },
+          { "value": "https://anikototv.se", "label": "anikototv.se" }
+        ]
+      },
+      {
+        "type": "select",
+        "name": "loadSubtitles",
+        "label": "Subtitles",
+        "default": "enabled",
+        "options": [
+          { "value": "enabled", "label": "Enabled" },
+          { "value": "disabled", "label": "Disabled" }
+        ]
+      },
+      {
+        "type": "select",
+        "name": "useCustomSolver",
+        "label": "Use custom solver (route Cloudflare-hardened sources through a solver)",
+        "default": "off",
+        "options": [
+          { "value": "off", "label": "Off" },
+          { "value": "on", "label": "On" }
+        ]
+      },
+      {
+        "type": "text",
+        "name": "solverUrl",
+        "label": "Custom solver endpoint (FlareSolverr-compatible; used when the toggle is On) — see Aqua's Utils",
+        "default": "http://127.0.0.1:8191/v1"
+      }
+    ]
+  }
+}

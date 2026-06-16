@@ -1,15 +1,15 @@
 [
   {
     "id": "anikoto",
-    "name": "Anikoto",
+    "name": "Anikoto [BETA]",
     "description": "Only anikoto compatibility layer you'll ever need",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
     "language": "typescript",
     "lang": "en",
-    "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/anikoto/icon.png",
+    "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/anikoto/icon.png",
     "website": "https://anikototv.to",
-    "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/anikoto/manifest.json"
+    "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/anikoto/manifest.json"
   },
   {
     "id": "animelok",
