@@ -321,6 +321,7 @@ function init() {
             }
             if (fsStatus.get() !== "starting") fsRestarting = false
             refreshTrayBadge()
+            refreshAnimeBtn()
             tray.update()
         }
 
@@ -1070,6 +1071,12 @@ function init() {
         ctx.registerEventHandler("fs-remove-solver", () => removeSolverDownloads())
         ctx.registerEventHandler("fs-remove-chromium", () => removeChromiumDownloads())
         ctx.registerEventHandler("fs-update-chromium", () => updateChromium())
+        ctx.registerEventHandler("fs-enable-chromium", () => {
+            fsWantChromium.set(true)
+            fsPersist()
+            ctx.toast.info("Chromium enabled — restarting the solver to fetch it.")
+            fsStart()
+        })
         ctx.registerEventHandler("fs-restart-update", () => {
             fsNote.set("Restarting to apply the updated solver…")
             tray.update()
@@ -1142,10 +1149,10 @@ function init() {
         }
         function statusBadge(): any {
             const st = fsStatus.get()
-            if (st === "up") return tray.badge({ text: "Running", intent: "success", size: "md" })
-            if (st === "starting") return tray.badge({ text: "Starting", intent: "warning", size: "md" })
-            if (st === "down") return tray.badge({ text: "Off", intent: "gray", size: "md" })
-            return tray.badge({ text: "Checking", intent: "gray", size: "md" })
+            if (st === "up") return tray.badge({ text: "● Running", intent: "success", size: "md" })
+            if (st === "starting") return tray.badge({ text: "◐ Starting", intent: "warning", size: "md" })
+            if (st === "down") return tray.badge({ text: "○ Off", intent: "gray", size: "md" })
+            return tray.badge({ text: "◌ Checking", intent: "gray", size: "md" })
         }
         function uptimeStr(): string {
             const t = nowMs()
@@ -1244,7 +1251,12 @@ function init() {
                     items: [tray.text(fsNote.get() || fsErr.get(), { style: { fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5", color: "rgba(255,255,255,0.85)" } })],
                     style: { background: "rgba(255,90,90,0.08)", border: "1px solid rgba(255,90,90,0.25)", borderRadius: "6px", padding: "8px", maxHeight: "160px", overflowY: "auto" },
                 }))
-                rows.push(tray.button({ label: "Copy error", onClick: "fs-copy", intent: "alert-subtle", size: "xs" }))
+                const acts: any[] = [tray.button({ label: "Retry", onClick: "fs-start", intent: "primary-subtle", size: "xs" })]
+                if (fsMode.get() !== "remote" && !chromiumDownloadedHere() && !fsWantChromium.get()) {
+                    acts.push(tray.button({ label: "Enable Chromium", onClick: "fs-enable-chromium", intent: "gray-subtle", size: "xs" }))
+                }
+                acts.push(tray.button({ label: "Copy diagnostics", onClick: "fs-copy-diag", intent: "gray-subtle", size: "xs", style: { marginLeft: "auto" } }))
+                rows.push(tray.flex({ items: acts, gap: 2 }))
             } else if (fsNote.get()) {
                 rows.push(dim(fsNote.get()))
             }
@@ -1437,6 +1449,28 @@ function init() {
             for (let i = 0; i < section.length; i++) rows.push(section[i])
             return tray.stack({ items: rows, gap: 3 })
         })
+
+        let animeBtn: any = null
+        function refreshAnimeBtn(): void {
+            if (!animeBtn) return
+            try {
+                const st = fsStatus.get()
+                if (st === "up") { animeBtn.setLabel("Solver ● on"); animeBtn.setIntent("success-subtle"); animeBtn.setTooltipText("Aqua's Utils solver running at " + fsBase()) }
+                else if (st === "starting") { animeBtn.setLabel("Solver ◐ starting"); animeBtn.setIntent("warning-subtle"); animeBtn.setTooltipText("Solver is starting…") }
+                else { animeBtn.setLabel("Solver ○ off"); animeBtn.setIntent("alert-subtle"); animeBtn.setTooltipText(fsMode.get() === "remote" ? "Remote solver not reachable — start it on its host" : "Tap to start the Aqua's Utils solver") }
+            } catch (_e) {}
+        }
+        try {
+            animeBtn = ctx.action.newAnimePageButton({ label: "Solver", intent: "gray-subtle", tooltipText: "Aqua's Utils solver" })
+            animeBtn.onClick(() => {
+                if (fsStatus.get() === "up") { ctx.toast.success("Solver running (v" + (fsVersion.get() || "?") + ") at " + fsBase()); return }
+                if (fsMode.get() === "remote") { ctx.toast.info("Remote mode: start the solver on its host."); return }
+                ctx.toast.info("Starting the Aqua's Utils solver…")
+                fsStart()
+            })
+            animeBtn.mount()
+            refreshAnimeBtn()
+        } catch (_e) {}
 
         ctx.jobs.poll("aquatils-seh-poll", sehPoll, SEH_POLL_MS, { immediate: true })
         ctx.jobs.poll("aquatils-fs-poll", fsRefresh, FS_POLL_MS, { immediate: true })
