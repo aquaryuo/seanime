@@ -17,23 +17,27 @@ function init() {
         const FS_DEFAULT_SESSION = "seanime"
         const FS_POLL_MS = 5000
 
-        const view = ctx.state<string>("cf")
-        const uiMode = ctx.state<string>($storage.get<string>("ui.mode") || "simple")
+        function sget<T>(k: string, d: T): T {
+            try { const v = $storage.get<T>(k); return (v === undefined || v === null) ? d : v } catch (_e) { return d }
+        }
 
-        const appBase = ctx.state<string>($storage.get<string>("seh.appBase") || SEH_DEFAULT_APP)
-        const errors = ctx.state<SehError[]>($storage.get<SehError[]>("seh.errors") || [])
-        const seen = ctx.state<string[]>($storage.get<string[]>("seh.seen") || [])
-        const notify = ctx.state<boolean>($storage.get<boolean>("seh.notify") === true)
+        const view = ctx.state<string>("cf")
+        const uiMode = ctx.state<string>(sget<string>("ui.mode", "simple"))
+
+        const appBase = ctx.state<string>(sget<string>("seh.appBase", SEH_DEFAULT_APP))
+        const errors = ctx.state<SehError[]>(sget<SehError[]>("seh.errors", []))
+        const seen = ctx.state<string[]>(sget<string[]>("seh.seen", []))
+        const notify = ctx.state<boolean>(sget<boolean>("seh.notify", false))
         const appRef = ctx.fieldRef<string>(appBase.get())
         let sehAuthWarned = false
 
-        const _storedMode = $storage.get<string>("fs.mode")
+        const _storedMode = sget<string>("fs.mode", "")
         const fsMode = ctx.state<string>((!_storedMode || _storedMode === "native" || _storedMode === "docker") ? "binary" : _storedMode)
-        const fsHost = ctx.state<string>($storage.get<string>("fs.host") || FS_DEFAULT_HOST)
-        const fsPort = ctx.state<string>($storage.get<string>("fs.port") || FS_DEFAULT_PORT)
-        const fsSession = ctx.state<string>($storage.get<string>("fs.session") || FS_DEFAULT_SESSION)
-        const fsAutoStart = ctx.state<boolean>($storage.get<boolean>("fs.autoStart") === true)
-        const fsWantChromium = ctx.state<boolean>($storage.get<boolean>("fs.wantChromium") === true)
+        const fsHost = ctx.state<string>(sget<string>("fs.host", FS_DEFAULT_HOST))
+        const fsPort = ctx.state<string>(sget<string>("fs.port", FS_DEFAULT_PORT))
+        const fsSession = ctx.state<string>(sget<string>("fs.session", FS_DEFAULT_SESSION))
+        const fsAutoStart = ctx.state<boolean>(sget<boolean>("fs.autoStart", false))
+        const fsWantChromium = ctx.state<boolean>(sget<boolean>("fs.wantChromium", false))
         const fsStatus = ctx.state<string>("unknown")
         const fsSessions = ctx.state<string[]>([])
         const fsNote = ctx.state<string>("")
@@ -50,7 +54,7 @@ function init() {
         let fsUpSince = 0
         let fsDownStreak = 0
         let fsTesting = false
-        let fsManualStop = false
+        let fsManualStop = sget<boolean>("fs.manualStop", false)
         const dl = (ctx as any).downloader
         const fsErr = ctx.state<string>("")
         const fsVersion = ctx.state<string>("")
@@ -99,10 +103,12 @@ function init() {
         })
 
         function sehPersist(): void {
-            $storage.set("seh.errors", errors.get())
-            $storage.set("seh.seen", seen.get())
-            $storage.set("seh.appBase", appBase.get())
-            $storage.set("seh.notify", notify.get())
+            try {
+                $storage.set("seh.errors", errors.get())
+                $storage.set("seh.seen", seen.get())
+                $storage.set("seh.appBase", appBase.get())
+                $storage.set("seh.notify", notify.get())
+            } catch (_e) {}
         }
 
         function sehLabel(e: SehError): string {
@@ -187,12 +193,14 @@ function init() {
         }
 
         function fsPersist(): void {
-            $storage.set("fs.mode", fsMode.get())
-            $storage.set("fs.host", fsHost.get())
-            $storage.set("fs.port", fsPort.get())
-            $storage.set("fs.session", fsSession.get())
-            $storage.set("fs.autoStart", fsAutoStart.get())
-            $storage.set("fs.wantChromium", fsWantChromium.get())
+            try {
+                $storage.set("fs.mode", fsMode.get())
+                $storage.set("fs.host", fsHost.get())
+                $storage.set("fs.port", fsPort.get())
+                $storage.set("fs.session", fsSession.get())
+                $storage.set("fs.autoStart", fsAutoStart.get())
+                $storage.set("fs.wantChromium", fsWantChromium.get())
+            } catch (_e) {}
         }
 
         async function fsApi(cmd: string, extra: { [k: string]: any }, timeoutSec?: number): Promise<any> {
@@ -354,14 +362,25 @@ function init() {
             return null
         }
 
-        function binaryDownloaded(): boolean {
+        function solverBinPath(): string {
             try {
                 const pick = binaryAsset()
-                if (!pick) return false
-                return !!$os.stat($filepath.join($os.cacheDir(), "aquatils", FS_VERSION, FS_CONTAINER, pick.bin))
+                if (!pick) return ""
+                return $filepath.join($os.cacheDir(), "aquatils", FS_VERSION, FS_CONTAINER, pick.bin)
             } catch (_e) {
-                return false
+                return ""
             }
+        }
+
+        function solverBinExists(): boolean {
+            const p = solverBinPath()
+            if (!p) return false
+            try { return !!$os.stat(p) } catch (_e) { return false }
+        }
+
+        function binaryDownloaded(): boolean {
+            if (!solverBinExists()) return false
+            try { return $storage.get<string>("fs.solverReady") === FS_VERSION } catch (_e) { return false }
         }
 
         function fsLogPath(): string {
@@ -394,6 +413,7 @@ function init() {
         let chromiumOverride = ""
 
         function chromiumCfTPlatform(): string {
+            if (typeof $os === "undefined") return ""
             if ($os.platform === "windows" && $os.arch === "amd64") return "win64"
             if ($os.platform === "linux" && $os.arch === "amd64") return "linux64"
             if ($os.platform === "darwin" && $os.arch === "amd64") return "mac-x64"
@@ -457,9 +477,18 @@ function init() {
                     tray.update()
                 } else if (p.status === "completed") {
                     cancel()
-                    try { $osExtra.unzip(zip, dir) } catch (_e) {}
-                    const ok = chromiumCachedPath() !== ""
-                    if (ok && st.version) $storage.set("fs.chromiumVer", st.version)
+                    let unzipOk = true
+                    try { $osExtra.unzip(zip, dir) } catch (_e) { unzipOk = false }
+                    try { $os.removeAll(zip) } catch (_e) {}
+                    const ok = unzipOk && chromiumCachedPath() !== ""
+                    if (ok && st.version) {
+                        try { $storage.set("fs.chromiumVer", st.version) } catch (_e) {}
+                    } else {
+                        try { $os.removeAll(dir) } catch (_e) {}
+                        try { $storage.set("fs.chromiumVer", "") } catch (_e) {}
+                        fsErr.set("Chromium download/extract failed — Stage B (hard challenges) will be unavailable.")
+                        tray.update()
+                    }
                     done(ok)
                 } else if (p.status === "error") {
                     cancel()
@@ -477,12 +506,13 @@ function init() {
             fsNote.set("Fetching a minimal Chromium…")
             tray.update()
             void chromiumStable(plt).then((st) => {
-                if (!st.url) { cb(""); return }
+                if (!st.url) { fsErr.set("Couldn't find a Chromium download for this platform (" + plt + ") in the release feed; starting without Stage B."); tray.update(); cb(""); return }
                 downloadChromium(st, (ok) => cb(ok ? chromiumCachedPath() : ""))
             })
         }
 
         function updateChromium(): void {
+            if (typeof $os === "undefined" || typeof $osExtra === "undefined" || !dl) { fsNote.set("Not available in strict secure mode."); tray.update(); return }
             const plt = chromiumCfTPlatform()
             if (!plt) { fsNote.set("Chromium isn't available on this OS/arch."); tray.update(); return }
             if (!chromiumDownloadedHere()) { fsNote.set("No Chromium is downloaded — it's fetched on demand."); tray.update(); return }
@@ -494,6 +524,7 @@ function init() {
                 const cur = $storage.get<string>("fs.chromiumVer") || ""
                 if (cur && !verNewer(st.version, cur)) { fsNote.set("Chromium is up to date (" + cur + ")."); tray.update(); return }
                 try { $os.removeAll($filepath.join(aquatilsDir(), "chromium")) } catch (_e) {}
+                try { $storage.set("fs.chromiumVer", "") } catch (_e) {}
                 chromiumOverride = ""
                 fsNote.set("Updating Chromium…")
                 tray.update()
@@ -518,22 +549,17 @@ function init() {
         }
 
         function binaryLaunch(binPath: string): void {
-            binaryStop()
-            pruneOldSolverVersions()
-            const gen = fsBinaryGen
-            ensureChromium((chromePath) => {
-                if (gen !== fsBinaryGen) return
-                chromiumOverride = chromePath
-                if (typeof $os !== "undefined" && $os.platform === "windows") {
-                    try {
-                        $osExtra.asyncCmd("cmd", "/c", "taskkill", "/F", "/IM", "chromedriver.exe").run((_d, _e, code) => {
-                            if (code === undefined) return
-                            if (gen === fsBinaryGen) binarySpawn(binPath)
-                        })
-                        return
-                    } catch (_e) {}
-                }
-                if (gen === fsBinaryGen) binarySpawn(binPath)
+            binaryStop(() => {
+                pruneOldSolverVersions()
+                const gen = fsBinaryGen
+                ensureChromium((chromePath) => {
+                    if (gen !== fsBinaryGen) return
+                    chromiumOverride = chromePath
+                    if (typeof $os !== "undefined" && $os.platform === "windows" && typeof $osExtra !== "undefined") {
+                        try { $osExtra.asyncCmd("cmd", "/c", "taskkill", "/F", "/IM", "chrome-headless-shell.exe").run(() => {}) } catch (_e) {}
+                    }
+                    if (gen === fsBinaryGen) binarySpawn(binPath)
+                })
             })
         }
 
@@ -579,6 +605,10 @@ function init() {
                     } else {
                         const why = cleanTail(fsLastOut) || readLogTail(logPath)
                         const blocked = !why ? " No output was captured — it died before logging (corrupt download, antivirus, or a missing system library)." : ""
+                        if (!why) {
+                            try { $storage.set("fs.solverReady", "") } catch (_e) {}
+                            try { $os.removeAll($filepath.join($os.cacheDir(), "aquatils", FS_VERSION, FS_CONTAINER)) } catch (_e) {}
+                        }
                         fsErr.set(fsLastOut || why || ("Solver exited (code " + code + ")"))
                         fsNote.set("Solver exited (code " + code + ")" + (why ? ": " + why : "") + "." + blocked)
                         ctx.toast.error("Solver exited (code " + code + ")")
@@ -599,7 +629,8 @@ function init() {
             tray.update()
         }
 
-        function binaryStop(): void {
+        function binaryStop(done?: () => void): void {
+            fsBusy = false
             fsBinaryGen++
             if (dl && fsDownloadId) {
                 try {
@@ -607,17 +638,23 @@ function init() {
                 } catch (_e) {}
                 fsDownloadId = ""
             }
-            if (typeof $os !== "undefined" && $os.platform === "windows") {
-                try {
-                    $osExtra.asyncCmd("cmd", "/c", "taskkill", "/F", "/T", "/IM", "solver.exe").run(() => {})
-                } catch (_e) {}
-            }
             if (fsBinary && fsBinary.process) {
                 try {
                     fsBinary.process.kill()
                 } catch (_e) {}
             }
             fsBinary = null
+            if (typeof $os !== "undefined" && $os.platform === "windows" && typeof $osExtra !== "undefined") {
+                try { $osExtra.asyncCmd("cmd", "/c", "taskkill", "/F", "/IM", "chrome-headless-shell.exe").run(() => {}) } catch (_e) {}
+                try {
+                    $osExtra.asyncCmd("cmd", "/c", "taskkill", "/F", "/T", "/IM", "solver.exe").run((_d, _e, code) => {
+                        if (code === undefined) return
+                        if (done) done()
+                    })
+                    return
+                } catch (_e) {}
+            }
+            if (done) done()
         }
 
         function aquatilsDir(): string {
@@ -631,7 +668,11 @@ function init() {
         // chromiumDownloadedHere: a Chromium WE fetched into the cache is present
         // (distinct from a system-installed browser, which we never remove).
         function chromiumDownloadedHere(): boolean {
-            try { return chromiumCachedPath() !== "" || dirExists($filepath.join(aquatilsDir(), "chromium")) } catch (_e) { return false }
+            try { return chromiumCachedPath() !== "" } catch (_e) { return false }
+        }
+
+        function chromiumDirExists(): boolean {
+            try { return dirExists($filepath.join(aquatilsDir(), "chromium")) } catch (_e) { return false }
         }
 
         // removeSolverDownloads deletes every downloaded solver version (but not
@@ -639,37 +680,43 @@ function init() {
         // how the user reclaims the space.
         function removeSolverDownloads(): void {
             fsManualStop = true
-            binaryStop()
-            setStatus("down")
-            let removed = false
-            try {
-                const base = aquatilsDir()
-                let entries: $os.DirEntry[] = []
-                try { entries = $os.readDir(base) } catch (_e) {}
-                if (entries.length) {
-                    for (const e of entries) {
-                        if (e.isDir() && e.name() !== "chromium") {
-                            try { $os.removeAll($filepath.join(base, e.name())); removed = true } catch (_e) {}
-                        }
+            try { $storage.set("fs.manualStop", true) } catch (_e) {}
+            binaryStop(() => {
+                setStatus("down")
+                try { $storage.set("fs.solverReady", "") } catch (_e) {}
+                let removed = false
+                try {
+                    const base = aquatilsDir()
+                    let entries: $os.DirEntry[] = []
+                    try { entries = $os.readDir(base) } catch (_e) {}
+                    const names = entries.length
+                        ? entries.filter((e) => e.isDir() && e.name() !== "chromium").map((e) => e.name())
+                        : [FS_VERSION]
+                    for (const name of names) {
+                        try { $os.removeAll($filepath.join(base, name)); removed = true } catch (_e) {}
                     }
+                } catch (_e) {}
+                if (solverBinExists()) {
+                    fsNote.set("Couldn't fully remove the solver — a file may still be locked. Make sure it's stopped, then try again.")
                 } else {
-                    try { $os.removeAll($filepath.join(base, FS_VERSION)); removed = true } catch (_e) {}
+                    fsNote.set(removed ? "Removed the downloaded solver. Press Start to fetch it again." : "No solver download was present.")
                 }
-            } catch (_e) {}
-            fsNote.set(removed ? "Removed the downloaded solver. Press Start to fetch it again." : "No solver download was present.")
-            tray.update()
+                tray.update()
+            })
         }
 
         function removeChromiumDownloads(): void {
-            const present = chromiumDownloadedHere()
+            const present = chromiumDirExists()
             fsManualStop = true
-            binaryStop()
-            setStatus("down")
-            try { $os.removeAll($filepath.join(aquatilsDir(), "chromium")) } catch (_e) {}
-            $storage.set("fs.chromiumVer", "")
-            chromiumOverride = ""
-            fsNote.set(present ? "Removed the downloaded Chromium." : "No Chromium download was present.")
-            tray.update()
+            try { $storage.set("fs.manualStop", true) } catch (_e) {}
+            binaryStop(() => {
+                setStatus("down")
+                try { $os.removeAll($filepath.join(aquatilsDir(), "chromium")) } catch (_e) {}
+                try { $storage.set("fs.chromiumVer", "") } catch (_e) {}
+                chromiumOverride = ""
+                fsNote.set(present ? "Removed the downloaded Chromium." : "No Chromium download was present.")
+                tray.update()
+            })
         }
 
         function downloaderReady(): boolean {
@@ -708,7 +755,7 @@ function init() {
             const archive = $filepath.join(dir, pick.asset)
             const binPath = $filepath.join(dir, FS_CONTAINER, pick.bin)
             try {
-                if ($os.stat(binPath)) {
+                if ($os.stat(binPath) && $storage.get<string>("fs.solverReady") === FS_VERSION) {
                     binaryLaunch(binPath)
                     return
                 }
@@ -773,6 +820,18 @@ function init() {
                         tray.update()
                         return
                     }
+                    let okBin = false
+                    try { const stb = $os.stat(binPath); if (stb) { try { okBin = stb.size() >= 1024 } catch (_e) { okBin = true } } } catch (_e) { okBin = false }
+                    if (!okBin) {
+                        fsBusy = false
+                        setStatus("down")
+                        try { $storage.set("fs.solverReady", "") } catch (_e) {}
+                        try { $os.removeAll(dir) } catch (_e) {}
+                        fsNote.set("The downloaded solver looks incomplete — press Start to try again.")
+                        tray.update()
+                        return
+                    }
+                    try { $storage.set("fs.solverReady", FS_VERSION) } catch (_e) {}
                     fsBusy = false
                     binaryLaunch(binPath)
                 } else if (p.status === "error") {
@@ -788,6 +847,7 @@ function init() {
 
         function fsStart(): void {
             fsManualStop = false
+            try { $storage.set("fs.manualStop", false) } catch (_e) {}
             if (fsMode.get() === "remote") {
                 fsNote.set("Remote mode: start the solver yourself; this only manages sessions at " + fsBase() + ".")
                 tray.update()
@@ -799,6 +859,7 @@ function init() {
 
         function fsStop(): void {
             fsManualStop = true
+            try { $storage.set("fs.manualStop", true) } catch (_e) {}
             if (fsMode.get() === "remote") {
                 fsNote.set("Remote mode: stop the solver on its host.")
                 tray.update()
@@ -1123,6 +1184,9 @@ function init() {
                     gap: 2,
                 }))
             }
+            if (st === "up" && fsMode.get() !== "remote" && !chromiumDownloadedHere()) {
+                rows.push(dim("Stage B note: no fetched Chromium present. uTLS clears most gates; if an interactive Turnstile fails and you have no system Chrome/Edge, enable 'fetch a minimal Chromium' in Advanced."))
+            }
             if (fsErr.get()) {
                 rows.push(tray.div({
                     items: [tray.text(fsNote.get() || fsErr.get(), { style: { fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5", color: "rgba(255,255,255,0.85)" } })],
@@ -1211,8 +1275,8 @@ function init() {
             if (fsAutoStart.get() && m === "remote") rows.push(dim("Auto-start is ignored in Remote mode."))
             if (m !== "remote") {
                 rows.push(dim(chromiumDownloadedHere()
-                    ? "Stage B: a minimal Chromium is in the cache — hard JS gates (interactive Turnstile) are handled automatically when uTLS can't."
-                    : "Stage B uses your installed Chrome/Edge for hard JS gates (Turnstile). With none, enable 'fetch a minimal Chromium' at first download."))
+                    ? "Stage B (hard JS / interactive Turnstile): a minimal Chromium is in the cache and is used automatically when uTLS can't clear a gate."
+                    : "Stage B (hard JS / interactive Turnstile) needs a Chromium. The solver will try a system Chrome/Edge if one is installed, but that can't be verified here — if hard challenges fail, tick 'fetch a minimal Chromium' below."))
             }
 
             rows.push(divider())
@@ -1251,10 +1315,11 @@ function init() {
             rows.push(dim("Uninstalling the plugin doesn't delete these — remove them here first if you want the disk space back."))
             const solverHere = binaryDownloaded()
             const chrHere = chromiumDownloadedHere()
+            const chrDir = chromiumDirExists()
             rows.push(tray.flex({
                 items: [
                     tray.button({ label: solverHere ? "Remove solver" : "Solver: none", onClick: "fs-remove-solver", intent: solverHere ? "alert-subtle" : "gray-subtle", size: "xs", disabled: !solverHere }),
-                    tray.button({ label: chrHere ? "Remove Chromium" : "Chromium: none", onClick: "fs-remove-chromium", intent: chrHere ? "alert-subtle" : "gray-subtle", size: "xs", disabled: !chrHere }),
+                    tray.button({ label: chrDir ? "Remove Chromium" : "Chromium: none", onClick: "fs-remove-chromium", intent: chrDir ? "alert-subtle" : "gray-subtle", size: "xs", disabled: !chrDir }),
                 ],
                 gap: 2,
             }))
