@@ -452,7 +452,7 @@ class Provider {
         if (server === "Auto" || server === "default" || !server) {
             const $ = await this.serverListDoc(dataIds)
             const groups = audio === "dub" ? ["dub"] : ["sub", "hsub"]
-            const KNOWN_SERVERS = audio === "dub" ? ["HD-1", "Vidstream-2", "VidCloud-1"] : ["VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1"]
+            const KNOWN_SERVERS = ["VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1"]
             const candidates = this.collectServers($, groups)
                 .filter((c) => KNOWN_SERVERS.indexOf(c.name) !== -1)
                 .sort((a, b) => KNOWN_SERVERS.indexOf(a.name) - KNOWN_SERVERS.indexOf(b.name))
@@ -492,7 +492,7 @@ class Provider {
     private parseServerLabel(server: string, audio: string): { group: string; name: string; label: string; ok: boolean } {
         const hs = server.match(/^hs:\s*/i)
         if (hs) return { group: "hsub", name: server.slice(hs[0].length), label: server, ok: audio !== "dub" }
-        return { group: audio === "dub" ? "dub" : "sub", name: server, label: server, ok: !(audio === "dub" && server === "VidPlay-1") }
+        return { group: audio === "dub" ? "dub" : "sub", name: server, label: server, ok: true }
     }
 
     private async serverListDoc(dataIds: string): Promise<DocSelectionFunction> {
