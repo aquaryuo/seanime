@@ -412,21 +412,62 @@ function init() {
             return ""
         }
 
-        async function chromiumURL(plt: string): Promise<string> {
-            try {
-                const res = await ctx.fetch("https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json", { method: "GET", timeout: 20 })
-                if (!res.ok) return ""
-                const data = res.json<any>()
-                const dls = data && data.channels && data.channels.Stable && data.channels.Stable.downloads ? data.channels.Stable.downloads["chrome-headless-shell"] : null
-                if (Array.isArray(dls)) { for (const d of dls) { if (d && d.platform === plt && d.url) return String(d.url) } }
-            } catch (_e) {}
-            return ""
+        function verNewer(a: string, b: string): boolean {
+            const pa = (a || "").split(".")
+            const pb = (b || "").split(".")
+            const n = Math.max(pa.length, pb.length)
+            for (let i = 0; i < n; i++) {
+                const x = parseInt(pa[i] || "0", 10) || 0
+                const y = parseInt(pb[i] || "0", 10) || 0
+                if (x > y) return true
+                if (x < y) return false
+            }
+            return false
         }
 
-        // ensureChromium yields a SOLVER_CHROME path for the spawned solver. "" =>
-        // the solver finds a system browser itself. The plugin never probes paths
-        // outside its own cache; the user opts in (fsWantChromium) to fetch a
-        // minimal Chromium into the cache when they have no Chrome/Edge.
+        async function chromiumStable(plt: string): Promise<{ version: string; url: string }> {
+            try {
+                const res = await ctx.fetch("https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json", { method: "GET", timeout: 20 })
+                if (!res.ok) return { version: "", url: "" }
+                const data = res.json<any>()
+                const stable = data && data.channels && data.channels.Stable ? data.channels.Stable : null
+                const version = stable && stable.version ? String(stable.version) : ""
+                let url = ""
+                const dls = stable && stable.downloads ? stable.downloads["chrome-headless-shell"] : null
+                if (Array.isArray(dls)) { for (const d of dls) { if (d && d.platform === plt && d.url) { url = String(d.url); break } } }
+                return { version: version, url: url }
+            } catch (_e) {}
+            return { version: "", url: "" }
+        }
+
+        function chromiumCachedVersion(): string {
+            return chromiumDownloadedHere() ? ($storage.get<string>("fs.chromiumVer") || "?") : ""
+        }
+
+        function downloadChromium(st: { version: string; url: string }, done: (ok: boolean) => void): void {
+            const dir = $filepath.join($os.cacheDir(), "aquatils", "chromium")
+            try { $os.mkdirAll(dir, 493) } catch (_e) {}
+            const zip = $filepath.join(dir, "chrome-headless-shell.zip")
+            let id = ""
+            try { id = dl.download(st.url, zip) } catch (_e) { done(false); return }
+            const cancel = dl.watch(id, (p: $downloader.DownloadProgress | undefined) => {
+                if (!p) return
+                if (p.status === "downloading") {
+                    fsNote.set("Downloading Chromium… " + Math.round(p.percentage) + "%")
+                    tray.update()
+                } else if (p.status === "completed") {
+                    cancel()
+                    try { $osExtra.unzip(zip, dir) } catch (_e) {}
+                    const ok = chromiumCachedPath() !== ""
+                    if (ok && st.version) $storage.set("fs.chromiumVer", st.version)
+                    done(ok)
+                } else if (p.status === "error") {
+                    cancel()
+                    done(false)
+                }
+            })
+        }
+
         function ensureChromium(cb: (path: string) => void): void {
             const cached = chromiumCachedPath()
             if (cached) { cb(cached); return }
@@ -435,32 +476,50 @@ function init() {
             if (!plt || !downloaderReady()) { cb(""); return }
             fsNote.set("Fetching a minimal Chromium…")
             tray.update()
-            void chromiumURL(plt).then((url) => {
-                if (!url) { cb(""); return }
-                const dir = $filepath.join($os.cacheDir(), "aquatils", "chromium")
-                try { $os.mkdirAll(dir, 493) } catch (_e) {}
-                const zip = $filepath.join(dir, "chrome-headless-shell.zip")
-                let id = ""
-                try { id = dl.download(url, zip) } catch (_e) { cb(""); return }
-                const cancel = dl.watch(id, (p: $downloader.DownloadProgress | undefined) => {
-                    if (!p) return
-                    if (p.status === "downloading") {
-                        fsNote.set("Downloading Chromium… " + Math.round(p.percentage) + "%")
-                        tray.update()
-                    } else if (p.status === "completed") {
-                        cancel()
-                        try { $osExtra.unzip(zip, dir) } catch (_e) {}
-                        cb(chromiumCachedPath())
-                    } else if (p.status === "error") {
-                        cancel()
-                        cb("")
-                    }
+            void chromiumStable(plt).then((st) => {
+                if (!st.url) { cb(""); return }
+                downloadChromium(st, (ok) => cb(ok ? chromiumCachedPath() : ""))
+            })
+        }
+
+        function updateChromium(): void {
+            const plt = chromiumCfTPlatform()
+            if (!plt) { fsNote.set("Chromium isn't available on this OS/arch."); tray.update(); return }
+            if (!chromiumDownloadedHere()) { fsNote.set("No Chromium is downloaded — it's fetched on demand."); tray.update(); return }
+            if (!downloaderReady()) { fsNote.set("Chromium update isn't available here."); tray.update(); return }
+            fsNote.set("Checking for a newer Chromium…")
+            tray.update()
+            void chromiumStable(plt).then((st) => {
+                if (!st.version || !st.url) { fsNote.set("Couldn't reach the Chromium release feed."); tray.update(); return }
+                const cur = $storage.get<string>("fs.chromiumVer") || ""
+                if (cur && !verNewer(st.version, cur)) { fsNote.set("Chromium is up to date (" + cur + ")."); tray.update(); return }
+                try { $os.removeAll($filepath.join(aquatilsDir(), "chromium")) } catch (_e) {}
+                chromiumOverride = ""
+                fsNote.set("Updating Chromium…")
+                tray.update()
+                downloadChromium(st, (ok) => {
+                    fsNote.set(ok ? ("Chromium updated to " + st.version + ".") : "Chromium update failed.")
+                    tray.update()
                 })
             })
         }
 
+        function pruneOldSolverVersions(): void {
+            try {
+                const base = aquatilsDir()
+                let entries: $os.DirEntry[] = []
+                try { entries = $os.readDir(base) } catch (_e) { return }
+                for (const e of entries) {
+                    if (e.isDir() && e.name() !== "chromium" && e.name() !== FS_VERSION) {
+                        try { $os.removeAll($filepath.join(base, e.name())) } catch (_e) {}
+                    }
+                }
+            } catch (_e) {}
+        }
+
         function binaryLaunch(binPath: string): void {
             binaryStop()
+            pruneOldSolverVersions()
             const gen = fsBinaryGen
             ensureChromium((chromePath) => {
                 if (gen !== fsBinaryGen) return
@@ -607,6 +666,7 @@ function init() {
             binaryStop()
             setStatus("down")
             try { $os.removeAll($filepath.join(aquatilsDir(), "chromium")) } catch (_e) {}
+            $storage.set("fs.chromiumVer", "")
             chromiumOverride = ""
             fsNote.set(present ? "Removed the downloaded Chromium." : "No Chromium download was present.")
             tray.update()
@@ -757,6 +817,14 @@ function init() {
             return "solver · Cloudflare + DDoS-Guard (+ Turnstile via Chrome)"
         }
 
+        function solverUpdatePending(): boolean {
+            if (fsMode.get() === "remote") return false
+            if (fsStatus.get() !== "up") return false
+            const rv = (fsVersion.get() || "").trim()
+            if (!rv) return false
+            return verNewer(SOLVER_VERSION, rv)
+        }
+
         function simpleSetup(): void {
             void fsRefresh().then(() => {
                 if (fsStatus.get() === "up") return
@@ -895,6 +963,12 @@ function init() {
         })
         ctx.registerEventHandler("fs-remove-solver", () => removeSolverDownloads())
         ctx.registerEventHandler("fs-remove-chromium", () => removeChromiumDownloads())
+        ctx.registerEventHandler("fs-update-chromium", () => updateChromium())
+        ctx.registerEventHandler("fs-restart-update", () => {
+            fsNote.set("Restarting to apply the updated solver…")
+            tray.update()
+            fsStart()
+        })
         ctx.registerEventHandler("fs-copy", () => {
             const text = fsErr.get() || fsNote.get()
             if (!text) return
@@ -1040,6 +1114,15 @@ function init() {
                 items: [statusBadge(), tray.text(detail, { style: { color: "rgba(255,255,255,0.6)", fontSize: "13px", overflowWrap: "anywhere", wordBreak: "break-word" } })],
                 gap: 2,
             }))
+            if (solverUpdatePending()) {
+                rows.push(tray.flex({
+                    items: [
+                        tray.text("Newer solver bundled (v" + SOLVER_VERSION + ", running v" + fsVersion.get() + ") — restart to apply.", { style: { fontSize: "12px", color: "rgba(120,200,255,0.95)" } }),
+                        tray.button({ label: "Restart to update", onClick: "fs-restart-update", intent: "primary-subtle", size: "xs", style: { marginLeft: "auto" } }),
+                    ],
+                    gap: 2,
+                }))
+            }
             if (fsErr.get()) {
                 rows.push(tray.div({
                     items: [tray.text(fsNote.get() || fsErr.get(), { style: { fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5", color: "rgba(255,255,255,0.85)" } })],
@@ -1175,6 +1258,15 @@ function init() {
                 ],
                 gap: 2,
             }))
+            if (chrHere) {
+                rows.push(tray.flex({
+                    items: [
+                        tray.text("Chromium " + chromiumCachedVersion(), { style: { fontSize: "12px", color: "rgba(255,255,255,0.55)" } }),
+                        tray.button({ label: "Update Chromium", onClick: "fs-update-chromium", intent: "gray-subtle", size: "xs", style: { marginLeft: "auto" } }),
+                    ],
+                    gap: 2,
+                }))
+            }
 
             rows.push(divider())
             rows.push(tray.flex({
