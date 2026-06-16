@@ -452,7 +452,7 @@ class Provider {
         if (server === "Auto" || server === "default" || !server) {
             const $ = await this.serverListDoc(dataIds)
             const groups = audio === "dub" ? ["dub"] : ["sub", "hsub"]
-            const KNOWN_SERVERS = ["VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1"]
+            const KNOWN_SERVERS = audio === "dub" ? ["HD-1", "Vidstream-2", "VidCloud-1", "VidPlay-1"] : ["VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1"]
             const candidates = this.collectServers($, groups)
                 .filter((c) => KNOWN_SERVERS.indexOf(c.name) !== -1)
                 .sort((a, b) => KNOWN_SERVERS.indexOf(a.name) - KNOWN_SERVERS.indexOf(b.name))
@@ -463,7 +463,7 @@ class Provider {
             for (const c of candidates) {
                 let resolved: EpisodeServer | undefined
                 try {
-                    resolved = await this.resolveServer(c.linkId, c.name, ctx)
+                    resolved = await this.resolveServer(c.linkId, c.name, ctx, audio)
                 } catch (_e) {
                     resolved = undefined
                 }
@@ -486,7 +486,7 @@ class Provider {
         const $ = await this.serverListDoc(dataIds)
         const picked = this.collectServers($, [target.group]).filter((c) => c.name === target.name)[0]
         if (!picked) throw "anikoto: that server is not available for this episode"
-        return await this.resolveServer(picked.linkId, target.label, ctx)
+        return await this.resolveServer(picked.linkId, target.label, ctx, audio)
     }
 
     private parseServerLabel(server: string, audio: string): { group: string; name: string; label: string; ok: boolean } {
@@ -526,9 +526,10 @@ class Provider {
         return out
     }
 
-    private async resolveServer(linkId: string, serverName: string, ctx: { anilistId: number; episode: number }): Promise<EpisodeServer> {
+    private async resolveServer(linkId: string, serverName: string, ctx: { anilistId: number; episode: number }, audio: string): Promise<EpisodeServer> {
         const got = await this.fetchSources(linkId)
         if (!got || !got.file) throw "anikoto: could not resolve the player URL (source may be encrypted or down)"
+        if (audio === "dub" && (await this.dubLooksWrong(got.tracks, got.origin))) throw "anikoto: dub source resolved to the subbed (Japanese) track"
         const subtitles = await this.buildSubtitles(got.tracks, ctx, got.origin)
         return {
             server: serverName,
@@ -541,6 +542,28 @@ class Provider {
                     subtitles,
                 },
             ],
+        }
+    }
+
+    private async dubLooksWrong(
+        tracks: { file: string; label?: string; kind?: string; default?: boolean }[] | undefined,
+        origin: string
+    ): Promise<boolean> {
+        if (!tracks || tracks.length === 0) return false
+        const caps = tracks.filter((t) => t && typeof t.file === "string" && /^https?:\/\//i.test(t.file) && (!t.kind || t.kind === "captions" || t.kind === "subtitles"))
+        if (caps.length === 0) return false
+        const track = caps.filter((t) => t.default === true)[0] || caps[0]
+        if (!track || !/eng/i.test(track.label || "English")) return false
+        const file = this.fixTrackUrl(track.file)
+        if (/(^|\/)eng-\d+\.(?:vtt|ass|srt)(?:[?#]|$)/i.test(file)) return false
+        try {
+            const res = await fetch(file, { headers: { Referer: `${origin}/`, Origin: origin }, timeout: 4 })
+            if (!res.ok) return false
+            const body = res.text()
+            const cues = (body.match(/-->/g) || []).length
+            return cues >= 60 && body.length >= 8000
+        } catch (_e) {
+            return false
         }
     }
 
