@@ -56,6 +56,7 @@ function init() {
         let fsTesting = false
         let fsManualStop = sget<boolean>("fs.manualStop", false)
         let fsAutoTested = false
+        let fsAutoUpgradeTried = false
         const fsNotified: { [k: string]: boolean } = {}
         const dl = (ctx as any).downloader
         const fsErr = ctx.state<string>("")
@@ -291,8 +292,11 @@ function init() {
                     fsSessions.set(p.sessions)
                     if (fsSession.get() && p.sessions.indexOf(fsSession.get()) < 0) await fsEnsureSession()
                 }
-                if (solverUpdatePending() && fsMode.get() !== "remote") {
-                    notifyOnce("upd", "Aqua's Utils: a newer solver (v" + SOLVER_VERSION + ") is ready — open the tray and tap Restart to update.")
+                if (solverUpdatePending() && fsMode.get() !== "remote" && !fsManualStop && !fsAutoUpgradeTried) {
+                    fsAutoUpgradeTried = true
+                    notifyOnce("upg", "Aqua's Utils: updating the solver to v" + SOLVER_VERSION + " — click Allow if Seanime asks.")
+                    try { ctx.toast.info("Updating the solver to v" + SOLVER_VERSION + " — click Allow if Seanime asks to download.") } catch (_e) {}
+                    fsStart()
                 }
             } else {
                 if (fsStatus.get() === "starting") {
