@@ -5,6 +5,8 @@ class Provider {
     private mirrors = ["https://animepahe.pw", "https://animepahe.com", "https://animepahe.org"]
     private solverUrl = ("{{solverUrl}}" as string)
     private solverDown = false
+    private lastResp: { url: string; status: number; statusText: string; ct: string; len: number; redirected: boolean; finalUrl: string; snippet: string; hit: string } | undefined = undefined
+    private lastSolver: { ran: boolean; http: number; snippet: string } | undefined = undefined
     private cookieTtl = 10800000
     private epCacheTtl = 900000
     private serverCacheTtl = 300000
@@ -397,6 +399,7 @@ class Provider {
             try {
                 res = await fetch(url, { headers: this.apiHeaders(cookie, extra), timeout: 10 })
                 this.absorbCookies(res)
+                this.snapResp(res, url)
                 if (!this.isBlocked(res)) return res.text()
             } catch (_e) {}
             cookie = await this.harvestCookies(true)
@@ -421,7 +424,7 @@ class Provider {
             parsed = this.parseJson<T>(solved)
             if (parsed !== undefined) return parsed
         }
-        throw this.fail("parse", "expected JSON but got an HTML interstitial (bot/ad gate) — check the baseUrl mirror and run the solver via Aqua's Utils")
+        throw this.fail("parse", this.parseDiag(url))
     }
 
     private parseJson<T>(text: string): T | undefined {
@@ -484,9 +487,11 @@ class Provider {
 
     private async solveGet(url: string): Promise<string | undefined> {
         const ep = this.solverEndpoint()
-        if (!ep) return undefined
+        if (!ep) { this.lastSolver = { ran: false, http: 0, snippet: "" }; return undefined }
         const data = await this.solverPost(ep, { cmd: "request.get", url, maxTimeout: 45000 })
         const body = data && data.solution ? data.solution.response : undefined
+        const http = data && data.solution && typeof data.solution.status === "number" ? data.solution.status : 0
+        this.lastSolver = { ran: true, http: http, snippet: this.snip(body || "") }
         if (body && !this.bodyIsChallenge(body)) return body
         return undefined
     }
@@ -517,20 +522,70 @@ class Provider {
     }
 
     private bodyIsChallenge(body: string): boolean {
-        if (!body) return false
+        return this.challengeToken(body) !== ""
+    }
+
+    private challengeToken(body: string): string {
+        if (!body) return ""
         const b = body.toLowerCase()
+        const toks = [
+            "ddos-guard", "ddg-cookie", "checking your browser", "just a moment",
+            "cf-mitigated", "challenges.cloudflare.com", "enable javascript and cookies",
+            "cf-browser-verification", "challenge-platform", "oncheqresponse", "onrtbfailure",
+        ]
+        for (let i = 0; i < toks.length; i++) {
+            if (b.indexOf(toks[i]) !== -1) return toks[i]
+        }
+        return ""
+    }
+
+    private snip(s: string): string {
+        if (!s) return ""
+        return s.replace(/\s+/g, " ").trim().slice(0, 160)
+    }
+
+    private snapResp(res: FetchResponse, url: string): void {
+        if (!res) return
+        let body = ""
+        try { body = res.text() } catch (_e) {}
+        this.lastResp = {
+            url: url,
+            status: res.status,
+            statusText: res.statusText || "",
+            ct: res.contentType || "",
+            len: res.contentLength,
+            redirected: res.redirected,
+            finalUrl: res.url || "",
+            snippet: this.snip(body),
+            hit: this.challengeToken(body),
+        }
+    }
+
+    private parseDiag(url: string): string {
+        const cb = $store.get<string>("apahe:base2") || "-"
+        const ck = $store.get<{ at: number; map: { [k: string]: string } }>("apahe:ck")
+        const ckSize = ck && ck.map ? this.mapSize(ck.map) : 0
+        let ddg = 0
+        if (ck && ck.map) {
+            for (const k in ck.map) {
+                if (/^__ddg/i.test(k)) ddg++
+            }
+        }
+        const r = this.lastResp
+        const s = this.lastSolver
         return (
-            b.indexOf("ddos-guard") !== -1 ||
-            b.indexOf("ddg-cookie") !== -1 ||
-            b.indexOf("checking your browser") !== -1 ||
-            b.indexOf("just a moment") !== -1 ||
-            b.indexOf("cf-mitigated") !== -1 ||
-            b.indexOf("challenges.cloudflare.com") !== -1 ||
-            b.indexOf("enable javascript and cookies") !== -1 ||
-            b.indexOf("cf-browser-verification") !== -1 ||
-            b.indexOf("challenge-platform") !== -1 ||
-            b.indexOf("oncheqresponse") !== -1 ||
-            b.indexOf("onrtbfailure") !== -1
+            "expected JSON, got non-JSON from " + url +
+            " [base=" + this.baseUrl + " cache=" + cb + "]" +
+            " http=" + (r ? r.status + "/" + r.statusText : "?") +
+            " ct=" + (r ? r.ct : "?") +
+            " len=" + (r ? r.len : "?") +
+            " redirected=" + (r ? r.redirected + "->" + r.finalUrl : "?") +
+            " ddg=" + ddg + "/" + ckSize +
+            " challengeHit=" + (r && r.hit ? r.hit : "none") +
+            " solver=" + (s ? (s.ran ? "ran" : "skip") : "skip") +
+            " solverHttp=" + (s ? s.http : "-") +
+            " body[" + (r ? r.snippet : "") + "]" +
+            " solverBody[" + (s ? s.snippet : "") + "]"
         )
     }
 
