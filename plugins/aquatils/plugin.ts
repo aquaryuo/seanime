@@ -10,7 +10,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.2"
+        const SOLVER_VERSION = "0.1.3"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -33,6 +33,7 @@ function init() {
         const fsPort = ctx.state<string>($storage.get<string>("fs.port") || FS_DEFAULT_PORT)
         const fsSession = ctx.state<string>($storage.get<string>("fs.session") || FS_DEFAULT_SESSION)
         const fsAutoStart = ctx.state<boolean>($storage.get<boolean>("fs.autoStart") === true)
+        const fsBrowser = ctx.state<boolean>($storage.get<boolean>("fs.browser") === true)
         const fsStatus = ctx.state<string>("unknown")
         const fsSessions = ctx.state<string[]>([])
         const fsNote = ctx.state<string>("")
@@ -191,6 +192,7 @@ function init() {
             $storage.set("fs.port", fsPort.get())
             $storage.set("fs.session", fsSession.get())
             $storage.set("fs.autoStart", fsAutoStart.get())
+            $storage.set("fs.browser", fsBrowser.get())
         }
 
         async function fsApi(cmd: string, extra: { [k: string]: any }, timeoutSec?: number): Promise<any> {
@@ -326,7 +328,7 @@ function init() {
             try {
                 const pick = binaryAsset()
                 if (pick) {
-                    const bin = $filepath.join($os.cacheDir(), "aquatils", FS_VERSION, FS_CONTAINER, pick.bin)
+                    const bin = $filepath.join($os.cacheDir(), "aquatils", FS_VERSION, fsVariant(), FS_CONTAINER, pick.bin)
                     let binOk = false
                     try {
                         binOk = !!$os.stat(bin)
@@ -342,12 +344,17 @@ function init() {
             tray.update()
         }
 
+        // fsVariant is the cache subdir for the chosen build (lean uTLS vs the
+        // opt-in browser/Stage B build that can launch Chrome for Turnstile).
+        function fsVariant(): string { return fsBrowser.get() ? "browser" : "utls" }
+
         function binaryAsset(): { asset: string; zip: boolean; bin: string } | null {
-            if ($os.platform === "linux" && $os.arch === "amd64") return { asset: "solver_linux_x64.tar.gz", zip: false, bin: "solver" }
-            if ($os.platform === "linux" && $os.arch === "arm64") return { asset: "solver_linux_arm64.tar.gz", zip: false, bin: "solver" }
-            if ($os.platform === "darwin" && $os.arch === "amd64") return { asset: "solver_darwin_x64.tar.gz", zip: false, bin: "solver" }
-            if ($os.platform === "darwin" && $os.arch === "arm64") return { asset: "solver_darwin_arm64.tar.gz", zip: false, bin: "solver" }
-            if ($os.platform === "windows" && $os.arch === "amd64") return { asset: "solver_windows_x64.zip", zip: true, bin: "solver.exe" }
+            const p = fsBrowser.get() ? "solver-browser_" : "solver_"
+            if ($os.platform === "linux" && $os.arch === "amd64") return { asset: p + "linux_x64.tar.gz", zip: false, bin: "solver" }
+            if ($os.platform === "linux" && $os.arch === "arm64") return { asset: p + "linux_arm64.tar.gz", zip: false, bin: "solver" }
+            if ($os.platform === "darwin" && $os.arch === "amd64") return { asset: p + "darwin_x64.tar.gz", zip: false, bin: "solver" }
+            if ($os.platform === "darwin" && $os.arch === "arm64") return { asset: p + "darwin_arm64.tar.gz", zip: false, bin: "solver" }
+            if ($os.platform === "windows" && $os.arch === "amd64") return { asset: p + "windows_x64.zip", zip: true, bin: "solver.exe" }
             return null
         }
 
@@ -355,7 +362,7 @@ function init() {
             try {
                 const pick = binaryAsset()
                 if (!pick) return false
-                return !!$os.stat($filepath.join($os.cacheDir(), "aquatils", FS_VERSION, FS_CONTAINER, pick.bin))
+                return !!$os.stat($filepath.join($os.cacheDir(), "aquatils", FS_VERSION, fsVariant(), FS_CONTAINER, pick.bin))
             } catch (_e) {
                 return false
             }
@@ -363,7 +370,7 @@ function init() {
 
         function fsLogPath(): string {
             try {
-                return $filepath.join($os.cacheDir(), "aquatils", FS_VERSION, "solver.log")
+                return $filepath.join($os.cacheDir(), "aquatils", FS_VERSION, fsVariant(), "solver.log")
             } catch (_e) {
                 return ""
             }
@@ -410,7 +417,7 @@ function init() {
             const gen = fsBinaryGen
             const logPath = fsLogPath()
             const port = fsPort.get() || FS_DEFAULT_PORT
-            const fsDir = $filepath.join($os.cacheDir(), "aquatils", FS_VERSION, FS_CONTAINER)
+            const fsDir = $filepath.join($os.cacheDir(), "aquatils", FS_VERSION, fsVariant(), FS_CONTAINER)
             const ac = $os.platform === "windows"
                 ? $osExtra.asyncCmd("cmd", "/c", binPath)
                 : $osExtra.asyncCmd("sh", "-c", "xattr -dr com.apple.quarantine '" + fsDir + "' 2>/dev/null; chmod -R 755 '" + fsDir + "'; exec '" + binPath + "'")
@@ -520,7 +527,7 @@ function init() {
                 tray.update()
                 return
             }
-            const dir = $filepath.join(cacheDir, "aquatils", FS_VERSION)
+            const dir = $filepath.join(cacheDir, "aquatils", FS_VERSION, fsVariant())
             const archive = $filepath.join(dir, pick.asset)
             const binPath = $filepath.join(dir, FS_CONTAINER, pick.bin)
             try {
@@ -630,7 +637,7 @@ function init() {
 
         function solverDetail(): string {
             if (fsMode.get() === "remote") return "Remote solver"
-            return "solver · Cloudflare + DDoS-Guard"
+            return fsBrowser.get() ? "solver (browser) · + Turnstile" : "solver · Cloudflare + DDoS-Guard"
         }
 
         function simpleSetup(): void {
@@ -745,6 +752,15 @@ function init() {
         ctx.registerEventHandler("fs-autostart-toggle", () => {
             fsAutoStart.set(!fsAutoStart.get())
             fsPersist()
+            tray.update()
+        })
+        ctx.registerEventHandler("fs-browser-toggle", () => {
+            fsBrowser.set(!fsBrowser.get())
+            fsPersist()
+            fsManualStop = true
+            binaryStop()
+            setStatus("down")
+            fsNote.set(fsBrowser.get() ? "Browser tier on — press Start to download & run it." : "Browser tier off — press Start to use the uTLS build.")
             tray.update()
         })
         ctx.registerEventHandler("ui-mode-toggle", () => {
@@ -991,6 +1007,17 @@ function init() {
                 size: "sm",
             }))
             if (fsAutoStart.get() && m === "remote") rows.push(dim("Auto-start is ignored in Remote mode."))
+            if (m !== "remote") {
+                rows.push(tray.button({
+                    label: fsBrowser.get() ? "✓ Browser tier (Stage B): on" : "Browser tier (Stage B): off",
+                    onClick: "fs-browser-toggle",
+                    intent: fsBrowser.get() ? "success-subtle" : "gray-subtle",
+                    size: "sm",
+                }))
+                rows.push(dim(fsBrowser.get()
+                    ? "Downloads the browser build that launches real Chrome on a hard JS gate (interactive Turnstile / CF). Bigger; needs a system Chrome on this machine. Stop & Start to apply."
+                    : "Default uTLS build (no browser). Turn on only if a source serves a JS challenge uTLS can't clear."))
+            }
 
             rows.push(divider())
             rows.push(heading("Configuration"))
