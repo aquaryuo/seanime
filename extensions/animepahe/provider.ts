@@ -339,29 +339,37 @@ class Provider {
         await this.harvestCookies(false)
     }
 
+    private canonicalOrigin(u: string, fallback: string): string {
+        if (!u) return fallback
+        const m = u.match(/^(https?:\/\/[^\/?#]+)/i)
+        if (!m) return fallback
+        return /animepahe/i.test(m[1]) ? m[1].replace(/\/+$/, "") : fallback
+    }
+
     private async resolveBase(): Promise<string> {
         const all = [this.baseUrl].concat(this.mirrors).map((u) => u.replace(/\/+$/, ""))
         const candidates = all.filter((u, i) => all.indexOf(u) === i)
         if (candidates.length === 1) return candidates[0]
-        const cached = $store.get<string>("apahe:base")
-        if (cached && candidates.indexOf(cached) !== -1) return cached
+        const cached = $store.get<string>("apahe:base2")
+        if (cached && /animepahe/i.test(cached)) return cached
         let fallback = ""
         for (const c of candidates) {
             try {
                 const res = await fetch(`${c}/`, { headers: this.browserHeaders(), timeout: 10 })
                 if (res && res.ok) {
+                    const canon = this.canonicalOrigin(res.url, c)
                     this.absorbCookies(res)
-                    $store.set("apahe:base", c)
-                    return c
+                    $store.set("apahe:base2", canon)
+                    return canon
                 }
                 if (res && !fallback && (res.status === 403 || res.status === 503)) {
-                    fallback = c
+                    fallback = this.canonicalOrigin(res.url, c)
                     this.absorbCookies(res)
                 }
             } catch (_e) {}
         }
         if (fallback) {
-            $store.set("apahe:base", fallback)
+            $store.set("apahe:base2", fallback)
             return fallback
         }
         return candidates[0]
