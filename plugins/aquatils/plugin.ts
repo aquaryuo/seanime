@@ -1211,6 +1211,14 @@ function init() {
         function settingsRows(): any[] {
             const rows: any[] = []
             rows.push(tray.button({
+                label: fsAutoStart.get() ? "✓ Auto-Start Server on Launch" : "Auto-Start Server on Launch: off",
+                onClick: "fs-autostart-toggle",
+                intent: fsAutoStart.get() ? "success-subtle" : "gray-subtle",
+                size: "sm",
+            }))
+            rows.push(dim("Start the solver automatically when Seanime launches."))
+            rows.push(divider())
+            rows.push(tray.button({
                 label: notify.get() ? "✓ Error notifications: on" : "Error notifications: off",
                 onClick: "seh-notify-toggle",
                 intent: notify.get() ? "success-subtle" : "gray-subtle",
@@ -1264,6 +1272,34 @@ function init() {
             return rows
         }
 
+        function logsSection(): any[] {
+            const rows: any[] = []
+            rows.push(divider())
+            rows.push(heading("Logs"))
+            rows.push(tray.flex({
+                items: [
+                    tray.button({ label: "Copy logs", onClick: "fs-logs-copy", intent: "gray-subtle", size: "xs" }),
+                    tray.button({ label: fsLogFilter.get() ? "Polling: hidden" : "Polling: shown", onClick: "fs-logs-filter", intent: fsLogFilter.get() ? "primary-subtle" : "gray-subtle", size: "xs" }),
+                    tray.button({ label: "Clear", onClick: "fs-logs-clear", intent: "alert-subtle", size: "xs", style: { marginLeft: "auto" } }),
+                ],
+                gap: 2,
+            }))
+            const log = currentLog()
+            const lineStyle = { fontSize: "11px", fontFamily: "ui-monospace, monospace", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: "1.5", color: "rgba(255,255,255,0.75)" }
+            let logItems: any[]
+            if (log) {
+                const lines = log.split("\n").slice(-80)
+                logItems = lines.map((l) => tray.text(l.length ? l : " ", { style: lineStyle }))
+            } else {
+                logItems = [tray.text(fsMode.get() === "remote" ? "Logs aren't available in Remote mode (the server runs elsewhere)." : "No output captured yet — start the solver.", { style: { fontSize: "11px", color: "rgba(255,255,255,0.5)" } })]
+            }
+            rows.push(tray.div({
+                items: logItems,
+                style: { background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "6px", padding: "8px", maxHeight: "220px", overflowY: "auto" },
+            }))
+            return rows
+        }
+
         function cfRows(): any[] {
             const rows: any[] = cfStatusRows()
             const st = fsStatus.get()
@@ -1303,6 +1339,7 @@ function init() {
                 }
                 items.push(tray.button({ label: "Advanced", onClick: "ui-mode-toggle", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto" } }))
                 rows.push(tray.flex({ items: items, gap: 2 }))
+                if (fsMode.get() !== "remote") { const ls = logsSection(); for (let i = 0; i < ls.length; i++) rows.push(ls[i]) }
                 return rows
             }
             rows.push(tray.button({ label: "← Back to Simple", onClick: "ui-mode-toggle", intent: "gray-subtle", size: "xs" }))
@@ -1320,23 +1357,14 @@ function init() {
             rows.push(dim(m === "remote" ? "Point at a solver you run yourself — any FlareSolverr-/v1 endpoint (e.g. a container you manage)." : "Downloads & runs the self-contained solver (uTLS first; auto-escalates to a real browser only for hard JS gates like Turnstile)."))
 
             rows.push(divider())
-            rows.push(heading("Controls"))
             rows.push(tray.flex({
                 items: [
                     tray.button({ label: "Start", onClick: "fs-start", intent: "success", size: "sm" }),
                     tray.button({ label: "Stop", onClick: "fs-stop", intent: "alert", size: "sm", disabled: fsRestarting }),
                     tray.button({ label: fsRestarting ? "Restarting…" : "Restart", onClick: "fs-restart", intent: "warning-subtle", size: "sm", disabled: fsRestarting }),
-                    tray.button({ label: "Refresh", onClick: "fs-refresh", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto" } }),
                 ],
                 gap: 2,
             }))
-            rows.push(tray.button({
-                label: fsAutoStart.get() ? "✓ Auto-start on launch" : "Auto-start on launch: off",
-                onClick: "fs-autostart-toggle",
-                intent: fsAutoStart.get() ? "success-subtle" : "gray-subtle",
-                size: "sm",
-            }))
-            if (fsAutoStart.get() && m === "remote") rows.push(dim("Auto-start is ignored in Remote mode."))
             if (m !== "remote") {
                 rows.push(dim(chromiumDownloadedHere()
                     ? "Stage B (hard JS / interactive Turnstile): a minimal Chromium is in the cache and is used automatically when uTLS can't clear a gate."
@@ -1355,14 +1383,6 @@ function init() {
             rows.push(dim("Session name"))
             rows.push(tray.input({ fieldRef: fsSessionRef, placeholder: FS_DEFAULT_SESSION }))
             rows.push(tray.button({ label: "Save", onClick: "fs-save", intent: "primary", size: "sm" }))
-            const ss = fsSessions.get()
-            rows.push(tray.flex({
-                items: [
-                    tray.button({ label: "Create session", onClick: "fs-create-session", intent: "gray-subtle", size: "xs" }),
-                    tray.text("Sessions: " + (ss.length ? ss.join(", ") : "none"), { style: { color: "rgba(255,255,255,0.5)", fontSize: "12px", marginLeft: "auto" } }),
-                ],
-                gap: 2,
-            }))
 
             rows.push(divider())
             rows.push(heading("Diagnostics"))
@@ -1398,38 +1418,8 @@ function init() {
                 }))
             }
 
-            rows.push(divider())
-            rows.push(tray.flex({
-                items: [
-                    heading("Logs"),
-                    tray.button({ label: fsLogView.get() ? "Hide" : "Show", onClick: "fs-viewlog", intent: "gray-subtle", size: "xs", style: { marginLeft: "auto" } }),
-                ],
-                gap: 2,
-            }))
-            if (fsLogView.get()) {
-                rows.push(tray.flex({
-                    items: [
-                        tray.button({ label: "Refresh", onClick: "fs-logs-refresh", intent: "gray-subtle", size: "xs" }),
-                        tray.button({ label: "Copy", onClick: "fs-logs-copy", intent: "gray-subtle", size: "xs" }),
-                        tray.button({ label: fsLogFilter.get() ? "Polling: hidden" : "Polling: shown", onClick: "fs-logs-filter", intent: fsLogFilter.get() ? "primary-subtle" : "gray-subtle", size: "xs" }),
-                        tray.button({ label: "Clear", onClick: "fs-logs-clear", intent: "alert-subtle", size: "xs", style: { marginLeft: "auto" } }),
-                    ],
-                    gap: 2,
-                }))
-                const log = currentLog()
-                const lineStyle = { fontSize: "11px", fontFamily: "ui-monospace, monospace", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: "1.5", color: "rgba(255,255,255,0.75)" }
-                let logItems: any[]
-                if (log) {
-                    const lines = log.split("\n").slice(-80)
-                    logItems = lines.map((l) => tray.text(l.length ? l : " ", { style: lineStyle }))
-                } else {
-                    logItems = [tray.text(m === "remote" ? "Logs aren't available in Remote mode (the server runs elsewhere)." : "No output captured yet — start the binary.", { style: { fontSize: "11px", color: "rgba(255,255,255,0.5)" } })]
-                }
-                rows.push(tray.div({
-                    items: logItems,
-                    style: { background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "6px", padding: "8px", maxHeight: "220px", overflowY: "auto" },
-                }))
-            }
+            const ls = logsSection()
+            for (let i = 0; i < ls.length; i++) rows.push(ls[i])
             return rows
         }
 
