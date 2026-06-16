@@ -6,7 +6,7 @@ class Provider {
     private solverUrl = ("{{solverUrl}}" as string)
     private solverDown = false
     private lastResp: { url: string; status: number; statusText: string; ct: string; len: number; redirected: boolean; finalUrl: string; snippet: string; hit: string } | undefined = undefined
-    private lastSolver: { ran: boolean; http: number; snippet: string } | undefined = undefined
+    private lastSolver: { ran: boolean; http: number; snippet: string; reason: string } | undefined = undefined
     private cookieTtl = 10800000
     private baseTtl = 21600000
     private epCacheTtl = 900000
@@ -419,9 +419,31 @@ class Provider {
         const solved = await this.solveGet(url)
         if (solved) return solved
         if (!this.solverEndpoint()) throw this.fail("server", "Solver endpoint not set — configure it in the extension settings and run it via Aqua's Utils.")
-        if (this.solverDown) throw this.fail("server", "Aqua's Utils solver isn't reachable at " + this.solverEndpoint() + " — open Aqua's Utils and start it.")
+        const ping = await this.solverPing()
+        if (!ping.up) throw this.fail("server", "Aqua's Utils solver isn't reachable at " + this.solverEndpoint() + " — open Aqua's Utils and start it.")
+        let why = this.lastSolver && this.lastSolver.reason ? this.lastSolver.reason : ""
+        why = why.replace(/^needs-stronger-solver:\s*/i, "")
         this.invalidateBase()
-        throw this.fail("fetch", "The solver couldn't get past the site's protection — retry, or check Aqua's Utils.")
+        throw this.fail("fetch", "Connected to the solver (v" + (ping.version || "?") + ") but it couldn't clear the site's protection" + (why ? " — " + why : "") + ".")
+    }
+
+    private async solverPing(): Promise<{ up: boolean; version?: string }> {
+        const ep = this.solverEndpoint()
+        if (!ep) return { up: false }
+        const cached = $store.get<{ at: number; up: boolean; version?: string }>("apahe:ping")
+        const t = this.now()
+        if (cached && t > 0 && cached.at > 0 && t - cached.at < 30000) return { up: cached.up, version: cached.version }
+        try {
+            const res = await fetch(ep, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cmd: "sessions.list" }), timeout: 8, noCloudflareBypass: true })
+            const up = !!res && res.ok
+            let version: string | undefined
+            if (up) { try { const d = res.json<any>(); version = d && d.version ? String(d.version) : undefined } catch (_e) {} }
+            $store.set("apahe:ping", { at: this.now(), up: up, version: version })
+            return { up: up, version: version }
+        } catch (_e) {
+            $store.set("apahe:ping", { at: this.now(), up: false })
+            return { up: false }
+        }
     }
 
     private async getJson<T>(url: string): Promise<T> {
@@ -502,11 +524,12 @@ class Provider {
 
     private async solveGet(url: string): Promise<string | undefined> {
         const ep = this.solverEndpoint()
-        if (!ep) { this.lastSolver = { ran: false, http: 0, snippet: "" }; return undefined }
+        if (!ep) { this.lastSolver = { ran: false, http: 0, snippet: "", reason: "" }; return undefined }
         const data = await this.solverPost(ep, { cmd: "request.get", url, maxTimeout: 28000 })
         const body = data && data.solution ? data.solution.response : undefined
         const http = data && data.solution && typeof data.solution.status === "number" ? data.solution.status : 0
-        this.lastSolver = { ran: true, http: http, snippet: this.snip(body || "") }
+        const reason = data && data.message ? String(data.message) : ""
+        this.lastSolver = { ran: true, http: http, snippet: this.snip(body || ""), reason: reason }
         if (body && !this.bodyIsChallenge(body)) return body
         return undefined
     }
