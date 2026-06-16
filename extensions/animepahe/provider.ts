@@ -62,8 +62,8 @@ class Provider {
         }
 
         if (results.length === 0 && lastErr) {
-            if (blocked) throw this.fail("search", `${this.blockedMessage()} (${lastErr})`)
-            throw this.fail("search", lastErr)
+            if (blocked) throw new Error(`${this.blockedMessage()} (${lastErr})`)
+            throw new Error(lastErr)
         }
         return this.filterBySeason(results, opts)
     }
