@@ -930,14 +930,19 @@ function init() {
             let skipping = false
             for (let i = 0; i < lines.length; i++) {
                 const l = lines[i]
+                const isPoll = l.indexOf("sessions.list") >= 0 || l.indexOf("sessions.create") >= 0
                 if (l.indexOf("Incoming request") >= 0) {
-                    skipping = l.indexOf("sessions.list") >= 0 || l.indexOf("sessions.create") >= 0
+                    skipping = isPoll
                     if (!skipping) out.push(l)
                     continue
                 }
+                if (isPoll) {
+                    skipping = true
+                    continue
+                }
                 if (skipping) {
-                    if (l.indexOf("Response in") >= 0 || l.indexOf("200 OK") >= 0 || l.indexOf("POST http") >= 0) continue
                     skipping = false
+                    if (l.indexOf("Response in") >= 0 || l.indexOf("200 OK") >= 0 || l.indexOf("POST http") >= 0) continue
                 }
                 out.push(l)
             }
