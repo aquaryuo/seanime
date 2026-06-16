@@ -403,9 +403,17 @@ class Provider {
 
     private async getJson<T>(url: string): Promise<T> {
         const text = await this.getText(url, { Referer: `${this.baseUrl}/`, "X-Requested-With": "XMLHttpRequest", Accept: "application/json, text/javascript, */*; q=0.01" })
-        const parsed = this.parseJson<T>(text)
-        if (parsed === undefined) throw this.fail("parse", "response was not valid JSON")
-        return parsed
+        let parsed = this.parseJson<T>(text)
+        if (parsed !== undefined) return parsed
+        // A non-JSON body where JSON was expected is almost always a bot/ad
+        // interstitial that slipped past challenge detection (stale mirror or a
+        // flagged IP). Force the solver and re-parse before giving up.
+        const solved = await this.solveGet(url)
+        if (solved) {
+            parsed = this.parseJson<T>(solved)
+            if (parsed !== undefined) return parsed
+        }
+        throw this.fail("parse", "expected JSON but got an HTML interstitial (bot/ad gate) — check the baseUrl mirror and run the solver via Aqua's Utils")
     }
 
     private parseJson<T>(text: string): T | undefined {
@@ -511,7 +519,10 @@ class Provider {
             b.indexOf("cf-mitigated") !== -1 ||
             b.indexOf("challenges.cloudflare.com") !== -1 ||
             b.indexOf("enable javascript and cookies") !== -1 ||
-            b.indexOf("cf-browser-verification") !== -1
+            b.indexOf("cf-browser-verification") !== -1 ||
+            b.indexOf("challenge-platform") !== -1 ||
+            b.indexOf("oncheqresponse") !== -1 ||
+            b.indexOf("onrtbfailure") !== -1
         )
     }
 
