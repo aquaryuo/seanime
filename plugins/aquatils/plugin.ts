@@ -55,6 +55,8 @@ function init() {
         let fsDownStreak = 0
         let fsTesting = false
         let fsManualStop = sget<boolean>("fs.manualStop", false)
+        let fsAutoTested = false
+        const fsNotified: { [k: string]: boolean } = {}
         const dl = (ctx as any).downloader
         const fsErr = ctx.state<string>("")
         const fsVersion = ctx.state<string>("")
@@ -87,6 +89,9 @@ function init() {
                 fsErr.set("")
                 fsRestarting = false
                 if (!fsUpSince) fsUpSince = nowMs()
+                fsNotified["down"] = false
+                fsNotified["crash"] = false
+                if (!fsAutoTested && fsMode.get() !== "remote") { fsAutoTested = true; void runTest() }
             } else if (next === "starting") {
                 fsErr.set("")
                 fsUpSince = 0
@@ -94,6 +99,20 @@ function init() {
                 fsRestarting = false
                 fsUpSince = 0
             }
+        }
+
+        function notifyOnce(key: string, msg: string): void {
+            if (fsNotified[key]) return
+            fsNotified[key] = true
+            try { ctx.notification.send(msg) } catch (_e) {}
+        }
+
+        function refreshTrayBadge(): void {
+            try {
+                if (fsStatus.get() === "down" && !fsManualStop && fsMode.get() !== "remote") { tray.updateBadge({ number: 1, intent: "error" }); return }
+                if (solverUpdatePending()) { tray.updateBadge({ number: 1, intent: "info" }); return }
+                tray.updateBadge({ number: errors.get().length, intent: "warning" })
+            } catch (_e) {}
         }
 
         const tray = ctx.newTray({
@@ -255,6 +274,9 @@ function init() {
                     fsSessions.set(p.sessions)
                     if (fsSession.get() && p.sessions.indexOf(fsSession.get()) < 0) await fsEnsureSession()
                 }
+                if (solverUpdatePending() && fsMode.get() !== "remote") {
+                    notifyOnce("upd", "Aqua's Utils: a newer solver (v" + SOLVER_VERSION + ") is ready — open the tray and tap Restart to update.")
+                }
             } else {
                 if (fsStatus.get() === "starting") {
                     if (fsMode.get() === "binary") {
@@ -274,11 +296,14 @@ function init() {
                         if (fsDownStreak === 2 && fsAutoStart.get() && !fsManualStop && fsMode.get() !== "remote") {
                             fsNote.set("Solver stopped — auto-restarting…")
                             fsStart()
+                        } else if (fsDownStreak === 2 && !fsManualStop && fsMode.get() !== "remote") {
+                            notifyOnce("down", "Aqua's Utils: the solver isn't running. Open the tray to start it.")
                         }
                     }
                 }
             }
             if (fsStatus.get() !== "starting") fsRestarting = false
+            refreshTrayBadge()
             tray.update()
         }
 
@@ -602,6 +627,7 @@ function init() {
                     fsRestarting = false
                     if (wasUp) {
                         fsNote.set("Solver stopped (code " + code + ").")
+                        if (!fsManualStop) notifyOnce("down", "Aqua's Utils: the solver stopped (code " + code + ").")
                     } else {
                         const why = cleanTail(fsLastOut) || readLogTail(logPath)
                         const blocked = !why ? " No output was captured — it died before logging (corrupt download, antivirus, or a missing system library)." : ""
@@ -612,6 +638,7 @@ function init() {
                         fsErr.set(fsLastOut || why || ("Solver exited (code " + code + ")"))
                         fsNote.set("Solver exited (code " + code + ")" + (why ? ": " + why : "") + "." + blocked)
                         ctx.toast.error("Solver exited (code " + code + ")")
+                        notifyOnce("crash", "Aqua's Utils: the solver failed to start (code " + code + "). Open the tray for details.")
                     }
                     tray.update()
                 })
@@ -774,6 +801,7 @@ function init() {
             setStatus("starting")
             const launchGen = fsBinaryGen
             fsNote.set("Downloading solver " + SOLVER_VERSION + " — if Seanime asks, click Allow to permit the download.")
+            try { ctx.toast.info("Seanime will ask permission next — click Allow to download the solver.") } catch (_e) {}
             tray.update()
             const url = "https://github.com/" + SOLVER_REPO + "/releases/download/solver-v" + SOLVER_VERSION + "/" + pick.asset
             let id = ""
@@ -1176,13 +1204,12 @@ function init() {
                 gap: 2,
             }))
             if (solverUpdatePending()) {
-                rows.push(tray.flex({
-                    items: [
-                        tray.text("Newer solver bundled (v" + SOLVER_VERSION + ", running v" + fsVersion.get() + ") — restart to apply.", { style: { fontSize: "12px", color: "rgba(120,200,255,0.95)" } }),
-                        tray.button({ label: "Restart to update", onClick: "fs-restart-update", intent: "primary-subtle", size: "xs", style: { marginLeft: "auto" } }),
-                    ],
-                    gap: 2,
+                rows.push(tray.alert({
+                    intent: "warning",
+                    title: "Solver update ready",
+                    description: "A newer solver (v" + SOLVER_VERSION + ") is bundled; you're running v" + fsVersion.get() + ".",
                 }))
+                rows.push(tray.button({ label: "Restart to update", onClick: "fs-restart-update", intent: "primary", size: "sm" }))
             }
             if (st === "up" && fsMode.get() !== "remote" && !chromiumDownloadedHere()) {
                 rows.push(dim("Stage B note: no fetched Chromium present. uTLS clears most gates; if an interactive Turnstile fails and you have no system Chrome/Edge, enable 'fetch a minimal Chromium' in Advanced."))
