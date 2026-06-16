@@ -1,9 +1,0 @@
-{
-  "urls": [
-    "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/anikoto/manifest.json",
-    "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/animelok/manifest.json",
-    "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/anizone/manifest.json",
-    "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/animepahe/manifest.json",
-    "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aqua-utils/manifest.json"
-  ]
-}

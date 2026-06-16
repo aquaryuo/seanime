@@ -1,7 +1,7 @@
 {
   "id": "animepahe",
   "name": "AnimePahe",
-  "version": "0.1.8",
+  "version": "0.2.2",
   "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/animepahe/manifest.json",
   "language": "typescript",
   "type": "onlinestream-provider",
@@ -27,19 +27,9 @@
         ]
       },
       {
-        "type": "select",
-        "name": "browserFallback",
-        "label": "Headless browser fallback (needs Chrome; rarely beats Cloudflare)",
-        "default": "false",
-        "options": [
-          { "value": "false", "label": "Disabled" },
-          { "value": "true", "label": "Enabled" }
-        ]
-      },
-      {
         "type": "text",
         "name": "solverUrl",
-        "label": "Cloudflare solver endpoint (FlareSolverr-compatible). Defaults to the local FlareSolverr that Aqua's Utils manages; change for a remote solver.",
+        "label": "[!] FlareSolverr endpoint — Refer to Aqua's Utils",
         "default": "http://127.0.0.1:8191/v1"
       }
     ]

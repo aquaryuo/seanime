@@ -1,0 +1,62 @@
+[
+  {
+    "id": "anikoto",
+    "name": "Anikoto",
+    "description": "Only anikoto compatibility layer you'll ever need",
+    "author": "aquaryuo",
+    "type": "onlinestream-provider",
+    "language": "typescript",
+    "lang": "en",
+    "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/anikoto/icon.png",
+    "website": "https://anikototv.to",
+    "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/anikoto/manifest.json"
+  },
+  {
+    "id": "animelok",
+    "name": "Animelok",
+    "description": "Only animelok compatibility layer you'll ever need",
+    "author": "aquaryuo",
+    "type": "onlinestream-provider",
+    "language": "typescript",
+    "lang": "en",
+    "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/animelok/icon.png",
+    "website": "https://animelok.online",
+    "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/animelok/manifest.json"
+  },
+  {
+    "id": "anizone",
+    "name": "AniZone",
+    "description": "Only anizone compatibility layer you'll ever need",
+    "author": "aquaryuo",
+    "type": "onlinestream-provider",
+    "language": "typescript",
+    "lang": "en",
+    "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/anizone/icon.png",
+    "website": "https://anizone.to",
+    "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/anizone/manifest.json"
+  },
+  {
+    "id": "animepahe",
+    "name": "AnimePahe",
+    "description": "Only animepahe compatibility layer you'll ever need",
+    "author": "aquaryuo",
+    "type": "onlinestream-provider",
+    "language": "typescript",
+    "lang": "en",
+    "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/animepahe/icon.png",
+    "website": "https://animepahe.pw",
+    "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/animepahe/manifest.json"
+  },
+  {
+    "id": "aquatils",
+    "name": "Aqua's Utils",
+    "description": "A toolbox plugin: surfaces extension errors as toasts/tray, and launches & manages a self-contained aquatils-solver (or a remote one you run) for Cloudflare/DDoS-Guard sites.",
+    "author": "aquaryuo",
+    "type": "plugin",
+    "language": "typescript",
+    "lang": "multi",
+    "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/icon.png",
+    "website": "https://github.com/aquaryuo/seanime",
+    "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/manifest.json"
+  }
+]
