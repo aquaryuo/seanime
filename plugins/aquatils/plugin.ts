@@ -33,7 +33,6 @@ function init() {
         const fsPort = ctx.state<string>($storage.get<string>("fs.port") || FS_DEFAULT_PORT)
         const fsSession = ctx.state<string>($storage.get<string>("fs.session") || FS_DEFAULT_SESSION)
         const fsAutoStart = ctx.state<boolean>($storage.get<boolean>("fs.autoStart") === true)
-        const fsBrowser = ctx.state<boolean>($storage.get<boolean>("fs.browser") === true)
         const fsStatus = ctx.state<string>("unknown")
         const fsSessions = ctx.state<string[]>([])
         const fsNote = ctx.state<string>("")
@@ -55,7 +54,7 @@ function init() {
         const fsErr = ctx.state<string>("")
         const fsVersion = ctx.state<string>("")
         const fsTest = ctx.state<string>("")
-        const fsLogView = ctx.state<boolean>(false)
+        const fsLogView = ctx.state<boolean>(true)
         const fsLogFilter = ctx.state<boolean>(true)
         const fsConsent = ctx.state<boolean>(false)
         let sehGroups: { key: string; label: string; count: number; t: number }[] = []
@@ -192,7 +191,6 @@ function init() {
             $storage.set("fs.port", fsPort.get())
             $storage.set("fs.session", fsSession.get())
             $storage.set("fs.autoStart", fsAutoStart.get())
-            $storage.set("fs.browser", fsBrowser.get())
         }
 
         async function fsApi(cmd: string, extra: { [k: string]: any }, timeoutSec?: number): Promise<any> {
@@ -328,7 +326,7 @@ function init() {
             try {
                 const pick = binaryAsset()
                 if (pick) {
-                    const bin = $filepath.join($os.cacheDir(), "aquatils", FS_VERSION, fsVariant(), FS_CONTAINER, pick.bin)
+                    const bin = $filepath.join($os.cacheDir(), "aquatils", FS_VERSION, FS_CONTAINER, pick.bin)
                     let binOk = false
                     try {
                         binOk = !!$os.stat(bin)
@@ -344,12 +342,8 @@ function init() {
             tray.update()
         }
 
-        // fsVariant is the cache subdir for the chosen build (lean uTLS vs the
-        // opt-in browser/Stage B build that can launch Chrome for Turnstile).
-        function fsVariant(): string { return fsBrowser.get() ? "browser" : "utls" }
-
         function binaryAsset(): { asset: string; zip: boolean; bin: string } | null {
-            const p = fsBrowser.get() ? "solver-browser_" : "solver_"
+            const p = "solver-browser_"
             if ($os.platform === "linux" && $os.arch === "amd64") return { asset: p + "linux_x64.tar.gz", zip: false, bin: "solver" }
             if ($os.platform === "linux" && $os.arch === "arm64") return { asset: p + "linux_arm64.tar.gz", zip: false, bin: "solver" }
             if ($os.platform === "darwin" && $os.arch === "amd64") return { asset: p + "darwin_x64.tar.gz", zip: false, bin: "solver" }
@@ -362,7 +356,7 @@ function init() {
             try {
                 const pick = binaryAsset()
                 if (!pick) return false
-                return !!$os.stat($filepath.join($os.cacheDir(), "aquatils", FS_VERSION, fsVariant(), FS_CONTAINER, pick.bin))
+                return !!$os.stat($filepath.join($os.cacheDir(), "aquatils", FS_VERSION, FS_CONTAINER, pick.bin))
             } catch (_e) {
                 return false
             }
@@ -370,7 +364,7 @@ function init() {
 
         function fsLogPath(): string {
             try {
-                return $filepath.join($os.cacheDir(), "aquatils", FS_VERSION, fsVariant(), "solver.log")
+                return $filepath.join($os.cacheDir(), "aquatils", FS_VERSION, "solver.log")
             } catch (_e) {
                 return ""
             }
@@ -395,29 +389,120 @@ function init() {
             }
         }
 
+        let chromiumOverride = ""
+
+        function systemChromiumPath(): string {
+            let cands: string[] = []
+            if ($os.platform === "windows") cands = [
+                "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+                "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+                "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+                "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+            ]
+            else if ($os.platform === "darwin") cands = [
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+                "/Applications/Chromium.app/Contents/MacOS/Chromium",
+            ]
+            else cands = ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium", "/usr/bin/chromium-browser", "/snap/bin/chromium", "/opt/google/chrome/chrome"]
+            for (const c of cands) { try { if ($os.stat(c)) return c } catch (_e) {} }
+            return ""
+        }
+
+        function chromiumCfTPlatform(): string {
+            if ($os.platform === "windows" && $os.arch === "amd64") return "win64"
+            if ($os.platform === "linux" && $os.arch === "amd64") return "linux64"
+            if ($os.platform === "darwin" && $os.arch === "amd64") return "mac-x64"
+            if ($os.platform === "darwin" && $os.arch === "arm64") return "mac-arm64"
+            return ""
+        }
+
+        function chromiumCachedPath(): string {
+            const plt = chromiumCfTPlatform()
+            if (!plt) return ""
+            try {
+                const bin = $os.platform === "windows" ? "chrome-headless-shell.exe" : "chrome-headless-shell"
+                const p = $filepath.join($os.cacheDir(), "aquatils", "chromium", "chrome-headless-shell-" + plt, bin)
+                if ($os.stat(p)) return p
+            } catch (_e) {}
+            return ""
+        }
+
+        // chromiumDetected: a usable Chromium is present (an installed browser, or one we fetched).
+        function chromiumDetected(): boolean {
+            try { return systemChromiumPath() !== "" || chromiumCachedPath() !== "" } catch (_e) { return false }
+        }
+
+        async function chromiumURL(plt: string): Promise<string> {
+            try {
+                const res = await ctx.fetch("https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json", { method: "GET", timeout: 20 })
+                if (!res.ok) return ""
+                const data = res.json<any>()
+                const dls = data && data.channels && data.channels.Stable && data.channels.Stable.downloads ? data.channels.Stable.downloads["chrome-headless-shell"] : null
+                if (Array.isArray(dls)) { for (const d of dls) { if (d && d.platform === plt && d.url) return String(d.url) } }
+            } catch (_e) {}
+            return ""
+        }
+
+        // ensureChromium yields a SOLVER_CHROME path. "" => the solver resolves a
+        // system browser itself (or Stage B is unavailable). A minimal
+        // chrome-headless-shell is fetched only when no Chromium is present.
+        function ensureChromium(cb: (path: string) => void): void {
+            if (systemChromiumPath() !== "") { cb(""); return }
+            const cached = chromiumCachedPath()
+            if (cached) { cb(cached); return }
+            const plt = chromiumCfTPlatform()
+            if (!plt || !downloaderReady()) { cb(""); return }
+            fsNote.set("No Chrome/Edge found — fetching a minimal Chromium…")
+            tray.update()
+            void chromiumURL(plt).then((url) => {
+                if (!url) { cb(""); return }
+                const dir = $filepath.join($os.cacheDir(), "aquatils", "chromium")
+                try { $os.mkdirAll(dir, 493) } catch (_e) {}
+                const zip = $filepath.join(dir, "chrome-headless-shell.zip")
+                let id = ""
+                try { id = dl.download(url, zip) } catch (_e) { cb(""); return }
+                const cancel = dl.watch(id, (p: $downloader.DownloadProgress | undefined) => {
+                    if (!p) return
+                    if (p.status === "downloading") {
+                        fsNote.set("Downloading Chromium… " + Math.round(p.percentage) + "%")
+                        tray.update()
+                    } else if (p.status === "completed") {
+                        cancel()
+                        try { $osExtra.unzip(zip, dir) } catch (_e) {}
+                        cb(chromiumCachedPath())
+                    } else if (p.status === "error") {
+                        cancel()
+                        cb("")
+                    }
+                })
+            })
+        }
+
         function binaryLaunch(binPath: string): void {
             binaryStop()
             const gen = fsBinaryGen
-            function proceed(): void {
+            ensureChromium((chromePath) => {
+                if (gen !== fsBinaryGen) return
+                chromiumOverride = chromePath
+                if (typeof $os !== "undefined" && $os.platform === "windows") {
+                    try {
+                        $osExtra.asyncCmd("cmd", "/c", "taskkill", "/F", "/IM", "chromedriver.exe").run((_d, _e, code) => {
+                            if (code === undefined) return
+                            if (gen === fsBinaryGen) binarySpawn(binPath)
+                        })
+                        return
+                    } catch (_e) {}
+                }
                 if (gen === fsBinaryGen) binarySpawn(binPath)
-            }
-            if (typeof $os !== "undefined" && $os.platform === "windows") {
-                try {
-                    $osExtra.asyncCmd("cmd", "/c", "taskkill", "/F", "/IM", "chromedriver.exe").run((_d, _e, code) => {
-                        if (code === undefined) return
-                        proceed()
-                    })
-                    return
-                } catch (_e) {}
-            }
-            proceed()
+            })
         }
 
         function binarySpawn(binPath: string): void {
             const gen = fsBinaryGen
             const logPath = fsLogPath()
             const port = fsPort.get() || FS_DEFAULT_PORT
-            const fsDir = $filepath.join($os.cacheDir(), "aquatils", FS_VERSION, fsVariant(), FS_CONTAINER)
+            const fsDir = $filepath.join($os.cacheDir(), "aquatils", FS_VERSION, FS_CONTAINER)
             const ac = $os.platform === "windows"
                 ? $osExtra.asyncCmd("cmd", "/c", binPath)
                 : $osExtra.asyncCmd("sh", "-c", "xattr -dr com.apple.quarantine '" + fsDir + "' 2>/dev/null; chmod -R 755 '" + fsDir + "'; exec '" + binPath + "'")
@@ -428,6 +513,7 @@ function init() {
                 env.push("PORT=" + port)
                 env.push("LOG_LEVEL=info")
                 if (logPath) env.push("LOG_FILE=" + logPath)
+                if (chromiumOverride) env.push("SOLVER_CHROME=" + chromiumOverride)
                 c.env = env
             } catch (_e) {}
             fsBinary = c
@@ -527,7 +613,7 @@ function init() {
                 tray.update()
                 return
             }
-            const dir = $filepath.join(cacheDir, "aquatils", FS_VERSION, fsVariant())
+            const dir = $filepath.join(cacheDir, "aquatils", FS_VERSION)
             const archive = $filepath.join(dir, pick.asset)
             const binPath = $filepath.join(dir, FS_CONTAINER, pick.bin)
             try {
@@ -637,7 +723,7 @@ function init() {
 
         function solverDetail(): string {
             if (fsMode.get() === "remote") return "Remote solver"
-            return fsBrowser.get() ? "solver (browser) · + Turnstile" : "solver · Cloudflare + DDoS-Guard"
+            return "solver · Cloudflare + DDoS-Guard (+ Turnstile via Chrome)"
         }
 
         function simpleSetup(): void {
@@ -754,15 +840,6 @@ function init() {
             fsPersist()
             tray.update()
         })
-        ctx.registerEventHandler("fs-browser-toggle", () => {
-            fsBrowser.set(!fsBrowser.get())
-            fsPersist()
-            fsManualStop = true
-            binaryStop()
-            setStatus("down")
-            fsNote.set(fsBrowser.get() ? "Browser tier on — press Start to download & run it." : "Browser tier off — press Start to use the uTLS build.")
-            tray.update()
-        })
         ctx.registerEventHandler("ui-mode-toggle", () => {
             uiMode.set(uiMode.get() === "simple" ? "advanced" : "simple")
             $storage.set("ui.mode", uiMode.get())
@@ -776,21 +853,9 @@ function init() {
             tray.update()
             fsStart()
         })
-        ctx.registerEventHandler("fs-consent-show", () => {
-            fsConsent.set(true)
+        ctx.registerEventHandler("fs-consent-toggle", () => {
+            fsConsent.set(!fsConsent.get())
             tray.update()
-        })
-        ctx.registerEventHandler("fs-consent-cancel", () => {
-            fsConsent.set(false)
-            tray.update()
-        })
-        ctx.registerEventHandler("fs-consent-confirm", () => {
-            fsConsent.set(false)
-            fsManualStop = false
-            setStatus("starting")
-            fsNote.set("Starting solver…")
-            tray.update()
-            fsStart()
         })
         ctx.registerEventHandler("fs-copy", () => {
             const text = fsErr.get() || fsNote.get()
@@ -950,12 +1015,21 @@ function init() {
             const st = fsStatus.get()
             if (uiMode.get() !== "advanced") {
                 const needsDownload = st !== "up" && st !== "starting" && !binaryDownloaded()
-                if (needsDownload && fsConsent.get()) {
-                    rows.push(dim("aquatils-solver is a small (~3.5 MB) self-contained helper that gets past Cloudflare / DDoS-Guard so blocked sources can load. It runs locally on 127.0.0.1 and is downloaded from GitHub."))
+                if (needsDownload) {
+                    rows.push(dim("aquatils-solver runs locally to get blocked sources (Cloudflare / DDoS-Guard) loading. It's downloaded from GitHub and only contacts the sites you stream."))
+                    if (!chromiumDetected()) {
+                        rows.push(dim("⚠ No Chrome/Edge found here. Hard JS challenges (interactive Turnstile) need a Chromium browser, so a minimal one (~80 MB) will also be downloaded into the plugin's cache."))
+                    }
+                    rows.push(tray.button({
+                        label: fsConsent.get() ? "☑ I understand" : "☐ I understand — tap to confirm",
+                        onClick: "fs-consent-toggle",
+                        intent: fsConsent.get() ? "success-subtle" : "gray-subtle",
+                        size: "sm",
+                    }))
                     rows.push(tray.flex({
                         items: [
-                            tray.button({ label: "Download", onClick: "fs-consent-confirm", intent: "success", size: "sm" }),
-                            tray.button({ label: "Cancel", onClick: "fs-consent-cancel", intent: "gray-subtle", size: "sm" }),
+                            tray.button({ label: "Download & start", onClick: "fs-simple-start", intent: "success", size: "sm", disabled: !fsConsent.get() }),
+                            tray.button({ label: "Advanced", onClick: "ui-mode-toggle", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto" } }),
                         ],
                         gap: 2,
                     }))
@@ -966,8 +1040,6 @@ function init() {
                     items.push(tray.button({ label: "Stop", onClick: "fs-stop", intent: "alert", size: "sm", disabled: fsRestarting }))
                     items.push(tray.button({ label: fsRestarting ? "Restarting…" : "Restart", onClick: "fs-restart", intent: "warning-subtle", size: "sm", disabled: fsRestarting }))
                     if (st === "up") items.push(tray.button({ label: "Test", onClick: "fs-test", intent: "gray-subtle", size: "sm" }))
-                } else if (needsDownload) {
-                    items.push(tray.button({ label: "Download", onClick: "fs-consent-show", intent: "success", size: "sm" }))
                 } else {
                     items.push(tray.button({ label: "Start", onClick: "fs-simple-start", intent: "success", size: "sm" }))
                 }
@@ -987,7 +1059,7 @@ function init() {
                 ],
                 gap: 2,
             }))
-            rows.push(dim(m === "remote" ? "Point at a solver you run yourself — any FlareSolverr-/v1 endpoint (e.g. a container you manage)." : "Downloads & runs the self-contained solver binary (no Docker, no Python, no system Chrome)."))
+            rows.push(dim(m === "remote" ? "Point at a solver you run yourself — any FlareSolverr-/v1 endpoint (e.g. a container you manage)." : "Downloads & runs the self-contained solver (uTLS first; auto-escalates to a real browser only for hard JS gates like Turnstile)."))
 
             rows.push(divider())
             rows.push(heading("Controls"))
@@ -1008,15 +1080,9 @@ function init() {
             }))
             if (fsAutoStart.get() && m === "remote") rows.push(dim("Auto-start is ignored in Remote mode."))
             if (m !== "remote") {
-                rows.push(tray.button({
-                    label: fsBrowser.get() ? "✓ Browser tier (Stage B): on" : "Browser tier (Stage B): off",
-                    onClick: "fs-browser-toggle",
-                    intent: fsBrowser.get() ? "success-subtle" : "gray-subtle",
-                    size: "sm",
-                }))
-                rows.push(dim(fsBrowser.get()
-                    ? "Downloads the browser build that launches real Chrome on a hard JS gate (interactive Turnstile / CF). Bigger; needs a system Chrome on this machine. Stop & Start to apply."
-                    : "Default uTLS build (no browser). Turn on only if a source serves a JS challenge uTLS can't clear."))
+                rows.push(dim(chromiumDetected()
+                    ? "Stage B ready: a Chromium browser is available, so hard JS gates (interactive Turnstile) are handled automatically when uTLS can't."
+                    : "No Chrome/Edge detected — a minimal Chromium downloads automatically the first time a hard JS gate needs it."))
             }
 
             rows.push(divider())
