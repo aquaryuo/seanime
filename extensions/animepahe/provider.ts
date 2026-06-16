@@ -45,6 +45,7 @@ class Provider {
                     const msg = typeof e === "string" ? e : e && (e as any).message ? (e as any).message : "request failed"
                     lastErr = msg
                     if ((this.lastResp && this.lastResp.hit) || msg.indexOf("blocked") !== -1 || msg.indexOf("Cloudflare") !== -1) blocked = true
+                    if (blocked || msg.indexOf("reachable") !== -1 || msg.indexOf("endpoint not set") !== -1 || msg.indexOf("protection") !== -1) break
                 }
             }
             if (!data) continue
