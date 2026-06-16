@@ -38,6 +38,7 @@ function init() {
         const fsSession = ctx.state<string>(sget<string>("fs.session", FS_DEFAULT_SESSION))
         const fsAutoStart = ctx.state<boolean>(sget<boolean>("fs.autoStart", false))
         const fsWantChromium = ctx.state<boolean>(sget<boolean>("fs.wantChromium", false))
+        const fsAutoUpdate = ctx.state<boolean>(sget<boolean>("fs.autoUpdate", false))
         const fsStatus = ctx.state<string>("unknown")
         const fsSessions = ctx.state<string[]>([])
         const fsNote = ctx.state<string>("")
@@ -57,6 +58,7 @@ function init() {
         let fsManualStop = sget<boolean>("fs.manualStop", false)
         let fsAutoTested = false
         let fsAutoUpgradeTried = false
+        let fsChromiumAutoChecked = false
         const fsNotified: { [k: string]: boolean } = {}
         const dl = (ctx as any).downloader
         const fsErr = ctx.state<string>("")
@@ -106,6 +108,19 @@ function init() {
             if (fsNotified[key]) return
             fsNotified[key] = true
             try { ctx.notification.send(msg) } catch (_e) {}
+        }
+
+        function maybeAutoUpdateChromium(): void {
+            if (fsChromiumAutoChecked) return
+            fsChromiumAutoChecked = true
+            if (!chromiumDownloadedHere()) return
+            const plt = chromiumCfTPlatform()
+            if (!plt || !downloaderReady()) return
+            void chromiumStable(plt).then((st) => {
+                if (!st.version) return
+                const cur = $storage.get<string>("fs.chromiumVer") || ""
+                if (cur && verNewer(st.version, cur)) updateChromium()
+            })
         }
 
         function refreshTrayBadge(): void {
@@ -237,6 +252,7 @@ function init() {
                 $storage.set("fs.session", fsSession.get())
                 $storage.set("fs.autoStart", fsAutoStart.get())
                 $storage.set("fs.wantChromium", fsWantChromium.get())
+                $storage.set("fs.autoUpdate", fsAutoUpdate.get())
             } catch (_e) {}
         }
 
@@ -292,12 +308,17 @@ function init() {
                     fsSessions.set(p.sessions)
                     if (fsSession.get() && p.sessions.indexOf(fsSession.get()) < 0) await fsEnsureSession()
                 }
-                if (solverUpdatePending() && fsMode.get() !== "remote" && !fsManualStop && !fsAutoUpgradeTried) {
-                    fsAutoUpgradeTried = true
-                    notifyOnce("upg", "Aqua's Utils: updating the solver to v" + SOLVER_VERSION + " — click Allow if Seanime asks.")
-                    try { ctx.toast.info("Updating the solver to v" + SOLVER_VERSION + " — click Allow if Seanime asks to download.") } catch (_e) {}
-                    fsStart()
+                if (solverUpdatePending() && fsMode.get() !== "remote" && !fsManualStop) {
+                    if (fsAutoUpdate.get() && !fsAutoUpgradeTried) {
+                        fsAutoUpgradeTried = true
+                        notifyOnce("upg", "Aqua's Utils: auto-updating the solver to v" + SOLVER_VERSION + " — click Allow if Seanime asks.")
+                        try { ctx.toast.info("Auto-updating the solver to v" + SOLVER_VERSION + " — click Allow if Seanime asks.") } catch (_e) {}
+                        fsStart()
+                    } else if (!fsAutoUpdate.get()) {
+                        notifyOnce("upd", "Aqua's Utils: a newer solver (v" + SOLVER_VERSION + ") is ready — open the tray and tap Restart to update.")
+                    }
                 }
+                if (fsAutoUpdate.get() && fsMode.get() !== "remote") maybeAutoUpdateChromium()
             } else {
                 if (fsStatus.get() === "starting") {
                     if (fsMode.get() === "binary") {
@@ -1045,6 +1066,11 @@ function init() {
             fsPersist()
             tray.update()
         })
+        ctx.registerEventHandler("fs-autoupdate-toggle", () => {
+            fsAutoUpdate.set(!fsAutoUpdate.get())
+            fsPersist()
+            tray.update()
+        })
         ctx.registerEventHandler("fs-autostart-toggle", () => {
             fsAutoStart.set(!fsAutoStart.get())
             fsPersist()
@@ -1221,6 +1247,14 @@ function init() {
                 size: "sm",
             }))
             rows.push(dim("Start the solver automatically when Seanime launches."))
+            rows.push(divider())
+            rows.push(tray.button({
+                label: fsAutoUpdate.get() ? "✓ Auto-update solver & Chromium" : "Auto-update solver & Chromium: off",
+                onClick: "fs-autoupdate-toggle",
+                intent: fsAutoUpdate.get() ? "success-subtle" : "gray-subtle",
+                size: "sm",
+            }))
+            rows.push(dim("When on, the solver (and a downloaded Chromium) update themselves once a newer version is bundled. When off, you'll get a notice to update manually."))
             rows.push(divider())
             rows.push(tray.button({
                 label: notify.get() ? "✓ Error notifications: on" : "Error notifications: off",
