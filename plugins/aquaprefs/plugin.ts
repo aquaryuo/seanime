@@ -5,9 +5,6 @@ function init() {
 
         const CFG_KEY = "cfg"
         const IDX_KEY = "pref:__index"
-        const REAPPLY_MS = [600, 1400, 2200]
-        const SETTLE_MS = 2500
-        const DEBOUNCE_MS = 1300
         const EXPORT_MARKER = "AQUAPREFSv1"
 
         function sget<T>(k: string, d: T): T {
@@ -41,25 +38,23 @@ function init() {
         let lastSub = -99
         let lastAud = -99
         let lastCap = -99
-        let userTouched = false
-        let settleUntil = 0
-        let commitCancel: (() => void) | null = null
+        let subBaselined = false
+        let audBaselined = false
+        let capBaselined = false
+        let subGen = 0
+        let audGen = 0
+        let capGen = 0
         let dbgEvent = "(nothing yet)"
         let dbgApply = "(nothing yet)"
-        let dbgCommit = "(nothing yet)"
+        let dbgSaved = "(nothing yet)"
 
         function arm(pid: string): void {
             if (!pid || pid === armedPid) return
             armedPid = pid
             curSub = -9; curAud = -9; curCap = -9
             lastSub = -99; lastAud = -99; lastCap = -99
-            userTouched = false
-            settleUntil = nowMs() + SETTLE_MS
-            for (let i = 0; i < REAPPLY_MS.length; i++) ctx.setTimeout(() => applyForCurrent(), REAPPLY_MS[i])
-        }
-        function scheduleCommit(): void {
-            if (commitCancel) { try { commitCancel() } catch (_e) {} }
-            commitCancel = ctx.setTimeout(() => commit(), DEBOUNCE_MS)
+            subBaselined = false; audBaselined = false; capBaselined = false
+            subGen++; audGen++; capGen++
         }
 
         function pinfo(): any { try { return VC.getCurrentPlaybackInfo() || null } catch (_e) { return null } }
@@ -123,15 +118,19 @@ function init() {
         }
 
         function applySub(sub: any): void {
+            const g = subGen
             if (sub.off) { lastSub = -1; try { VC.setSubtitleTrack(-1) } catch (_e) {} ; return }
             VC.getTextTracks().then((tracks) => {
+                if (g !== subGen) return
                 const n = matchTrack((tracks || []).filter((t) => t.type === "subtitles"), sub)
                 if (n !== -2) { lastSub = n; try { VC.setSubtitleTrack(n) } catch (_e) {} }
             }).catch(() => {})
         }
         function applyCap(cap: any): void {
+            const g = capGen
             if (cap.off) { lastCap = -1; try { VC.setMediaCaptionTrack(-1) } catch (_e) {} ; return }
             VC.getTextTracks().then((tracks) => {
+                if (g !== capGen) return
                 const n = matchTrack((tracks || []).filter((t) => t.type === "captions"), cap)
                 if (n !== -2) { lastCap = n; try { VC.setMediaCaptionTrack(n) } catch (_e) {} }
             }).catch(() => {})
@@ -161,53 +160,58 @@ function init() {
             tray.update()
         }
 
-        function commit(): void {
-            commitCancel = null
-            if (!enabled.get() || !userTouched || !pinfo()) return
-            const sSub = curSub, sCap = curCap, sAud = curAud
-            const key = writeKey()
-            if (!key) return
+        function recordSub(v: number): void {
+            const key = writeKey(); if (!key) return
+            if (v < 0) { recordTo(key, { sub: { off: true } }); dbgSaved = "saved sub=off"; tray.update(); return }
             VC.getTextTracks().then((tracks) => {
-                if (!enabled.get() || !pinfo() || writeKey() !== key) return
-                const subs = (tracks || []).filter((t) => t.type === "subtitles")
-                const caps = (tracks || []).filter((t) => t.type === "captions")
-                const patch: any = {}
-                const desc: string[] = []
-                if (persistSubs.get() && sSub !== -9) {
-                    if (sSub < 0) { patch.sub = { off: true }; desc.push("sub=off") }
-                    else { const m = subs.filter((t) => t.number === sSub)[0]; if (m) { patch.sub = { off: false, language: m.language, label: m.label }; desc.push("sub=" + (m.label || m.language)) } }
-                }
-                if (persistSubs.get() && sCap !== -9) {
-                    if (sCap < 0) { patch.cap = { off: true }; desc.push("cap=off") }
-                    else { const m = caps.filter((t) => t.number === sCap)[0]; if (m) { patch.cap = { off: false, language: m.language, label: m.label }; desc.push("cap=" + (m.label || m.language)) } }
-                }
-                if (persistAudio.get() && sAud !== -9) {
-                    const pi = pinfo()
-                    const at = (pi && pi.mkvMetadata && pi.mkvMetadata.audioTracks) ? pi.mkvMetadata.audioTracks : []
-                    const m = at.filter((t: any) => t.number === sAud)[0]
-                    if (m && (m.language || m.name)) { patch.audio = { language: m.language || "", label: m.name || "" }; desc.push("audio=" + (m.name || m.language)) }
-                }
-                if (desc.length) { recordTo(key, patch); dbgCommit = "saved: " + desc.join(", "); tray.update() }
-                else { dbgCommit = "nothing resolvable to save"; tray.update() }
+                if (writeKey() !== key) return
+                const m = (tracks || []).filter((t) => t.type === "subtitles" && t.number === v)[0]
+                if (m) { recordTo(key, { sub: { off: false, language: m.language, label: m.label } }); dbgSaved = "saved sub=" + (m.label || m.language) }
+                else { dbgSaved = "sub track " + v + " has no language — not saved" }
+                tray.update()
             }).catch(() => {})
+        }
+        function recordCap(v: number): void {
+            const key = writeKey(); if (!key) return
+            if (v < 0) { recordTo(key, { cap: { off: true } }); dbgSaved = "saved cap=off"; tray.update(); return }
+            VC.getTextTracks().then((tracks) => {
+                if (writeKey() !== key) return
+                const m = (tracks || []).filter((t) => t.type === "captions" && t.number === v)[0]
+                if (m) { recordTo(key, { cap: { off: false, language: m.language, label: m.label } }); dbgSaved = "saved cap=" + (m.label || m.language) }
+                else { dbgSaved = "caption track " + v + " has no language — not saved" }
+                tray.update()
+            }).catch(() => {})
+        }
+        function recordAud(v: number): void {
+            const key = writeKey(); if (!key) return
+            const pi = pinfo()
+            const at = (pi && pi.mkvMetadata && pi.mkvMetadata.audioTracks) ? pi.mkvMetadata.audioTracks : []
+            const m = at.filter((t: any) => t.number === v)[0]
+            if (m && (m.language || m.name)) { recordTo(key, { audio: { language: m.language || "", label: m.name || "" } }); dbgSaved = "saved audio=" + (m.name || m.language); tray.update() }
+            else { dbgSaved = "audio track " + v + " not resolvable (HLS/online) — not saved"; tray.update() }
         }
 
         if (hasVC) {
             VC.addEventListener("video-loaded", (e) => { if (enabled.get()) arm((e && e.playbackId) || "") })
             VC.addEventListener("video-loaded-metadata", (e) => { if (enabled.get()) arm((e && e.playbackId) || "") })
-            VC.addEventListener("video-ended", () => { if (commitCancel && userTouched) { try { commitCancel() } catch (_e) {} commitCancel = null; commit() } })
 
             VC.addEventListener("video-subtitle-track", (e) => {
                 arm((e && e.playbackId) || "")
                 if (!enabled.get() || !persistSubs.get()) return
                 const v = (typeof e.trackNumber === "number" && e.trackNumber >= 0) ? e.trackNumber : -1
                 curSub = v
-                if (nowMs() < settleUntil) { dbgEvent = "subtitle → " + (v < 0 ? "off" : "track " + v) + " · settling"; tray.update(); return }
-                if (v === lastSub) { dbgEvent = "subtitle echo (" + (v < 0 ? "off" : "track " + v) + ")"; return }
-                userTouched = true
-                dbgEvent = "subtitle → " + (v < 0 ? "off" : "track " + v) + " · live"
-                scheduleCommit()
-                tray.update()
+                const lbl = v < 0 ? "off" : "track " + v
+                if (v === lastSub) { lastSub = -99; dbgEvent = "subtitle echo (" + lbl + ")"; return }
+                if (!subBaselined) {
+                    subBaselined = true
+                    const rec = readCascade()
+                    if (rec && rec.sub) { applySub(rec.sub); dbgEvent = "subtitle auto-default " + lbl + " → re-applied saved" }
+                    else { dbgEvent = "subtitle auto-default " + lbl + " (nothing saved)" }
+                    tray.update(); return
+                }
+                subGen++
+                dbgEvent = "subtitle → " + lbl + " (you)"
+                recordSub(v); tray.update()
             })
 
             VC.addEventListener("video-media-caption-track", (e) => {
@@ -215,11 +219,18 @@ function init() {
                 if (!enabled.get() || !persistSubs.get()) return
                 const v = (typeof e.trackIndex === "number" && e.trackIndex >= 0) ? e.trackIndex : -1
                 curCap = v
-                if (nowMs() < settleUntil) { dbgEvent = "caption → " + (v < 0 ? "off" : "track " + v) + " · settling"; return }
-                if (v === lastCap) { dbgEvent = "caption echo"; return }
-                userTouched = true
-                dbgEvent = "caption → " + (v < 0 ? "off" : "track " + v) + " · live"
-                scheduleCommit()
+                const lbl = v < 0 ? "off" : "track " + v
+                if (v === lastCap) { lastCap = -99; dbgEvent = "caption echo (" + lbl + ")"; return }
+                if (!capBaselined) {
+                    capBaselined = true
+                    const rec = readCascade()
+                    if (rec && rec.cap) { applyCap(rec.cap); dbgEvent = "caption auto-default " + lbl + " → re-applied saved" }
+                    else { dbgEvent = "caption auto-default " + lbl + " (nothing saved)" }
+                    tray.update(); return
+                }
+                capGen++
+                dbgEvent = "caption → " + lbl + " (you)"
+                recordCap(v); tray.update()
             })
 
             VC.addEventListener("video-audio-track", (e) => {
@@ -227,12 +238,17 @@ function init() {
                 if (!enabled.get() || !persistAudio.get()) return
                 const v = (typeof e.trackNumber === "number") ? e.trackNumber : -9
                 curAud = v
-                if (nowMs() < settleUntil) { dbgEvent = "audio → track " + v + " · settling"; tray.update(); return }
-                if (v === lastAud) { dbgEvent = "audio echo (track " + v + ")"; return }
-                userTouched = true
-                dbgEvent = "audio → track " + v + " · live"
-                scheduleCommit()
-                tray.update()
+                if (v === lastAud) { lastAud = -99; dbgEvent = "audio echo (track " + v + ")"; return }
+                if (!audBaselined) {
+                    audBaselined = true
+                    const rec = readCascade()
+                    if (rec && rec.audio) { applyAudio(rec.audio); dbgEvent = "audio auto-default track " + v + " → re-applied saved" }
+                    else { dbgEvent = "audio auto-default track " + v + " (nothing saved)" }
+                    tray.update(); return
+                }
+                audGen++
+                dbgEvent = "audio → track " + v + " (you)"
+                recordAud(v); tray.update()
             })
         }
 
@@ -372,12 +388,12 @@ function init() {
             rows.push(divider())
             rows.push(heading("Debug"))
             rows.push(dim("last event — " + dbgEvent))
-            rows.push(dim(dbgCommit))
+            rows.push(dim(dbgSaved))
             rows.push(dim(dbgApply))
             rows.push(dim("playback " + (armedPid ? String(armedPid).slice(0, 8) : "—") + " · media " + (curMediaId() || "—") + " · ep " + (curEpisode() || "—")))
 
             rows.push(divider())
-            rows.push(dim("Tip: when a new episode starts the plugin re-applies your saved pick for ~2.5s — change a track AFTER that and it's remembered. Online dub/sub is provider-chosen (not auto-switched); the external MPV player isn't covered."))
+            rows.push(dim("Your subtitle/audio change is saved the moment you make it. Online dub/sub is provider-chosen (not auto-switched here); the external MPV player isn't covered."))
             return tray.stack({ items: rows, gap: 3 })
         })
     })
