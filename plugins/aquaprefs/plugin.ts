@@ -54,6 +54,7 @@ function init() {
         let dbgEvent = "(nothing yet)"
         let dbgApply = "(nothing yet)"
         let dbgSaved = "(nothing yet)"
+        let dbgCtx = "(no playback)"
 
         function pinfo(): any { try { return VC.getCurrentPlaybackInfo() || null } catch (_e) { return null } }
 
@@ -88,12 +89,30 @@ function init() {
         function readCascade(): any {
             const mid = curMediaId()
             const ep = curEpisode()
-            const keys: string[] = []
-            if (mid && ep) keys.push("pref:e:" + mid + ":" + ep)
-            if (mid) keys.push("pref:m:" + mid)
-            keys.push("pref:global")
-            for (let i = 0; i < keys.length; i++) { const r = sget<any>(keys[i], null); if (r) return r }
-            return null
+            const g = sget<any>("pref:global", null)
+            const m = mid ? sget<any>("pref:m:" + mid, null) : null
+            const e = (mid && ep) ? sget<any>("pref:e:" + mid + ":" + ep, null) : null
+            const out: any = {}
+            const lvls = [g, m, e]
+            for (let i = 0; i < lvls.length; i++) {
+                const r = lvls[i]
+                if (!r) continue
+                if (r.sub) out.sub = r.sub
+                if (r.cap) out.cap = r.cap
+                if (r.audio) out.audio = r.audio
+            }
+            return (out.sub || out.cap || out.audio) ? out : null
+        }
+
+        function ctxStr(): string {
+            return "scope=" + scope.get() + " · media=" + curMediaId() + " · ep=" + curEpisode()
+        }
+        function levelsStr(): string {
+            const mid = curMediaId(); const ep = curEpisode()
+            const hasE = !!((mid && ep) && sget<any>("pref:e:" + mid + ":" + ep, null))
+            const hasM = !!(mid && sget<any>("pref:m:" + mid, null))
+            const hasG = !!sget<any>("pref:global", null)
+            return "e:" + (hasE ? "y" : "-") + " m:" + (hasM ? "y" : "-") + " g:" + (hasG ? "y" : "-")
         }
 
         function indexAdd(k: string): void {
@@ -146,46 +165,51 @@ function init() {
 
         function applyForCurrent(force: boolean): void {
             if (!enabled.get() || !pinfo()) return
+            dbgCtx = ctxStr()
+            const where = levelsStr()
             const rec = readCascade()
-            if (!rec) { dbgApply = "reapply: nothing saved for this scope"; tray.update(); return }
+            if (!rec) { dbgApply = "reapply [" + where + "]: nothing saved"; tray.update(); return }
             const parts: string[] = []
             if (persistSubs.get()) {
                 if (rec.sub && (force || !subDone)) { applySub(rec.sub); parts.push(rec.sub.off ? "sub=off" : "sub=" + (rec.sub.label || rec.sub.language || "?")) }
                 if (rec.cap && (force || !capDone)) { applyCap(rec.cap); parts.push(rec.cap.off ? "cap=off" : "cap=" + (rec.cap.label || rec.cap.language || "?")) }
             }
             if (persistAudio.get() && rec.audio && (force || !audDone)) { applyAudio(rec.audio); parts.push("audio=" + (rec.audio.label || rec.audio.language || ("#" + rec.audio.index))) }
-            dbgApply = parts.length ? "reapply: " + parts.join(", ") : "reapply: nothing to apply"
+            dbgApply = "reapply [" + where + "]: " + (parts.length ? parts.join(", ") : "nothing to apply")
             tray.update()
         }
 
         function recordSub(v: number): void {
             const key = writeKey()
-            if (v < 0) { recordTo(key, { sub: { off: true } }); dbgSaved = "saved sub=off"; tray.update(); return }
+            dbgCtx = ctxStr()
+            if (v < 0) { recordTo(key, { sub: { off: true } }); dbgSaved = "saved sub=off @ " + key; tray.update(); return }
             VC.getTextTracks().then((tracks) => {
                 if (writeKey() !== key) return
                 const m = (tracks || []).filter((t) => t.type === "subtitles" && t.number === v)[0]
-                if (m) { recordTo(key, { sub: { off: false, language: m.language, label: m.label } }); dbgSaved = "saved sub=" + (m.label || m.language) }
+                if (m) { recordTo(key, { sub: { off: false, language: m.language, label: m.label } }); dbgSaved = "saved sub=" + (m.label || m.language) + " @ " + key }
                 else { dbgSaved = "sub track " + v + " has no language — not saved" }
                 tray.update()
             }).catch(() => {})
         }
         function recordCap(v: number): void {
             const key = writeKey()
-            if (v < 0) { recordTo(key, { cap: { off: true } }); dbgSaved = "saved cap=off"; tray.update(); return }
+            dbgCtx = ctxStr()
+            if (v < 0) { recordTo(key, { cap: { off: true } }); dbgSaved = "saved cap=off @ " + key; tray.update(); return }
             VC.getTextTracks().then((tracks) => {
                 if (writeKey() !== key) return
                 const m = (tracks || []).filter((t) => t.type === "captions" && t.number === v)[0]
-                if (m) { recordTo(key, { cap: { off: false, language: m.language, label: m.label } }); dbgSaved = "saved cap=" + (m.label || m.language) }
+                if (m) { recordTo(key, { cap: { off: false, language: m.language, label: m.label } }); dbgSaved = "saved cap=" + (m.label || m.language) + " @ " + key }
                 else { dbgSaved = "caption track " + v + " has no language — not saved" }
                 tray.update()
             }).catch(() => {})
         }
         function recordAud(v: number): void {
             const key = writeKey()
+            dbgCtx = ctxStr()
             const pi = pinfo()
             const at = (pi && pi.mkvMetadata && pi.mkvMetadata.audioTracks) ? pi.mkvMetadata.audioTracks : []
             const m = at.filter((t: any) => t.number === v)[0]
-            if (m && (m.language || m.name)) { recordTo(key, { audio: { language: m.language || "", label: m.name || "" } }); dbgSaved = "saved audio=" + (m.name || m.language); tray.update() }
+            if (m && (m.language || m.name)) { recordTo(key, { audio: { language: m.language || "", label: m.name || "" } }); dbgSaved = "saved audio=" + (m.name || m.language) + " @ " + key; tray.update() }
             else { dbgSaved = "audio track " + v + " not resolvable (HLS/online) — not saved"; tray.update() }
         }
 
@@ -399,6 +423,7 @@ function init() {
             if (status.get()) rows.push(dim(status.get()))
 
             rows.push(divider())
+            rows.push(dim(dbgCtx))
             rows.push(dim(dbgEvent))
             rows.push(dim(dbgSaved))
             rows.push(dim(dbgApply))
