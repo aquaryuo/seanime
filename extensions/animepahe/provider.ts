@@ -622,6 +622,7 @@ class Provider {
             " challengeHit=" + (r && r.hit ? r.hit : "none") +
             " solver=" + (s ? (s.ran ? "ran" : "skip") : "skip") +
             " solverHttp=" + (s ? s.http : "-") +
+            " solverReason=" + (s && s.reason ? s.reason : "-") +
             " body[" + (r ? r.snippet : "") + "]" +
             " solverBody[" + (s ? s.snippet : "") + "]"
         )
