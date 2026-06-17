@@ -10,7 +10,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.13"
+        const SOLVER_VERSION = "0.1.14"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -637,9 +637,6 @@ function init() {
                 ensureChromium((chromePath) => {
                     if (gen !== fsBinaryGen) return
                     chromiumOverride = chromePath
-                    if (typeof $os !== "undefined" && $os.platform === "windows" && typeof $osExtra !== "undefined") {
-                        try { $osExtra.asyncCmd("cmd", "/c", "taskkill", "/F", "/IM", "chrome-headless-shell.exe").run(() => {}) } catch (_e) {}
-                    }
                     if (gen === fsBinaryGen) binarySpawn(binPath)
                 })
             })
@@ -650,9 +647,12 @@ function init() {
             const logPath = fsLogPath()
             const port = fsPort.get() || FS_DEFAULT_PORT
             const fsDir = $filepath.join($os.cacheDir(), "aquatils", FS_VERSION, FS_CONTAINER)
+            const chrDir = $filepath.join($os.cacheDir(), "aquatils", "chromium")
+            const prep = "xattr -dr com.apple.quarantine '" + fsDir + "' 2>/dev/null; chmod -R 755 '" + fsDir + "'; "
+                + (chromiumOverride ? "xattr -dr com.apple.quarantine '" + chrDir + "' 2>/dev/null; chmod -R 755 '" + chrDir + "'; " : "")
             const ac = $os.platform === "windows"
                 ? $osExtra.asyncCmd("cmd", "/c", binPath)
-                : $osExtra.asyncCmd("sh", "-c", "xattr -dr com.apple.quarantine '" + fsDir + "' 2>/dev/null; chmod -R 755 '" + fsDir + "'; exec '" + binPath + "'")
+                : $osExtra.asyncCmd("sh", "-c", prep + "exec '" + binPath + "'")
             const c = ac.getCommand()
             try {
                 const env = c.environ()
@@ -731,7 +731,6 @@ function init() {
             }
             fsBinary = null
             if (typeof $os !== "undefined" && $os.platform === "windows" && typeof $osExtra !== "undefined") {
-                try { $osExtra.asyncCmd("cmd", "/c", "taskkill", "/F", "/IM", "chrome-headless-shell.exe").run(() => {}) } catch (_e) {}
                 try {
                     $osExtra.asyncCmd("cmd", "/c", "taskkill", "/F", "/T", "/IM", "solver.exe").run((_d, _e, code) => {
                         if (code === undefined) return
