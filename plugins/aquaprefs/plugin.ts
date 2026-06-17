@@ -5,8 +5,8 @@ function init() {
 
         const CFG_KEY = "cfg"
         const IDX_KEY = "pref:__index"
-        const REAPPLY_MS = [500, 1200, 2000]
-        const SETTLE_MS = 2200
+        const REAPPLY_MS = [600, 1400, 2200]
+        const SETTLE_MS = 2500
         const DEBOUNCE_MS = 1300
         const EXPORT_MARKER = "AQUAPREFSv1"
 
@@ -38,6 +38,10 @@ function init() {
         let curSub = -9
         let curAud = -9
         let curCap = -9
+        let lastSub = -99
+        let lastAud = -99
+        let lastCap = -99
+        let userTouched = false
         let settleUntil = 0
         let commitCancel: (() => void) | null = null
         let dbgEvent = "(nothing yet)"
@@ -48,6 +52,8 @@ function init() {
             if (!pid || pid === armedPid) return
             armedPid = pid
             curSub = -9; curAud = -9; curCap = -9
+            lastSub = -99; lastAud = -99; lastCap = -99
+            userTouched = false
             settleUntil = nowMs() + SETTLE_MS
             for (let i = 0; i < REAPPLY_MS.length; i++) ctx.setTimeout(() => applyForCurrent(), REAPPLY_MS[i])
         }
@@ -101,8 +107,7 @@ function init() {
             const idx = sget<string[]>(IDX_KEY, [])
             if (idx.indexOf(k) < 0) { idx.push(k); sset(IDX_KEY, idx) }
         }
-        function record(patch: any): void {
-            const k = writeKey()
+        function recordTo(k: string, patch: any): void {
             if (!k) return
             const cur = sget<any>(k, {})
             sset(k, Object.assign({}, cur, patch, { updatedAt: nowMs() }))
@@ -118,19 +123,17 @@ function init() {
         }
 
         function applySub(sub: any): void {
-            if (sub.off) { curSub = -1; try { VC.setSubtitleTrack(-1) } catch (_e) {} ; return }
+            if (sub.off) { lastSub = -1; try { VC.setSubtitleTrack(-1) } catch (_e) {} ; return }
             VC.getTextTracks().then((tracks) => {
-                let n = matchTrack((tracks || []).filter((t) => t.type === "subtitles"), sub)
-                if (n === -2 && typeof sub.number === "number") n = sub.number
-                if (n !== -2) { curSub = n; try { VC.setSubtitleTrack(n) } catch (_e) {} }
+                const n = matchTrack((tracks || []).filter((t) => t.type === "subtitles"), sub)
+                if (n !== -2) { lastSub = n; try { VC.setSubtitleTrack(n) } catch (_e) {} }
             }).catch(() => {})
         }
         function applyCap(cap: any): void {
-            if (cap.off) { curCap = -1; try { VC.setMediaCaptionTrack(-1) } catch (_e) {} ; return }
+            if (cap.off) { lastCap = -1; try { VC.setMediaCaptionTrack(-1) } catch (_e) {} ; return }
             VC.getTextTracks().then((tracks) => {
-                let n = matchTrack((tracks || []).filter((t) => t.type === "captions"), cap)
-                if (n === -2 && typeof cap.number === "number") n = cap.number
-                if (n !== -2) { curCap = n; try { VC.setMediaCaptionTrack(n) } catch (_e) {} }
+                const n = matchTrack((tracks || []).filter((t) => t.type === "captions"), cap)
+                if (n !== -2) { lastCap = n; try { VC.setMediaCaptionTrack(n) } catch (_e) {} }
             }).catch(() => {})
         }
         function applyAudio(audio: any): void {
@@ -139,10 +142,9 @@ function init() {
             const lang = String(audio.language || "").toLowerCase()
             if (at.length && lang) {
                 for (let i = 0; i < at.length; i++) {
-                    if (String(at[i].language || "").toLowerCase() === lang) { curAud = at[i].number; try { VC.setAudioTrack(at[i].number) } catch (_e) {} ; return }
+                    if (String(at[i].language || "").toLowerCase() === lang) { lastAud = at[i].number; try { VC.setAudioTrack(at[i].number) } catch (_e) {} ; return }
                 }
             }
-            if (typeof audio.index === "number" && audio.index >= 0) { curAud = audio.index; try { VC.setAudioTrack(audio.index) } catch (_e) {} }
         }
 
         function applyForCurrent(): void {
@@ -161,40 +163,49 @@ function init() {
 
         function commit(): void {
             commitCancel = null
-            if (!enabled.get() || nowMs() < settleUntil || !pinfo()) { dbgCommit = nowMs() < settleUntil ? "commit held (settling)" : dbgCommit; return }
+            if (!enabled.get() || !userTouched || !pinfo()) return
+            const sSub = curSub, sCap = curCap, sAud = curAud
+            const key = writeKey()
+            if (!key) return
             VC.getTextTracks().then((tracks) => {
+                if (!enabled.get() || !pinfo() || writeKey() !== key) return
                 const subs = (tracks || []).filter((t) => t.type === "subtitles")
                 const caps = (tracks || []).filter((t) => t.type === "captions")
                 const patch: any = {}
                 const desc: string[] = []
-                if (persistSubs.get() && curSub !== -9) {
-                    if (curSub < 0) { patch.sub = { off: true }; desc.push("sub=off") }
-                    else { const m = subs.filter((t) => t.number === curSub)[0]; patch.sub = m ? { off: false, language: m.language, label: m.label, number: curSub } : { off: false, number: curSub }; desc.push("sub=" + (m ? (m.label || m.language) : "#" + curSub)) }
+                if (persistSubs.get() && sSub !== -9) {
+                    if (sSub < 0) { patch.sub = { off: true }; desc.push("sub=off") }
+                    else { const m = subs.filter((t) => t.number === sSub)[0]; if (m) { patch.sub = { off: false, language: m.language, label: m.label }; desc.push("sub=" + (m.label || m.language)) } }
                 }
-                if (persistSubs.get() && curCap !== -9) {
-                    if (curCap < 0) { patch.cap = { off: true }; desc.push("cap=off") }
-                    else { const m = caps.filter((t) => t.number === curCap)[0]; patch.cap = m ? { off: false, language: m.language, label: m.label, number: curCap } : { off: false, number: curCap }; desc.push("cap=" + (m ? (m.label || m.language) : "#" + curCap)) }
+                if (persistSubs.get() && sCap !== -9) {
+                    if (sCap < 0) { patch.cap = { off: true }; desc.push("cap=off") }
+                    else { const m = caps.filter((t) => t.number === sCap)[0]; if (m) { patch.cap = { off: false, language: m.language, label: m.label }; desc.push("cap=" + (m.label || m.language)) } }
                 }
-                if (persistAudio.get() && curAud !== -9) {
+                if (persistAudio.get() && sAud !== -9) {
                     const pi = pinfo()
                     const at = (pi && pi.mkvMetadata && pi.mkvMetadata.audioTracks) ? pi.mkvMetadata.audioTracks : []
-                    const m = at.filter((t: any) => t.number === curAud)[0]
-                    patch.audio = m ? { index: curAud, language: m.language || "", label: m.name || "" } : { index: curAud }
-                    desc.push("audio=" + (m ? (m.name || m.language || ("#" + curAud)) : "#" + curAud))
+                    const m = at.filter((t: any) => t.number === sAud)[0]
+                    if (m && (m.language || m.name)) { patch.audio = { language: m.language || "", label: m.name || "" }; desc.push("audio=" + (m.name || m.language)) }
                 }
-                if (desc.length) { record(patch); dbgCommit = "saved: " + desc.join(", "); tray.update() }
+                if (desc.length) { recordTo(key, patch); dbgCommit = "saved: " + desc.join(", "); tray.update() }
+                else { dbgCommit = "nothing resolvable to save"; tray.update() }
             }).catch(() => {})
         }
 
         if (hasVC) {
             VC.addEventListener("video-loaded", (e) => { if (enabled.get()) arm((e && e.playbackId) || "") })
             VC.addEventListener("video-loaded-metadata", (e) => { if (enabled.get()) arm((e && e.playbackId) || "") })
+            VC.addEventListener("video-ended", () => { if (commitCancel && userTouched) { try { commitCancel() } catch (_e) {} commitCancel = null; commit() } })
 
             VC.addEventListener("video-subtitle-track", (e) => {
                 arm((e && e.playbackId) || "")
                 if (!enabled.get() || !persistSubs.get()) return
-                curSub = (typeof e.trackNumber === "number" && e.trackNumber >= 0) ? e.trackNumber : -1
-                dbgEvent = "subtitle → " + (curSub < 0 ? "off" : "track " + curSub) + (nowMs() < settleUntil ? " · settling" : " · live")
+                const v = (typeof e.trackNumber === "number" && e.trackNumber >= 0) ? e.trackNumber : -1
+                curSub = v
+                if (nowMs() < settleUntil) { dbgEvent = "subtitle → " + (v < 0 ? "off" : "track " + v) + " · settling"; tray.update(); return }
+                if (v === lastSub) { dbgEvent = "subtitle echo (" + (v < 0 ? "off" : "track " + v) + ")"; return }
+                userTouched = true
+                dbgEvent = "subtitle → " + (v < 0 ? "off" : "track " + v) + " · live"
                 scheduleCommit()
                 tray.update()
             })
@@ -202,16 +213,24 @@ function init() {
             VC.addEventListener("video-media-caption-track", (e) => {
                 arm((e && e.playbackId) || "")
                 if (!enabled.get() || !persistSubs.get()) return
-                curCap = (typeof e.trackIndex === "number" && e.trackIndex >= 0) ? e.trackIndex : -1
-                dbgEvent = "caption → " + (curCap < 0 ? "off" : "track " + curCap)
+                const v = (typeof e.trackIndex === "number" && e.trackIndex >= 0) ? e.trackIndex : -1
+                curCap = v
+                if (nowMs() < settleUntil) { dbgEvent = "caption → " + (v < 0 ? "off" : "track " + v) + " · settling"; return }
+                if (v === lastCap) { dbgEvent = "caption echo"; return }
+                userTouched = true
+                dbgEvent = "caption → " + (v < 0 ? "off" : "track " + v) + " · live"
                 scheduleCommit()
             })
 
             VC.addEventListener("video-audio-track", (e) => {
                 arm((e && e.playbackId) || "")
                 if (!enabled.get() || !persistAudio.get()) return
-                curAud = (typeof e.trackNumber === "number") ? e.trackNumber : -9
-                dbgEvent = "audio → track " + curAud + (nowMs() < settleUntil ? " · settling" : " · live")
+                const v = (typeof e.trackNumber === "number") ? e.trackNumber : -9
+                curAud = v
+                if (nowMs() < settleUntil) { dbgEvent = "audio → track " + v + " · settling"; tray.update(); return }
+                if (v === lastAud) { dbgEvent = "audio echo (track " + v + ")"; return }
+                userTouched = true
+                dbgEvent = "audio → track " + v + " · live"
                 scheduleCommit()
                 tray.update()
             })
@@ -225,10 +244,9 @@ function init() {
             let json = ""
             try { json = JSON.stringify(blob) } catch (_e) { json = "" }
             if (!json) { status.set("Export failed."); tray.update(); return }
-            let ok = false
-            try { ctx.dom.clipboard.write(json); ok = true } catch (_e) {}
-            if (ok) ctx.toast.success("Preferences exported to clipboard")
-            status.set(ok ? "Copied " + Object.keys(prefs).length + " saved choice(s) to the clipboard." : "Couldn't access the clipboard.")
+            try { ctx.dom.clipboard.write(json) } catch (_e) {}
+            ctx.toast.success("Preferences sent to clipboard")
+            status.set("Sent " + Object.keys(prefs).length + " saved choice(s) to the clipboard.")
             tray.update()
         }
 
@@ -260,7 +278,7 @@ function init() {
 
         function resetPrefs(): void {
             const idx = sget<string[]>(IDX_KEY, [])
-            for (let i = 0; i < idx.length; i++) sset(idx[i], null)
+            for (let i = 0; i < idx.length; i++) { try { ($storage as any).remove(idx[i]) } catch (_e) { sset(idx[i], null) } }
             sset(IDX_KEY, [])
             ctx.toast.info("Preferences cleared")
             status.set("Cleared all saved choices.")
@@ -314,7 +332,7 @@ function init() {
                 rows.push(dim("Player control is unavailable — this needs the Playback permission (and a Seanime build with videoCore). Re-enable the plugin's permissions or update Seanime."))
                 return tray.stack({ items: rows, gap: 3 })
             }
-            rows.push(dim("Remembers your subtitle on/off, sub/caption track and audio (dub/sub) track, and re-applies them every new episode — across series and all built-in-player sources."))
+            rows.push(dim("Remembers your subtitle on/off & track (every source) and audio dub/sub track (local/torrent/debrid files), and re-applies them on each new episode."))
             rows.push(tray.button({ label: enabled.get() ? "✓ Enabled" : "Enable", onClick: "ap-toggle", intent: enabled.get() ? "success-subtle" : "gray-subtle", size: "sm" }))
 
             rows.push(divider())
@@ -359,7 +377,7 @@ function init() {
             rows.push(dim("playback " + (armedPid ? String(armedPid).slice(0, 8) : "—") + " · media " + (curMediaId() || "—") + " · ep " + (curEpisode() || "—")))
 
             rows.push(divider())
-            rows.push(dim("Applies to Seanime's built-in player. Online dub/sub is chosen by the provider (a different episode list), so it isn't auto-switched here. The external MPV player isn't covered."))
+            rows.push(dim("Tip: when a new episode starts the plugin re-applies your saved pick for ~2.5s — change a track AFTER that and it's remembered. Online dub/sub is provider-chosen (not auto-switched); the external MPV player isn't covered."))
             return tray.stack({ items: rows, gap: 3 })
         })
     })
