@@ -10,7 +10,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.9"
+        const SOLVER_VERSION = "0.1.10"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -1087,18 +1087,26 @@ function init() {
             fsPersist()
             tray.update()
         })
+        function applySolverEnvChange(note: string): void {
+            tray.update()
+            if (fsMode.get() !== "remote" && (fsStatus.get() === "up" || fsStatus.get() === "starting")) {
+                ctx.toast.info(note + " — restarting the solver to apply.")
+                fsStart()
+            } else {
+                ctx.toast.info(note)
+            }
+        }
         ctx.registerEventHandler("fs-browsermode-toggle", () => {
             fsBrowserMode.set(fsBrowserMode.get() === "offscreen" ? "headless" : "offscreen")
             fsPersist()
-            tray.update()
+            applySolverEnvChange("Browser tier: " + fsBrowserMode.get())
         })
         ctx.registerEventHandler("fs-dns-toggle", () => {
             const order = ["off", "cloudflare", "google", "quad9"]
             const i = order.indexOf(fsDns.get())
             fsDns.set(order[(i + 1) % order.length])
             fsPersist()
-            ctx.toast.info("Encrypted DNS: " + fsDns.get() + " — restart the solver to apply.")
-            tray.update()
+            applySolverEnvChange("Encrypted DNS: " + fsDns.get())
         })
         ctx.registerEventHandler("fs-autostart-toggle", () => {
             fsAutoStart.set(!fsAutoStart.get())
