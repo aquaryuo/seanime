@@ -33,19 +33,19 @@ class Provider {
             let data: AnimeData[] | undefined
             const ckey = `apahe:srch:${q.toLowerCase()}`
             const cachedData = this.readCache<AnimeData[]>(ckey, 300000)
-            if (cachedData) {
+            if (cachedData && cachedData.length > 0) {
                 data = cachedData
             } else {
                 try {
                     const json = await this.getJson<{ data?: AnimeData[] }>(`${this.baseUrl}/api?m=search&q=${encodeURIComponent(q)}`)
                     data = json && json.data ? json.data : []
-                    this.writeCache(ckey, data)
+                    if (data.length > 0) this.writeCache(ckey, data)
                 } catch (e) {
                     data = undefined
                     const msg = typeof e === "string" ? e : e && (e as any).message ? (e as any).message : "request failed"
                     lastErr = msg
                     if ((this.lastResp && this.lastResp.hit) || msg.indexOf("blocked") !== -1 || msg.indexOf("Cloudflare") !== -1) blocked = true
-                    if (blocked || msg.indexOf("reachable") !== -1 || msg.indexOf("endpoint not set") !== -1 || msg.indexOf("protection") !== -1) break
+                    if (blocked || msg.indexOf("reachable") !== -1 || msg.indexOf("endpoint not set") !== -1 || msg.indexOf("protection") !== -1 || msg.indexOf("expected JSON") !== -1) break
                 }
             }
             if (!data) continue
@@ -113,11 +113,12 @@ class Provider {
         if (first.data) for (const d of first.data) all.push(d)
 
         const lastPage = first.last_page && first.last_page > 1 ? first.last_page : 1
+        let pageFail = false
         for (let page = 2; page <= lastPage; page++) {
             try {
                 const next = await this.getJson<ReleaseResponse>(`${this.baseUrl}/api?m=release&id=${animeSession}&sort=episode_asc&page=${page}`)
                 if (next && next.data) for (const d of next.data) all.push(d)
-            } catch (_e) {}
+            } catch (_e) { pageFail = true }
         }
 
         const episodes: EpisodeDetails[] = []
@@ -138,7 +139,7 @@ class Provider {
 
         if (episodes.length === 0) throw this.fail("episodes", "no episodes found")
         episodes.sort((a, b) => a.number - b.number)
-        this.writeCache(cacheKey, episodes)
+        if (!pageFail) this.writeCache(cacheKey, episodes)
         return episodes
     }
 
@@ -191,10 +192,15 @@ class Provider {
         const cacheKey = `apahe:play:${animeSession}:${episodeSession}`
         let html = this.readCache<string>(cacheKey, this.serverCacheTtl)
         if (!html) {
-            html = await this.getText(playUrl, { Referer: `${this.baseUrl}/` })
-            if (html) this.writeCache(cacheKey, html)
+            html = await this.getText(playUrl, { Referer: `${this.baseUrl}/` }, (b) => this.looksLikePlayPage(b))
+            if (this.looksLikePlayPage(html)) this.writeCache(cacheKey, html)
         }
         return this.parsePlaySources(html || "", audio)
+    }
+
+    private looksLikePlayPage(html: string): boolean {
+        if (!html) return false
+        return /resolutionMenu/i.test(html) || /data-src\s*=/i.test(html)
     }
 
     private searchQueries(opts: SearchOptions): string[] {
@@ -404,7 +410,7 @@ class Provider {
         return after
     }
 
-    private async getText(url: string, extra?: { [k: string]: string }): Promise<string> {
+    private async getText(url: string, extra?: { [k: string]: string }, valid?: (body: string) => boolean): Promise<string> {
         let cookie = await this.harvestCookies(false)
         let res: FetchResponse | undefined
         for (let i = 0; i < 2; i++) {
@@ -412,12 +418,15 @@ class Provider {
                 res = await fetch(url, { headers: this.apiHeaders(cookie, extra), timeout: 10 })
                 this.absorbCookies(res)
                 this.snapResp(res, url)
-                if (!this.isBlocked(res)) return res.text()
+                if (!this.isBlocked(res)) {
+                    const body = res.text()
+                    if (!valid || valid(body)) return body
+                }
             } catch (_e) {}
             cookie = await this.harvestCookies(true)
         }
         const solved = await this.solveGet(url)
-        if (solved) return solved
+        if (solved && (!valid || valid(solved))) return solved
         if (!this.solverEndpoint()) throw this.fail("server", "Solver endpoint not set — configure it in the extension settings and run it via Aqua's Utils.")
         const ping = await this.solverPing()
         if (!ping.up) throw this.fail("server", "Aqua's Utils solver isn't reachable at " + this.solverEndpoint() + " — open Aqua's Utils and start it.")
@@ -472,12 +481,6 @@ class Provider {
         if (pre && pre[1]) {
             try {
                 return JSON.parse(this.unescapeHtml(pre[1].trim())) as T
-            } catch (_e) {}
-        }
-        const obj = text.match(/[\[{][\s\S]*[\]}]/)
-        if (obj) {
-            try {
-                return JSON.parse(obj[0]) as T
             } catch (_e) {}
         }
         return undefined
