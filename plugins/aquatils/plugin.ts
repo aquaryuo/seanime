@@ -10,7 +10,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.7"
+        const SOLVER_VERSION = "0.1.8"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -39,6 +39,7 @@ function init() {
         const fsAutoStart = ctx.state<boolean>(sget<boolean>("fs.autoStart", false))
         const fsWantChromium = ctx.state<boolean>(sget<boolean>("fs.wantChromium", false))
         const fsAutoUpdate = ctx.state<boolean>(sget<boolean>("fs.autoUpdate", false))
+        const fsBrowserMode = ctx.state<string>(sget<string>("fs.browserMode", "headless"))
         const fsStatus = ctx.state<string>("unknown")
         const fsSessions = ctx.state<string[]>([])
         const fsNote = ctx.state<string>("")
@@ -253,6 +254,7 @@ function init() {
                 $storage.set("fs.autoStart", fsAutoStart.get())
                 $storage.set("fs.wantChromium", fsWantChromium.get())
                 $storage.set("fs.autoUpdate", fsAutoUpdate.get())
+                $storage.set("fs.browserMode", fsBrowserMode.get())
             } catch (_e) {}
         }
 
@@ -489,12 +491,21 @@ function init() {
             return ""
         }
 
+        function chromiumBinRel(plt: string): string {
+            if (plt === "win64") return $filepath.join("chrome-win64", "chrome.exe")
+            if (plt === "linux64") return $filepath.join("chrome-linux64", "chrome")
+            if (plt === "mac-x64") return $filepath.join("chrome-mac-x64", "Google Chrome for Testing.app", "Contents", "MacOS", "Google Chrome for Testing")
+            if (plt === "mac-arm64") return $filepath.join("chrome-mac-arm64", "Google Chrome for Testing.app", "Contents", "MacOS", "Google Chrome for Testing")
+            return ""
+        }
+
         function chromiumCachedPath(): string {
             const plt = chromiumCfTPlatform()
             if (!plt) return ""
+            const rel = chromiumBinRel(plt)
+            if (!rel) return ""
             try {
-                const bin = $os.platform === "windows" ? "chrome-headless-shell.exe" : "chrome-headless-shell"
-                const p = $filepath.join($os.cacheDir(), "aquatils", "chromium", "chrome-headless-shell-" + plt, bin)
+                const p = $filepath.join($os.cacheDir(), "aquatils", "chromium", rel)
                 if ($os.stat(p)) return p
             } catch (_e) {}
             return ""
@@ -521,7 +532,7 @@ function init() {
                 const stable = data && data.channels && data.channels.Stable ? data.channels.Stable : null
                 const version = stable && stable.version ? String(stable.version) : ""
                 let url = ""
-                const dls = stable && stable.downloads ? stable.downloads["chrome-headless-shell"] : null
+                const dls = stable && stable.downloads ? stable.downloads["chrome"] : null
                 if (Array.isArray(dls)) { for (const d of dls) { if (d && d.platform === plt && d.url) { url = String(d.url); break } } }
                 return { version: version, url: url }
             } catch (_e) {}
@@ -534,8 +545,9 @@ function init() {
 
         function downloadChromium(st: { version: string; url: string }, done: (ok: boolean) => void): void {
             const dir = $filepath.join($os.cacheDir(), "aquatils", "chromium")
+            try { $os.removeAll(dir) } catch (_e) {}
             try { $os.mkdirAll(dir, 493) } catch (_e) {}
-            const zip = $filepath.join(dir, "chrome-headless-shell.zip")
+            const zip = $filepath.join(dir, "chrome.zip")
             let id = ""
             try { id = dl.download(st.url, zip) } catch (_e) { done(false); return }
             const cancel = dl.watch(id, (p: $downloader.DownloadProgress | undefined) => {
@@ -647,6 +659,7 @@ function init() {
                 env.push("LOG_LEVEL=info")
                 if (logPath) env.push("LOG_FILE=" + logPath)
                 if (chromiumOverride) env.push("SOLVER_CHROME=" + chromiumOverride)
+                env.push("SOLVER_BROWSER_MODE=" + (fsBrowserMode.get() || "headless"))
                 c.env = env
             } catch (_e) {}
             fsBinary = c
@@ -1071,6 +1084,11 @@ function init() {
             fsPersist()
             tray.update()
         })
+        ctx.registerEventHandler("fs-browsermode-toggle", () => {
+            fsBrowserMode.set(fsBrowserMode.get() === "offscreen" ? "headless" : "offscreen")
+            fsPersist()
+            tray.update()
+        })
         ctx.registerEventHandler("fs-autostart-toggle", () => {
             fsAutoStart.set(!fsAutoStart.get())
             fsPersist()
@@ -1255,6 +1273,14 @@ function init() {
                 size: "sm",
             }))
             rows.push(dim("When on, the solver (and a downloaded Chromium) update themselves once a newer version is bundled. When off, you'll get a notice to update manually."))
+            rows.push(divider())
+            rows.push(tray.button({
+                label: "Browser tier: " + (fsBrowserMode.get() === "offscreen" ? "Off-screen (max stealth)" : "Invisible (headless)"),
+                onClick: "fs-browsermode-toggle",
+                intent: "primary-subtle",
+                size: "sm",
+            }))
+            rows.push(dim("How the solver drives a browser for hard JS gates (Cloudflare/Turnstile). Neither shows a normal window. Invisible: --headless=new on the real GPU. Off-screen: a real window placed off your screen — stronger against bot-detection, may briefly flash on launch."))
             rows.push(divider())
             rows.push(tray.button({
                 label: notify.get() ? "✓ Error notifications: on" : "Error notifications: off",
