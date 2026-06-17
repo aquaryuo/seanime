@@ -10,7 +10,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.8"
+        const SOLVER_VERSION = "0.1.9"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -40,6 +40,7 @@ function init() {
         const fsWantChromium = ctx.state<boolean>(sget<boolean>("fs.wantChromium", false))
         const fsAutoUpdate = ctx.state<boolean>(sget<boolean>("fs.autoUpdate", false))
         const fsBrowserMode = ctx.state<string>(sget<string>("fs.browserMode", "headless"))
+        const fsDns = ctx.state<string>(sget<string>("fs.dns", "off"))
         const fsStatus = ctx.state<string>("unknown")
         const fsSessions = ctx.state<string[]>([])
         const fsNote = ctx.state<string>("")
@@ -255,6 +256,7 @@ function init() {
                 $storage.set("fs.wantChromium", fsWantChromium.get())
                 $storage.set("fs.autoUpdate", fsAutoUpdate.get())
                 $storage.set("fs.browserMode", fsBrowserMode.get())
+                $storage.set("fs.dns", fsDns.get())
             } catch (_e) {}
         }
 
@@ -660,6 +662,7 @@ function init() {
                 if (logPath) env.push("LOG_FILE=" + logPath)
                 if (chromiumOverride) env.push("SOLVER_CHROME=" + chromiumOverride)
                 env.push("SOLVER_BROWSER_MODE=" + (fsBrowserMode.get() || "headless"))
+                if (fsDns.get() && fsDns.get() !== "off") env.push("SOLVER_DNS=" + fsDns.get())
                 c.env = env
             } catch (_e) {}
             fsBinary = c
@@ -1089,6 +1092,14 @@ function init() {
             fsPersist()
             tray.update()
         })
+        ctx.registerEventHandler("fs-dns-toggle", () => {
+            const order = ["off", "cloudflare", "google", "quad9"]
+            const i = order.indexOf(fsDns.get())
+            fsDns.set(order[(i + 1) % order.length])
+            fsPersist()
+            ctx.toast.info("Encrypted DNS: " + fsDns.get() + " — restart the solver to apply.")
+            tray.update()
+        })
         ctx.registerEventHandler("fs-autostart-toggle", () => {
             fsAutoStart.set(!fsAutoStart.get())
             fsPersist()
@@ -1281,6 +1292,15 @@ function init() {
                 size: "sm",
             }))
             rows.push(dim("How the solver drives a browser for hard JS gates (Cloudflare/Turnstile). Neither shows a normal window. Invisible: --headless=new on the real GPU. Off-screen: a real window placed off your screen — stronger against bot-detection, may briefly flash on launch."))
+            rows.push(divider())
+            const dnsLabel = fsDns.get() === "cloudflare" ? "Cloudflare" : fsDns.get() === "google" ? "Google" : fsDns.get() === "quad9" ? "Quad9" : "Off (use system DNS)"
+            rows.push(tray.button({
+                label: "Encrypted DNS: " + dnsLabel,
+                onClick: "fs-dns-toggle",
+                intent: fsDns.get() !== "off" ? "success-subtle" : "gray-subtle",
+                size: "sm",
+            }))
+            rows.push(dim("If your ISP blocks a site by tampering with DNS (you'd see a non-site placeholder/notice page), turn this on: the solver resolves names over an encrypted channel (DNS-over-TLS) so the block is bypassed. Off uses your system's DNS."))
             rows.push(divider())
             rows.push(tray.button({
                 label: notify.get() ? "✓ Error notifications: on" : "Error notifications: off",
