@@ -5,8 +5,9 @@ function init() {
 
         const CFG_KEY = "cfg"
         const IDX_KEY = "pref:__index"
-        const SUPPRESS_MS = 1800
-        const APPLY_DELAY_MS = 350
+        const SUPPRESS_MS = 2500
+        const APPLY_DELAY_MS = 500
+        const APPLY_DELAY_MS2 = 1700
         const EXPORT_MARKER = "AQUAPREFSv1"
 
         function sget<T>(k: string, d: T): T {
@@ -34,10 +35,20 @@ function init() {
         })
 
         let suppressUntil = 0
-        let lastApplied = ""
+        let armedPid = ""
+        let seenSub = ""
+        let seenAudio = ""
+        let seenCap = ""
+        let dbgEvent = "(nothing yet)"
+        let dbgApply = "(nothing yet)"
 
         function suppress(): void { suppressUntil = nowMs() + SUPPRESS_MS }
-        function recording(): boolean { return enabled.get() && nowMs() >= suppressUntil }
+        function arm(pid: string): void {
+            if (!pid || pid === armedPid) return
+            armedPid = pid
+            ctx.setTimeout(() => applyForCurrent(), APPLY_DELAY_MS)
+            ctx.setTimeout(() => applyForCurrent(), APPLY_DELAY_MS2)
+        }
 
         function pinfo(): any { try { return VC.getCurrentPlaybackInfo() || null } catch (_e) { return null } }
 
@@ -108,6 +119,7 @@ function init() {
             }).catch(() => {})
         }
         function applyCap(cap: any): void {
+            if (cap.off) { suppress(); try { VC.setMediaCaptionTrack(-1) } catch (_e) {} ; return }
             VC.getTextTracks().then((tracks) => {
                 const n = matchTrack((tracks || []).filter((t) => t.type === "captions"), cap)
                 if (n !== -2) { suppress(); try { VC.setMediaCaptionTrack(n) } catch (_e) {} }
@@ -128,51 +140,58 @@ function init() {
         function applyForCurrent(): void {
             if (!enabled.get() || !pinfo()) return
             const rec = readCascade()
-            if (!rec) return
+            if (!rec) { dbgApply = "reapply: nothing saved for this scope"; tray.update(); return }
+            const parts: string[] = []
             if (persistSubs.get()) {
-                if (rec.sub) applySub(rec.sub)
-                if (rec.cap) applyCap(rec.cap)
+                if (rec.sub) { applySub(rec.sub); parts.push(rec.sub.off ? "sub=off" : "sub=" + (rec.sub.label || rec.sub.language || "?")) }
+                if (rec.cap) { applyCap(rec.cap); parts.push(rec.cap.off ? "cap=off" : "cap=" + (rec.cap.label || rec.cap.language || "?")) }
             }
-            if (persistAudio.get() && rec.audio) applyAudio(rec.audio)
-        }
-
-        function onLoaded(e: any): void {
-            if (!enabled.get()) return
-            const pid = (e && e.playbackId) ? e.playbackId : ""
-            if (pid && pid === lastApplied) return
-            lastApplied = pid
-            ctx.setTimeout(() => applyForCurrent(), APPLY_DELAY_MS)
+            if (persistAudio.get() && rec.audio) { applyAudio(rec.audio); parts.push("audio=" + (rec.audio.label || rec.audio.language || ("#" + rec.audio.index))) }
+            dbgApply = parts.length ? "reapply: " + parts.join(", ") : "reapply: nothing to apply"
+            tray.update()
         }
 
         if (hasVC) {
-            VC.addEventListener("video-loaded", onLoaded)
-            VC.addEventListener("video-loaded-metadata", onLoaded)
+            VC.addEventListener("video-loaded", (e) => { if (enabled.get()) arm((e && e.playbackId) || "") })
+            VC.addEventListener("video-loaded-metadata", (e) => { if (enabled.get()) arm((e && e.playbackId) || "") })
 
             VC.addEventListener("video-subtitle-track", (e) => {
-                if (!recording() || !persistSubs.get()) return
-                if (e.trackNumber < 0) { record({ sub: { off: true } }); return }
+                const pid = (e && e.playbackId) || ""
+                arm(pid)
+                if (pid !== seenSub) { seenSub = pid; dbgEvent = "sub auto-default ignored (track " + e.trackNumber + ")"; return }
+                if (!enabled.get() || !persistSubs.get() || nowMs() < suppressUntil) { dbgEvent = "sub change ignored (settling)"; return }
+                if (e.trackNumber < 0) { record({ sub: { off: true } }); dbgEvent = "saved: sub=off"; tray.update(); return }
                 VC.getTextTracks().then((tracks) => {
                     const m = (tracks || []).filter((t) => t.type === "subtitles" && t.number === e.trackNumber)[0]
-                    if (m) record({ sub: { off: false, language: m.language, label: m.label } })
+                    if (m) { record({ sub: { off: false, language: m.language, label: m.label } }); dbgEvent = "saved: sub=" + (m.label || m.language); tray.update() }
                 }).catch(() => {})
             })
 
             VC.addEventListener("video-media-caption-track", (e) => {
-                if (!recording() || !persistSubs.get()) return
+                const pid = (e && e.playbackId) || ""
+                arm(pid)
+                if (pid !== seenCap) { seenCap = pid; return }
+                if (!enabled.get() || !persistSubs.get() || nowMs() < suppressUntil) return
+                if (e.trackIndex < 0) { record({ cap: { off: true } }); dbgEvent = "saved: cap=off"; tray.update(); return }
                 VC.getTextTracks().then((tracks) => {
                     const m = (tracks || []).filter((t) => t.type === "captions" && t.number === e.trackIndex)[0]
-                    if (m) record({ cap: { language: m.language, label: m.label } })
+                    if (m) { record({ cap: { off: false, language: m.language, label: m.label } }); dbgEvent = "saved: cap=" + (m.label || m.language); tray.update() }
                 }).catch(() => {})
             })
 
             VC.addEventListener("video-audio-track", (e) => {
-                if (!recording() || !persistAudio.get()) return
+                const pid = (e && e.playbackId) || ""
+                arm(pid)
+                if (pid !== seenAudio) { seenAudio = pid; dbgEvent = "audio auto-default ignored (track " + e.trackNumber + ")"; return }
+                if (!enabled.get() || !persistAudio.get() || nowMs() < suppressUntil) return
                 const rec: any = { index: e.trackNumber }
                 const pi = pinfo()
                 const at = (pi && pi.mkvMetadata && pi.mkvMetadata.audioTracks) ? pi.mkvMetadata.audioTracks : []
                 const m = at.filter((t: any) => t.number === e.trackNumber)[0]
                 if (m) { rec.language = m.language || ""; rec.label = m.name || "" }
                 record({ audio: rec })
+                dbgEvent = "saved: audio=" + (rec.label || rec.language || ("#" + rec.index))
+                tray.update()
             })
         }
 
@@ -255,7 +274,7 @@ function init() {
         ctx.registerEventHandler("ap-scope-episode", () => { scope.set("episode"); saveCfg(); tray.update() })
         ctx.registerEventHandler("ap-scope-series", () => { scope.set("series"); saveCfg(); tray.update() })
         ctx.registerEventHandler("ap-scope-global", () => { scope.set("global"); saveCfg(); tray.update() })
-        ctx.registerEventHandler("ap-apply-now", () => { lastApplied = ""; applyForCurrent(); status.set("Re-applied to the current playback."); tray.update() })
+        ctx.registerEventHandler("ap-apply-now", () => { applyForCurrent(); status.set("Re-applied to the current playback."); tray.update() })
         ctx.registerEventHandler("ap-export", () => exportPrefs())
         ctx.registerEventHandler("ap-import", () => importPrefs())
         ctx.registerEventHandler("ap-reset", () => resetPrefs())
@@ -309,6 +328,12 @@ function init() {
             rows.push(tray.input({ fieldRef: importRef, placeholder: "Paste an exported blob, then Import…" }))
             rows.push(tray.button({ label: "Import", onClick: "ap-import", intent: "primary-subtle", size: "xs" }))
             if (status.get()) rows.push(dim(status.get()))
+
+            rows.push(divider())
+            rows.push(heading("Debug"))
+            rows.push(dim("last event — " + dbgEvent))
+            rows.push(dim(dbgApply))
+            rows.push(dim("playback " + (armedPid ? String(armedPid).slice(0, 8) : "—") + " · media " + (curMediaId() || "—") + " · ep " + (curEpisode() || "—")))
 
             rows.push(divider())
             rows.push(dim("Applies to Seanime's built-in player. Online dub/sub is chosen by the provider (a different episode list), so it isn't auto-switched here. The external MPV player isn't covered."))
