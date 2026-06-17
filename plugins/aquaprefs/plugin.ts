@@ -5,6 +5,7 @@ function init() {
 
         const CFG_KEY = "cfg"
         const IDX_KEY = "pref:__index"
+        const AUTO_MS = 700
         const EXPORT_MARKER = "AQUAPREFSv1"
 
         function sget<T>(k: string, d: T): T {
@@ -32,15 +33,13 @@ function init() {
         })
 
         let armedPid = ""
+        let loadAt = 0
         let curSub = -9
         let curAud = -9
         let curCap = -9
         let lastSub = -99
         let lastAud = -99
         let lastCap = -99
-        let subBaselined = false
-        let audBaselined = false
-        let capBaselined = false
         let subGen = 0
         let audGen = 0
         let capGen = 0
@@ -51,11 +50,13 @@ function init() {
         function arm(pid: string): void {
             if (!pid || pid === armedPid) return
             armedPid = pid
+            loadAt = nowMs()
             curSub = -9; curAud = -9; curCap = -9
             lastSub = -99; lastAud = -99; lastCap = -99
-            subBaselined = false; audBaselined = false; capBaselined = false
             subGen++; audGen++; capGen++
+            ctx.setTimeout(() => { if (pid === armedPid) applyForCurrent() }, AUTO_MS)
         }
+        function loading(): boolean { return nowMs() - loadAt < AUTO_MS }
 
         function pinfo(): any { try { return VC.getCurrentPlaybackInfo() || null } catch (_e) { return null } }
 
@@ -202,8 +203,7 @@ function init() {
                 curSub = v
                 const lbl = v < 0 ? "off" : "track " + v
                 if (v === lastSub) { lastSub = -99; dbgEvent = "subtitle echo (" + lbl + ")"; return }
-                if (!subBaselined) {
-                    subBaselined = true
+                if (loading()) {
                     const rec = readCascade()
                     if (rec && rec.sub) { applySub(rec.sub); dbgEvent = "subtitle auto-default " + lbl + " → re-applied saved" }
                     else { dbgEvent = "subtitle auto-default " + lbl + " (nothing saved)" }
@@ -221,8 +221,7 @@ function init() {
                 curCap = v
                 const lbl = v < 0 ? "off" : "track " + v
                 if (v === lastCap) { lastCap = -99; dbgEvent = "caption echo (" + lbl + ")"; return }
-                if (!capBaselined) {
-                    capBaselined = true
+                if (loading()) {
                     const rec = readCascade()
                     if (rec && rec.cap) { applyCap(rec.cap); dbgEvent = "caption auto-default " + lbl + " → re-applied saved" }
                     else { dbgEvent = "caption auto-default " + lbl + " (nothing saved)" }
@@ -239,8 +238,7 @@ function init() {
                 const v = (typeof e.trackNumber === "number") ? e.trackNumber : -9
                 curAud = v
                 if (v === lastAud) { lastAud = -99; dbgEvent = "audio echo (track " + v + ")"; return }
-                if (!audBaselined) {
-                    audBaselined = true
+                if (loading()) {
                     const rec = readCascade()
                     if (rec && rec.audio) { applyAudio(rec.audio); dbgEvent = "audio auto-default track " + v + " → re-applied saved" }
                     else { dbgEvent = "audio auto-default track " + v + " (nothing saved)" }
@@ -340,60 +338,45 @@ function init() {
             rows.push(tray.flex({
                 items: [
                     tray.text("Aqua's Prefs", { style: { fontWeight: "600", fontSize: "15px" } }),
-                    enabled.get() ? tray.badge({ text: "On", intent: "success", size: "sm" }) : tray.badge({ text: "Off", intent: "gray", size: "sm" }),
+                    tray.button({ label: enabled.get() ? "On" : "Off", onClick: "ap-toggle", intent: enabled.get() ? "success-subtle" : "gray-subtle", size: "xs", style: { marginLeft: "auto" } }),
                 ],
                 gap: 2,
             }))
             if (!hasVC) {
-                rows.push(dim("Player control is unavailable — this needs the Playback permission (and a Seanime build with videoCore). Re-enable the plugin's permissions or update Seanime."))
+                rows.push(dim("Needs the Playback permission — re-enable the plugin's permissions or update Seanime."))
                 return tray.stack({ items: rows, gap: 3 })
             }
-            rows.push(dim("Remembers your subtitle on/off & track (every source) and audio dub/sub track (local/torrent/debrid files), and re-applies them on each new episode."))
-            rows.push(tray.button({ label: enabled.get() ? "✓ Enabled" : "Enable", onClick: "ap-toggle", intent: enabled.get() ? "success-subtle" : "gray-subtle", size: "sm" }))
 
-            rows.push(divider())
             rows.push(heading("Persist across"))
             rows.push(tray.flex({ items: [scopeBtn("episode", "Episode"), scopeBtn("series", "Series"), scopeBtn("global", "Everything")], gap: 2 }))
-            rows.push(dim(scope.get() === "global"
-                ? "One choice applies to every series and every source."
-                : scope.get() === "series"
-                    ? "Saved per series, applied across its episodes (falls back to your global choice)."
-                    : "Saved per episode (falls back to the series, then global)."))
 
-            rows.push(divider())
-            rows.push(heading("What to keep"))
+            rows.push(heading("Keep"))
             rows.push(tray.flex({
                 items: [
-                    tray.button({ label: persistSubs.get() ? "✓ Subtitles (on/off & track)" : "Subtitles: not kept", onClick: "ap-subs", intent: persistSubs.get() ? "success-subtle" : "gray-subtle", size: "sm" }),
-                    tray.button({ label: persistAudio.get() ? "✓ Audio · dub/sub" : "Audio: not kept", onClick: "ap-audio", intent: persistAudio.get() ? "success-subtle" : "gray-subtle", size: "sm" }),
+                    tray.button({ label: (persistSubs.get() ? "✓ " : "") + "Subtitles", onClick: "ap-subs", intent: persistSubs.get() ? "success-subtle" : "gray-subtle", size: "sm" }),
+                    tray.button({ label: (persistAudio.get() ? "✓ " : "") + "Audio (dub/sub)", onClick: "ap-audio", intent: persistAudio.get() ? "success-subtle" : "gray-subtle", size: "sm" }),
                 ],
                 gap: 2,
             }))
             rows.push(dim(summary()))
-            rows.push(tray.button({ label: "Re-apply to current playback", onClick: "ap-apply-now", intent: "gray-subtle", size: "xs" }))
 
             rows.push(divider())
-            rows.push(heading("Backup"))
             rows.push(tray.flex({
                 items: [
-                    tray.button({ label: "Export (copy)", onClick: "ap-export", intent: "gray-subtle", size: "xs" }),
-                    tray.button({ label: "Reset all", onClick: "ap-reset", intent: "alert-subtle", size: "xs", style: { marginLeft: "auto" } }),
+                    tray.button({ label: "Re-apply now", onClick: "ap-apply-now", intent: "gray-subtle", size: "xs" }),
+                    tray.button({ label: "Export", onClick: "ap-export", intent: "gray-subtle", size: "xs" }),
+                    tray.button({ label: "Import", onClick: "ap-import", intent: "gray-subtle", size: "xs" }),
+                    tray.button({ label: "Reset", onClick: "ap-reset", intent: "alert-subtle", size: "xs", style: { marginLeft: "auto" } }),
                 ],
                 gap: 2,
             }))
-            rows.push(tray.input({ fieldRef: importRef, placeholder: "Paste an exported blob, then Import…" }))
-            rows.push(tray.button({ label: "Import", onClick: "ap-import", intent: "primary-subtle", size: "xs" }))
+            rows.push(tray.input({ fieldRef: importRef, placeholder: "Paste export to import" }))
             if (status.get()) rows.push(dim(status.get()))
 
             rows.push(divider())
-            rows.push(heading("Debug"))
-            rows.push(dim("last event — " + dbgEvent))
+            rows.push(dim(dbgEvent))
             rows.push(dim(dbgSaved))
             rows.push(dim(dbgApply))
-            rows.push(dim("playback " + (armedPid ? String(armedPid).slice(0, 8) : "—") + " · media " + (curMediaId() || "—") + " · ep " + (curEpisode() || "—")))
-
-            rows.push(divider())
-            rows.push(dim("Your subtitle/audio change is saved the moment you make it. Online dub/sub is provider-chosen (not auto-switched here); the external MPV player isn't covered."))
             return tray.stack({ items: rows, gap: 3 })
         })
     })
