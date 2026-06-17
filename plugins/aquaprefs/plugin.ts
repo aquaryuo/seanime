@@ -6,9 +6,10 @@ function init() {
         const CFG_KEY = "cfg"
         const IDX_KEY = "pref:__index"
         const EXPORT_MARKER = "AQUAPREFSv1"
-        const CLICK_WINDOW = 3000
+        const CLICK_TO_EVENT = 2500
+        const EVENT_TO_CLICK = 1000
         const APPLY_GUARD = 1500
-        const REAPPLY_AT = [500, 1600, 3000]
+        const REAPPLY_AT = [300, 1200, 2500]
         const OPT_SEL = "[data-vc-element='setting-select-option']"
         const TITLE_SEL = "[data-vc-element='menu-title']"
 
@@ -37,16 +38,13 @@ function init() {
         })
 
         let armedPid = ""
-        let userTouched = false
         let pendingClickAt = 0
+        let lastEvt: any = null
         let applyingUntil = 0
         let skipClicks = false
         let subDone = false
         let capDone = false
         let audDone = false
-        let curSub = -9
-        let curAud = -9
-        let curCap = -9
         let lastAppliedSub = -99
         let lastAppliedAud = -99
         let lastAppliedCap = -99
@@ -81,7 +79,7 @@ function init() {
             const sc = scope.get()
             if (sc === "global") return "pref:global"
             const mid = curMediaId()
-            if (!mid) return ""
+            if (!mid) return "pref:global"
             if (sc === "series") return "pref:m:" + mid
             const ep = curEpisode()
             return ep ? "pref:e:" + mid + ":" + ep : "pref:m:" + mid
@@ -148,7 +146,6 @@ function init() {
 
         function applyForCurrent(force: boolean): void {
             if (!enabled.get() || !pinfo()) return
-            if (!force && userTouched) return
             const rec = readCascade()
             if (!rec) { dbgApply = "reapply: nothing saved for this scope"; tray.update(); return }
             const parts: string[] = []
@@ -162,8 +159,7 @@ function init() {
         }
 
         function recordSub(v: number): void {
-            userTouched = true
-            const key = writeKey(); if (!key) return
+            const key = writeKey()
             if (v < 0) { recordTo(key, { sub: { off: true } }); dbgSaved = "saved sub=off"; tray.update(); return }
             VC.getTextTracks().then((tracks) => {
                 if (writeKey() !== key) return
@@ -174,8 +170,7 @@ function init() {
             }).catch(() => {})
         }
         function recordCap(v: number): void {
-            userTouched = true
-            const key = writeKey(); if (!key) return
+            const key = writeKey()
             if (v < 0) { recordTo(key, { cap: { off: true } }); dbgSaved = "saved cap=off"; tray.update(); return }
             VC.getTextTracks().then((tracks) => {
                 if (writeKey() !== key) return
@@ -186,8 +181,7 @@ function init() {
             }).catch(() => {})
         }
         function recordAud(v: number): void {
-            userTouched = true
-            const key = writeKey(); if (!key) return
+            const key = writeKey()
             const pi = pinfo()
             const at = (pi && pi.mkvMetadata && pi.mkvMetadata.audioTracks) ? pi.mkvMetadata.audioTracks : []
             const m = at.filter((t: any) => t.number === v)[0]
@@ -195,15 +189,37 @@ function init() {
             else { dbgSaved = "audio track " + v + " not resolvable (HLS/online) — not saved"; tray.update() }
         }
 
+        function record(kind: string, v: number): void {
+            const lbl = v < 0 ? "off" : "track " + v
+            if (kind === "sub") { subGen++; subDone = true; dbgEvent = "subtitle → " + lbl + " (you)"; recordSub(v) }
+            else if (kind === "cap") { capGen++; capDone = true; dbgEvent = "caption → " + lbl + " (you)"; recordCap(v) }
+            else { audGen++; audDone = true; dbgEvent = "audio → track " + v + " (you)"; recordAud(v) }
+            tray.update()
+        }
+
+        function onTrackEvent(kind: string, v: number): void {
+            if (nowMs() - pendingClickAt <= CLICK_TO_EVENT) { pendingClickAt = 0; lastEvt = null; record(kind, v); return }
+            lastEvt = { kind: kind, v: v, at: nowMs() }
+            dbgEvent = (kind === "sub" ? "subtitle" : kind === "cap" ? "caption" : "audio") + " " + (v < 0 ? "off" : "track " + v) + " (auto / awaiting click)"
+            tray.update()
+        }
+
+        function onOptionClick(): void {
+            if (skipClicks) return
+            if (lastEvt && nowMs() - lastEvt.at <= EVENT_TO_CLICK) {
+                const ev = lastEvt; lastEvt = null; pendingClickAt = 0
+                record(ev.kind, ev.v); return
+            }
+            pendingClickAt = nowMs()
+        }
+
         function arm(pid: string, fromLoad: boolean): void {
             if (!pid || pid === armedPid) return
             armedPid = pid
-            userTouched = false
             subDone = false; capDone = false; audDone = false
-            curSub = -9; curAud = -9; curCap = -9
             lastAppliedSub = -99; lastAppliedAud = -99; lastAppliedCap = -99
             subGen++; audGen++; capGen++
-            if (fromLoad) pendingClickAt = 0
+            if (fromLoad) { pendingClickAt = 0; lastEvt = null }
             for (let i = 0; i < REAPPLY_AT.length; i++) {
                 ctx.setTimeout(() => { if (pid === armedPid) applyForCurrent(false) }, REAPPLY_AT[i])
             }
@@ -226,7 +242,7 @@ function init() {
                 ctx.dom.observe(OPT_SEL, (els) => {
                     if (!els || !els.length) return
                     for (let i = 0; i < els.length; i++) {
-                        try { els[i].addEventListener("click", () => { if (!skipClicks) pendingClickAt = nowMs() }) } catch (_e) {}
+                        try { els[i].addEventListener("click", onOptionClick) } catch (_e) {}
                     }
                 })
             } catch (_e) {}
@@ -238,56 +254,24 @@ function init() {
                 arm((e && e.playbackId) || "", false)
                 if (!enabled.get() || !persistSubs.get()) return
                 const v = (typeof e.trackNumber === "number" && e.trackNumber >= 0) ? e.trackNumber : -1
-                curSub = v
-                const lbl = v < 0 ? "off" : "track " + v
-                if (v === lastAppliedSub && nowMs() < applyingUntil) { lastAppliedSub = -99; dbgEvent = "subtitle echo (" + lbl + ")"; return }
-                if (nowMs() - pendingClickAt <= CLICK_WINDOW) {
-                    pendingClickAt = 0; subGen++; subDone = true
-                    dbgEvent = "subtitle → " + lbl + " (you)"
-                    recordSub(v); tray.update(); return
-                }
-                const rec = readCascade()
-                if (!subDone && rec && rec.sub) { applySub(rec.sub); dbgEvent = "subtitle auto " + lbl + " → re-applied saved" }
-                else if (subDone) { dbgEvent = "subtitle " + lbl + " (ignored, already set)" }
-                else { dbgEvent = "subtitle auto " + lbl + " (none saved)" }
-                tray.update()
+                if (v === lastAppliedSub && nowMs() < applyingUntil) { lastAppliedSub = -99; dbgEvent = "subtitle echo (" + (v < 0 ? "off" : "track " + v) + ")"; return }
+                onTrackEvent("sub", v)
             })
 
             VC.addEventListener("video-media-caption-track", (e) => {
                 arm((e && e.playbackId) || "", false)
                 if (!enabled.get() || !persistSubs.get()) return
                 const v = (typeof e.trackIndex === "number" && e.trackIndex >= 0) ? e.trackIndex : -1
-                curCap = v
-                const lbl = v < 0 ? "off" : "track " + v
-                if (v === lastAppliedCap && nowMs() < applyingUntil) { lastAppliedCap = -99; dbgEvent = "caption echo (" + lbl + ")"; return }
-                if (nowMs() - pendingClickAt <= CLICK_WINDOW) {
-                    pendingClickAt = 0; capGen++; capDone = true
-                    dbgEvent = "caption → " + lbl + " (you)"
-                    recordCap(v); tray.update(); return
-                }
-                const rec = readCascade()
-                if (!capDone && rec && rec.cap) { applyCap(rec.cap); dbgEvent = "caption auto " + lbl + " → re-applied saved" }
-                else if (capDone) { dbgEvent = "caption " + lbl + " (ignored, already set)" }
-                else { dbgEvent = "caption auto " + lbl + " (none saved)" }
-                tray.update()
+                if (v === lastAppliedCap && nowMs() < applyingUntil) { lastAppliedCap = -99; dbgEvent = "caption echo (" + (v < 0 ? "off" : "track " + v) + ")"; return }
+                onTrackEvent("cap", v)
             })
 
             VC.addEventListener("video-audio-track", (e) => {
                 arm((e && e.playbackId) || "", false)
                 if (!enabled.get() || !persistAudio.get()) return
                 const v = (typeof e.trackNumber === "number") ? e.trackNumber : -9
-                curAud = v
                 if (v === lastAppliedAud && nowMs() < applyingUntil) { lastAppliedAud = -99; dbgEvent = "audio echo (track " + v + ")"; return }
-                if (nowMs() - pendingClickAt <= CLICK_WINDOW) {
-                    pendingClickAt = 0; audGen++; audDone = true
-                    dbgEvent = "audio → track " + v + " (you)"
-                    recordAud(v); tray.update(); return
-                }
-                const rec = readCascade()
-                if (!audDone && rec && rec.audio) { applyAudio(rec.audio); dbgEvent = "audio auto track " + v + " → re-applied saved" }
-                else if (audDone) { dbgEvent = "audio track " + v + " (ignored, already set)" }
-                else { dbgEvent = "audio auto track " + v + " (none saved)" }
-                tray.update()
+                onTrackEvent("aud", v)
             })
         }
 
