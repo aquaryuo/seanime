@@ -10,7 +10,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.12"
+        const SOLVER_VERSION = "0.1.13"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -1510,8 +1510,6 @@ function init() {
                 }))
             }
 
-            const ls = logsSection()
-            for (let i = 0; i < ls.length; i++) rows.push(ls[i])
             return rows
         }
 
