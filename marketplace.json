@@ -58,5 +58,17 @@
     "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/icon.png",
     "website": "https://github.com/aquaryuo/seanime",
     "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/manifest.json"
+  },
+  {
+    "id": "aquaprefs",
+    "name": "Aqua's Prefs",
+    "description": "Remembers your player and series options.",
+    "author": "aquaryuo",
+    "type": "plugin",
+    "language": "typescript",
+    "lang": "multi",
+    "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquaprefs/icon.png",
+    "website": "https://github.com/aquaryuo/seanime",
+    "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquaprefs/manifest.json"
   }
 ]
