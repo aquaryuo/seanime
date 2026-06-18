@@ -36,7 +36,7 @@ function init() {
             logs.push(clock() + "  " + msg)
             if (logs.length > LOG_CAP) logs = logs.slice(logs.length - LOG_CAP)
             sset(LOG_KEY, logs)
-            tray.update()
+            try { tray.update() } catch (_e) {}
         }
         function shortPid(pid: string): string {
             const s = String(pid || "")
