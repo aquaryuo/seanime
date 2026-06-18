@@ -555,8 +555,8 @@ class Provider {
         const b = body.toLowerCase()
         const toks = [
             "ddos-guard", "ddg-cookie", "checking your browser", "just a moment",
-            "cf-mitigated", "challenges.cloudflare.com", "enable javascript and cookies",
-            "cf-browser-verification", "challenge-platform", "oncheqresponse", "onrtbfailure",
+            "cf-mitigated", "enable javascript and cookies",
+            "cf-browser-verification", "oncheqresponse", "onrtbfailure",
         ]
         for (let i = 0; i < toks.length; i++) {
             if (b.indexOf(toks[i]) !== -1) return toks[i]
