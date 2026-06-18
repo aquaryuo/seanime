@@ -6,7 +6,7 @@ function init() {
         const CFG_KEY = "cfg"
         const IDX_KEY = "pref:__index"
         const LOG_KEY = "log"
-        const LOG_CAP = 200
+        const LOG_CAP = 30
         const EXPORT_MARKER = "AQUAPREFSv1"
         const CLICK_SUPPRESS = 2500
         const GRACE = 450
@@ -48,14 +48,13 @@ function init() {
 
         const cfg = sget<any>(CFG_KEY, {})
         const enabled = ctx.state<boolean>(cfg.enabled !== false)
-        const scope = ctx.state<string>(cfg.scope === "episode" || cfg.scope === "series" ? cfg.scope : "global")
         const persistSubs = ctx.state<boolean>(cfg.subs !== false)
         const persistAudio = ctx.state<boolean>(cfg.audio !== false)
         const status = ctx.state<string>("")
         const importRef = ctx.fieldRef<string>("")
 
         function saveCfg(): void {
-            sset(CFG_KEY, { enabled: enabled.get(), scope: scope.get(), subs: persistSubs.get(), audio: persistAudio.get() })
+            sset(CFG_KEY, { enabled: enabled.get(), subs: persistSubs.get(), audio: persistAudio.get() })
         }
 
         const tray = ctx.newTray({
@@ -97,33 +96,13 @@ function init() {
             return 0
         }
 
-        function writeKey(): string {
-            const sc = scope.get()
-            if (sc === "global") return "pref:global"
-            const mid = curMediaId()
-            if (!mid) return "pref:global"
-            if (sc === "series") return "pref:m:" + mid
-            const ep = curEpisode()
-            return ep ? "pref:e:" + mid + ":" + ep : "pref:m:" + mid
-        }
+        function writeKey(): string { return "pref:global" }
         function readCascade(): any {
-            const mid = curMediaId()
-            const ep = curEpisode()
             const g = sget<any>("pref:global", null)
-            const m = mid ? sget<any>("pref:m:" + mid, null) : null
-            const e = (mid && ep) ? sget<any>("pref:e:" + mid + ":" + ep, null) : null
-            const out: any = {}
-            const lvls = [g, m, e]
-            for (let i = 0; i < lvls.length; i++) {
-                const r = lvls[i]
-                if (!r) continue
-                if (r.sub) out.sub = r.sub
-                if (r.cap) out.cap = r.cap
-                if (r.audio) out.audio = r.audio
-            }
-            return (out.sub || out.cap || out.audio) ? out : null
+            if (!g) return null
+            return (g.sub || g.cap || g.audio) ? g : null
         }
-        function ctxStr(): string { return "scope=" + scope.get() + " · media=" + curMediaId() + " · ep=" + curEpisode() }
+        function ctxStr(): string { return "media=" + curMediaId() + " · ep=" + curEpisode() }
 
         function indexAdd(k: string): void {
             const idx = sget<string[]>(IDX_KEY, [])
@@ -229,6 +208,9 @@ function init() {
 
         function pollLoad(myGen: number, attempt: number): void {
             if (myGen !== gen || !enabled.get()) return
+            if (persistAudio.get() && curTrack.aud === -999 && savedFor("aud") && VC && typeof (VC as any).sendGetAudioTrack === "function") {
+                try { (VC as any).sendGetAudioTrack() } catch (_e) {}
+            }
             Promise.all([
                 enforceKind("sub", curTrack.sub, myGen),
                 enforceKind("cap", curTrack.cap, myGen),
@@ -366,7 +348,7 @@ function init() {
             const idx = sget<string[]>(IDX_KEY, [])
             const prefs: any = {}
             for (let i = 0; i < idx.length; i++) { const r = sget<any>(idx[i], null); if (r) prefs[idx[i]] = r }
-            const blob = { marker: EXPORT_MARKER, v: 1, cfg: { enabled: enabled.get(), scope: scope.get(), subs: persistSubs.get(), audio: persistAudio.get() }, prefs: prefs }
+            const blob = { marker: EXPORT_MARKER, v: 1, cfg: { enabled: enabled.get(), subs: persistSubs.get(), audio: persistAudio.get() }, prefs: prefs }
             let json = ""
             try { json = JSON.stringify(blob) } catch (_e) { json = "" }
             if (!json) { status.set("Export failed."); tray.update(); return }
@@ -390,7 +372,6 @@ function init() {
             sset(IDX_KEY, idx)
             if (blob.cfg) {
                 if (typeof blob.cfg.enabled === "boolean") enabled.set(blob.cfg.enabled)
-                if (blob.cfg.scope === "episode" || blob.cfg.scope === "series" || blob.cfg.scope === "global") scope.set(blob.cfg.scope)
                 if (typeof blob.cfg.subs === "boolean") persistSubs.set(blob.cfg.subs)
                 if (typeof blob.cfg.audio === "boolean") persistAudio.set(blob.cfg.audio)
                 saveCfg()
@@ -427,11 +408,8 @@ function init() {
         function divider(): any {
             return tray.div({ items: [], style: { borderTop: "1px solid rgba(255,255,255,0.08)", marginTop: "4px", marginBottom: "4px" } })
         }
-        function scopeBtn(id: string, label: string): any {
-            return tray.button({ label: label, onClick: "ap-scope-" + id, intent: scope.get() === id ? "primary" : "gray-subtle", size: "sm" })
-        }
         function logBox(): any {
-            const tail = logs.slice(-60).join("\n")
+            const tail = logs.slice(-30).join("\n")
             return tray.div({
                 items: [tray.text(tail || "(no logs yet — play something and change a track)", { style: { fontFamily: "monospace", fontSize: "11px", lineHeight: "1.45", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", color: "rgba(255,255,255,0.72)" } })],
                 style: { maxHeight: "200px", overflowY: "auto", background: "rgba(0,0,0,0.35)", borderRadius: "6px", padding: "8px", border: "1px solid rgba(255,255,255,0.08)" },
@@ -441,9 +419,6 @@ function init() {
         ctx.registerEventHandler("ap-toggle", () => { enabled.set(!enabled.get()); saveCfg(); tray.update() })
         ctx.registerEventHandler("ap-subs", () => { persistSubs.set(!persistSubs.get()); saveCfg(); tray.update() })
         ctx.registerEventHandler("ap-audio", () => { persistAudio.set(!persistAudio.get()); saveCfg(); tray.update() })
-        ctx.registerEventHandler("ap-scope-episode", () => { scope.set("episode"); saveCfg(); tray.update() })
-        ctx.registerEventHandler("ap-scope-series", () => { scope.set("series"); saveCfg(); tray.update() })
-        ctx.registerEventHandler("ap-scope-global", () => { scope.set("global"); saveCfg(); tray.update() })
         ctx.registerEventHandler("ap-apply-now", () => {
             const ks = ["sub", "cap", "aud"]
             for (let i = 0; i < ks.length; i++) { const k = ks[i]; stopEnforce[k] = false; enforceCount[k] = 0; lastDesired[k] = -999; pickPending[k] = false; pendingClick[k] = 0; curTrack[k] = -1000 }
@@ -468,9 +443,6 @@ function init() {
                 rows.push(dim("Needs the Playback permission — re-enable the plugin's permissions or update Seanime."))
                 return tray.stack({ items: rows, gap: 3 })
             }
-
-            rows.push(heading("Persist across"))
-            rows.push(tray.flex({ items: [scopeBtn("episode", "Episode"), scopeBtn("series", "Series"), scopeBtn("global", "Everything")], gap: 2 }))
 
             rows.push(heading("Keep"))
             rows.push(tray.flex({
