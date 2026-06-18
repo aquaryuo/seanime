@@ -459,7 +459,9 @@ class Provider {
             if (candidates.length === 0) throw audio === "dub" ? "anikoto: no dub is available for this episode" : "anikoto: no server available for this episode"
 
             const label = server === "Auto" ? "Auto" : ""
+            const wantSubs = this.loadSubtitles !== "disabled"
             let firstResolved: EpisodeServer | undefined
+            let playableNoSubs: EpisodeServer | undefined
             for (const c of candidates) {
                 let resolved: EpisodeServer | undefined
                 try {
@@ -471,9 +473,12 @@ class Provider {
                 if (label) resolved.server = label
                 if (!firstResolved) firstResolved = resolved
                 if (await this.isPlayable(resolved)) {
-                    return resolved
+                    const vs = resolved.videoSources[0]
+                    if (!wantSubs || (vs && vs.subtitles && vs.subtitles.length > 0)) return resolved
+                    if (!playableNoSubs) playableNoSubs = resolved
                 }
             }
+            if (playableNoSubs) return playableNoSubs
             if (firstResolved) {
                 return firstResolved
             }
@@ -555,7 +560,6 @@ class Provider {
         const track = caps.filter((t) => t.default === true)[0] || caps[0]
         if (!track || !/eng/i.test(track.label || "English")) return false
         const file = this.fixTrackUrl(track.file)
-        if (/(^|\/)eng-\d+\.(?:vtt|ass|srt)(?:[?#]|$)/i.test(file)) return false
         try {
             const res = await fetch(file, { headers: { Referer: `${origin}/`, Origin: origin }, timeout: 4 })
             if (!res.ok) return false
