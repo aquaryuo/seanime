@@ -52,6 +52,7 @@ function init() {
         const persistAudio = ctx.state<boolean>(cfg.audio !== false)
         const status = ctx.state<string>("")
         const importRef = ctx.fieldRef<string>("")
+        const logsOpen = ctx.state<boolean>(false)
 
         function saveCfg(): void {
             sset(CFG_KEY, { enabled: enabled.get(), subs: persistSubs.get(), audio: persistAudio.get() })
@@ -223,6 +224,12 @@ function init() {
             }).catch(() => {})
         }
 
+        function forceReapply(): void {
+            const ks = ["sub", "cap", "aud"]
+            for (let i = 0; i < ks.length; i++) { const k = ks[i]; stopEnforce[k] = false; enforceCount[k] = 0; lastDesired[k] = -999; pickPending[k] = false; pendingClick[k] = 0; curTrack[k] = -1000 }
+            gen++; log("↻ re-apply"); pollLoad(gen, 0)
+        }
+
         function arm(pid: string, fromLoad: boolean): void {
             if (!pid) return
             if (fromLoad) { if (pid === armedPid && nowMs() - lastArmAt < REARM_DEDUP) return }
@@ -377,8 +384,9 @@ function init() {
                 saveCfg()
             }
             importRef.setValue("")
+            forceReapply()
             ctx.toast.success("Preferences imported")
-            status.set("Imported " + n + " saved choice(s).")
+            status.set("Imported " + n + " saved choice(s) and re-applied to this playback.")
             tray.update()
         }
         function resetPrefs(): void {
@@ -389,14 +397,14 @@ function init() {
             status.set("Cleared all saved choices.")
             log("✗ all saved preferences cleared")
         }
-        function summary(): string {
-            const rec = readCascade()
-            if (!rec) return "Nothing saved yet — set your subtitle/audio in the player and it'll be remembered for next time."
-            const parts: string[] = []
-            if (rec.sub) parts.push(rec.sub.off ? "subtitles: Off" : "subtitles: " + (rec.sub.label || rec.sub.language || "track"))
-            if (rec.cap) parts.push("caption: " + (rec.cap.label || rec.cap.language || "track"))
-            if (rec.audio) parts.push("audio: " + (rec.audio.label || rec.audio.language || ("track #" + rec.audio.index)))
-            return parts.length ? "Remembered: " + parts.join("  ·  ") : "Nothing saved yet."
+        function prefLine(label: string, value: string): any {
+            return tray.flex({
+                items: [
+                    tray.text(label + " set to", { style: { color: "rgba(255,255,255,0.55)", fontSize: "12.5px" } }),
+                    tray.text(value, { style: { color: "rgba(255,255,255,0.95)", fontSize: "12.5px", fontWeight: "700" } }),
+                ],
+                gap: 1,
+            })
         }
 
         function dim(t: string): any {
@@ -419,16 +427,12 @@ function init() {
         ctx.registerEventHandler("ap-toggle", () => { enabled.set(!enabled.get()); saveCfg(); tray.update() })
         ctx.registerEventHandler("ap-subs", () => { persistSubs.set(!persistSubs.get()); saveCfg(); tray.update() })
         ctx.registerEventHandler("ap-audio", () => { persistAudio.set(!persistAudio.get()); saveCfg(); tray.update() })
-        ctx.registerEventHandler("ap-apply-now", () => {
-            const ks = ["sub", "cap", "aud"]
-            for (let i = 0; i < ks.length; i++) { const k = ks[i]; stopEnforce[k] = false; enforceCount[k] = 0; lastDesired[k] = -999; pickPending[k] = false; pendingClick[k] = 0; curTrack[k] = -1000 }
-            gen++; log("↻ manual re-apply"); pollLoad(gen, 0); status.set("Re-applying saved choices…"); tray.update()
-        })
         ctx.registerEventHandler("ap-export", () => exportPrefs())
         ctx.registerEventHandler("ap-import", () => importPrefs())
         ctx.registerEventHandler("ap-reset", () => resetPrefs())
         ctx.registerEventHandler("ap-log-copy", () => { try { ctx.dom.clipboard.write(logs.join("\n")) } catch (_e) {} ctx.toast.success("Logs copied to clipboard") })
         ctx.registerEventHandler("ap-log-clear", () => { logs = []; sset(LOG_KEY, logs); ctx.toast.info("Logs cleared"); tray.update() })
+        ctx.registerEventHandler("ap-log-toggle", () => { logsOpen.set(!logsOpen.get()); tray.update() })
 
         tray.render(() => {
             const rows: any[] = []
@@ -452,12 +456,15 @@ function init() {
                 ],
                 gap: 2,
             }))
-            rows.push(dim(summary()))
+            const rec = readCascade()
+            const subVal = (rec && rec.sub) ? (rec.sub.off ? "Off" : (rec.sub.label || rec.sub.language || "On")) : ((rec && rec.cap) ? (rec.cap.label || rec.cap.language || "On") : "Default")
+            const audVal = (rec && rec.audio) ? (rec.audio.label || rec.audio.language || "set") : "Default"
+            rows.push(prefLine("Subtitles", subVal))
+            rows.push(prefLine("Audio", audVal))
 
             rows.push(divider())
             rows.push(tray.flex({
                 items: [
-                    tray.button({ label: "Re-apply now", onClick: "ap-apply-now", intent: "gray-subtle", size: "xs" }),
                     tray.button({ label: "Export", onClick: "ap-export", intent: "gray-subtle", size: "xs" }),
                     tray.button({ label: "Import", onClick: "ap-import", intent: "gray-subtle", size: "xs" }),
                     tray.button({ label: "Reset", onClick: "ap-reset", intent: "alert-subtle", size: "xs", style: { marginLeft: "auto" } }),
@@ -471,12 +478,13 @@ function init() {
             rows.push(tray.flex({
                 items: [
                     heading("Logs"),
-                    tray.button({ label: "Copy", onClick: "ap-log-copy", intent: "gray-subtle", size: "xs", style: { marginLeft: "auto" } }),
+                    tray.button({ label: logsOpen.get() ? "Hide" : "Show", onClick: "ap-log-toggle", intent: "gray-subtle", size: "xs", style: { marginLeft: "auto" } }),
+                    tray.button({ label: "Copy", onClick: "ap-log-copy", intent: "gray-subtle", size: "xs" }),
                     tray.button({ label: "Clear", onClick: "ap-log-clear", intent: "alert-subtle", size: "xs" }),
                 ],
                 gap: 2,
             }))
-            rows.push(logBox())
+            if (logsOpen.get()) rows.push(logBox())
             return tray.stack({ items: rows, gap: 3 })
         })
     })
