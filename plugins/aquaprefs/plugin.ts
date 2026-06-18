@@ -9,6 +9,7 @@ function init() {
         const LOG_CAP = 200
         const EXPORT_MARKER = "AQUAPREFSv1"
         const CLICK_SUPPRESS = 2500
+        const GRACE = 450
         const PICK_PENDING_MAX = 4000
         const POLL_ATTEMPTS = 8
         const POLL_INTERVAL = 350
@@ -75,6 +76,7 @@ function init() {
         const lastDesired: any = { sub: -999, cap: -999, aud: -999 }
         const stopEnforce: any = { sub: false, cap: false, aud: false }
         const curTrack: any = { sub: -999, cap: -999, aud: -999 }
+        const enforceTok: any = { sub: 0, cap: 0, aud: 0 }
 
         function pinfo(): any { try { return VC.getCurrentPlaybackInfo() || null } catch (_e) { return null } }
         function curMediaId(): number {
@@ -214,6 +216,17 @@ function init() {
             }).catch(() => "error")
         }
 
+        function scheduleEnforce(kind: string): void {
+            if (stopEnforce[kind]) return
+            enforceTok[kind]++
+            const tok = enforceTok[kind]
+            const myGen = gen
+            ctx.setTimeout(() => {
+                if (myGen !== gen || enforceTok[kind] !== tok) return
+                enforceKind(kind, curTrack[kind], myGen)
+            }, GRACE)
+        }
+
         function pollLoad(myGen: number, attempt: number): void {
             if (myGen !== gen || !enabled.get()) return
             Promise.all([
@@ -331,21 +344,21 @@ function init() {
                 const v = (typeof e.trackNumber === "number" && e.trackNumber >= 0) ? e.trackNumber : -1
                 curTrack.sub = v
                 if (!enabled.get()) return
-                enforceKind("sub", v, gen)
+                scheduleEnforce("sub")
             })
             VC.addEventListener("video-media-caption-track", (e) => {
                 arm((e && e.playbackId) || "", false)
                 const v = (typeof e.trackIndex === "number" && e.trackIndex >= 0) ? e.trackIndex : -1
                 curTrack.cap = v
                 if (!enabled.get()) return
-                enforceKind("cap", v, gen)
+                scheduleEnforce("cap")
             })
             VC.addEventListener("video-audio-track", (e) => {
                 arm((e && e.playbackId) || "", false)
                 const v = (typeof e.trackNumber === "number") ? e.trackNumber : -999
                 if (v !== -999) curTrack.aud = v
                 if (!enabled.get()) return
-                enforceKind("aud", v, gen)
+                scheduleEnforce("aud")
             })
         }
 
