@@ -49,13 +49,12 @@ function init() {
         const cfg = sget<any>(CFG_KEY, {})
         const enabled = ctx.state<boolean>(cfg.enabled !== false)
         const persistSubs = ctx.state<boolean>(cfg.subs !== false)
-        const persistAudio = ctx.state<boolean>(cfg.audio !== false)
         const status = ctx.state<string>("")
         const importRef = ctx.fieldRef<string>("")
         const logsOpen = ctx.state<boolean>(false)
 
         function saveCfg(): void {
-            sset(CFG_KEY, { enabled: enabled.get(), subs: persistSubs.get(), audio: persistAudio.get() })
+            sset(CFG_KEY, { enabled: enabled.get(), subs: persistSubs.get() })
         }
 
         const tray = ctx.newTray({
@@ -70,13 +69,13 @@ function init() {
         let lastMenu = ""
         let skipClicks = false
         const boundOpts: any = {}
-        const pendingClick: any = { sub: 0, cap: 0, aud: 0 }
-        const pickPending: any = { sub: false, cap: false, aud: false }
-        const enforceCount: any = { sub: 0, cap: 0, aud: 0 }
-        const lastDesired: any = { sub: -999, cap: -999, aud: -999 }
-        const stopEnforce: any = { sub: false, cap: false, aud: false }
-        const curTrack: any = { sub: -999, cap: -999, aud: -999 }
-        const enforceTok: any = { sub: 0, cap: 0, aud: 0 }
+        const pendingClick: any = { sub: 0, cap: 0 }
+        const pickPending: any = { sub: false, cap: false }
+        const enforceCount: any = { sub: 0, cap: 0 }
+        const lastDesired: any = { sub: -999, cap: -999 }
+        const stopEnforce: any = { sub: false, cap: false }
+        const curTrack: any = { sub: -999, cap: -999 }
+        const enforceTok: any = { sub: 0, cap: 0 }
 
         function pinfo(): any { try { return VC.getCurrentPlaybackInfo() || null } catch (_e) { return null } }
         function curMediaId(): number {
@@ -101,7 +100,7 @@ function init() {
         function readCascade(): any {
             const g = sget<any>("pref:global", null)
             if (!g) return null
-            return (g.sub || g.cap || g.audio) ? g : null
+            return (g.sub || g.cap) ? g : null
         }
         function ctxStr(): string { return "media=" + curMediaId() + " · ep=" + curEpisode() }
 
@@ -129,20 +128,12 @@ function init() {
             for (let i = 0; i < list.length; i++) if (String(list[i].language || "").toUpperCase() === U) return list[i]
             return null
         }
-        function matchAudio(at: any[], want: any): number {
-            const lang = String(want.language || "").toLowerCase()
-            const label = String(want.label || "").toLowerCase()
-            for (let i = 0; i < at.length; i++) if (lang && String(at[i].language || "").toLowerCase() === lang) return at[i].number
-            for (let i = 0; i < at.length; i++) if (label && String(at[i].name || "").toLowerCase() === label) return at[i].number
-            return -2
-        }
 
         function savedFor(kind: string): any {
             const rec = readCascade()
             if (!rec) return null
-            return kind === "sub" ? (rec.sub || null) : kind === "cap" ? (rec.cap || null) : (rec.audio || null)
+            return kind === "sub" ? (rec.sub || null) : (rec.cap || null)
         }
-        function enabledFor(kind: string): boolean { return kind === "aud" ? persistAudio.get() : persistSubs.get() }
 
         function setKind(kind: string, n: number, myGen: number): void {
             if (myGen !== gen) return
@@ -155,30 +146,19 @@ function init() {
             } else { lastDesired[kind] = n; enforceCount[kind] = 1 }
             try {
                 if (kind === "sub") VC.setSubtitleTrack(n)
-                else if (kind === "cap") VC.setMediaCaptionTrack(n)
-                else VC.setAudioTrack(n)
-                log("→ " + (kind === "sub" ? "setSubtitleTrack" : kind === "cap" ? "setMediaCaptionTrack" : "setAudioTrack") + "(" + n + ")")
+                else VC.setMediaCaptionTrack(n)
+                log("→ " + (kind === "sub" ? "setSubtitleTrack" : "setMediaCaptionTrack") + "(" + n + ")")
             } catch (_e) {}
         }
 
         function enforceKind(kind: string, current: number, myGen: number): Promise<string> {
             if (myGen !== gen) return Promise.resolve("stale")
-            if (!enabled.get()) return Promise.resolve("off")
+            if (!enabled.get() || !persistSubs.get()) return Promise.resolve("off")
             if (stopEnforce[kind]) return Promise.resolve("stopped")
             if (pickPending[kind] || nowMs() - pendingClick[kind] <= CLICK_SUPPRESS) return Promise.resolve("user")
-            if (!enabledFor(kind)) return Promise.resolve("disabled")
             const sv = savedFor(kind)
             if (!sv) return Promise.resolve("none")
             if (current === -999) return Promise.resolve("unknown")
-            if (kind === "aud") {
-                const pi = pinfo()
-                const at = (pi && pi.mkvMetadata && pi.mkvMetadata.audioTracks) ? pi.mkvMetadata.audioTracks : []
-                if (!at.length) return Promise.resolve("no-tracks")
-                const n = matchAudio(at, sv)
-                if (n === -2) return Promise.resolve("no-match")
-                if (current === n) { enforceCount.aud = 0; return Promise.resolve("ok") }
-                setKind("aud", n, myGen); return Promise.resolve("applied")
-            }
             return VC.getTextTracks().then((tracks) => {
                 if (myGen !== gen) return "stale"
                 const subs = (tracks || []).filter((t) => t.type === "subtitles")
@@ -209,13 +189,9 @@ function init() {
 
         function pollLoad(myGen: number, attempt: number): void {
             if (myGen !== gen || !enabled.get()) return
-            if (persistAudio.get() && curTrack.aud === -999 && savedFor("aud") && VC && typeof (VC as any).sendGetAudioTrack === "function") {
-                try { (VC as any).sendGetAudioTrack() } catch (_e) {}
-            }
             Promise.all([
                 enforceKind("sub", curTrack.sub, myGen),
                 enforceKind("cap", curTrack.cap, myGen),
-                enforceKind("aud", curTrack.aud, myGen),
             ]).then((st) => {
                 if (myGen !== gen) return
                 if ((st.indexOf("no-tracks") >= 0 || st.indexOf("unknown") >= 0) && attempt < POLL_ATTEMPTS) {
@@ -225,7 +201,7 @@ function init() {
         }
 
         function forceReapply(): void {
-            const ks = ["sub", "cap", "aud"]
+            const ks = ["sub", "cap"]
             for (let i = 0; i < ks.length; i++) { const k = ks[i]; stopEnforce[k] = false; enforceCount[k] = 0; lastDesired[k] = -999; pickPending[k] = false; pendingClick[k] = 0; curTrack[k] = -1000 }
             gen++; log("↻ re-apply"); pollLoad(gen, 0)
         }
@@ -238,7 +214,7 @@ function init() {
             armedPid = pid
             lastArmAt = nowMs()
             gen++
-            const ks = ["sub", "cap", "aud"]
+            const ks = ["sub", "cap"]
             for (let i = 0; i < ks.length; i++) { const k = ks[i]; enforceCount[k] = 0; lastDesired[k] = -999; stopEnforce[k] = false; pickPending[k] = false; pendingClick[k] = 0; curTrack[k] = -999 }
             for (const id in boundOpts) delete boundOpts[id]
             log("▶ LOAD" + (reload ? " (reload)" : "") + " pid=" + shortPid(pid) + " · " + ctxStr())
@@ -247,23 +223,10 @@ function init() {
 
         function menuSkips(t: string): boolean {
             const s = String(t || "").toLowerCase()
-            return s.indexOf("quality") >= 0 || s.indexOf("settings") >= 0
+            return s.indexOf("quality") >= 0 || s.indexOf("settings") >= 0 || s.indexOf("audio") >= 0
         }
 
-        function saveAudByLabel(label: string): void {
-            const pi = pinfo()
-            const at = (pi && pi.mkvMetadata && pi.mkvMetadata.audioTracks) ? pi.mkvMetadata.audioTracks : []
-            const L = label.toLowerCase(); const U = label.toUpperCase()
-            for (let i = 0; i < at.length; i++) {
-                const nm = String(at[i].name || "").toLowerCase(); const lg = String(at[i].language || "")
-                if (nm === L || lg.toLowerCase() === L || lg.toUpperCase() === U) {
-                    const key = writeKey(); recordTo(key, { audio: { language: at[i].language || "", label: at[i].name || "" } }); log("✓ saved audio=" + (at[i].name || at[i].language) + " @ " + key); return
-                }
-            }
-            log("· audio '" + label + "' not resolvable (HLS/online?) — not saved")
-        }
-
-        function recordByLabel(el: any, isAudio: boolean, done: () => void): void {
+        function recordByLabel(el: any, done: () => void): void {
             el.query(LABEL_SEL).then((spans: any[]) => {
                 const sp = (spans && spans.length) ? spans[0] : el
                 return sp.getText()
@@ -271,7 +234,6 @@ function init() {
                 const label = String(txt || "").trim()
                 if (!label) { log("· click: could not read label"); done(); return }
                 log("· you picked '" + label + "' (" + (lastMenu || "?") + ")")
-                if (isAudio) { saveAudByLabel(label); done(); return }
                 if (/^off$/i.test(label)) { const key = writeKey(); recordTo(key, { sub: { off: true }, cap: null }); log("✓ saved sub=off @ " + key); done(); return }
                 VC.getTextTracks().then((tracks) => {
                     const subs = (tracks || []).filter((t) => t.type === "subtitles")
@@ -287,13 +249,12 @@ function init() {
 
         function onOptionClick(el: any): void {
             if (skipClicks) { log("· click ignored (" + (lastMenu || "?") + ")"); return }
-            const isAudio = /audio/i.test(lastMenu)
-            const kinds = isAudio ? ["aud"] : ["sub", "cap"]
+            const kinds = ["sub", "cap"]
             const t = nowMs()
             for (let i = 0; i < kinds.length; i++) { pendingClick[kinds[i]] = t; pickPending[kinds[i]] = true }
             const clearPending = () => { for (let i = 0; i < kinds.length; i++) pickPending[kinds[i]] = false }
             ctx.setTimeout(clearPending, PICK_PENDING_MAX)
-            recordByLabel(el, isAudio, clearPending)
+            recordByLabel(el, clearPending)
         }
 
         if (hasVC) {
@@ -342,20 +303,13 @@ function init() {
                 if (!enabled.get()) return
                 scheduleEnforce("cap")
             })
-            VC.addEventListener("video-audio-track", (e) => {
-                arm((e && e.playbackId) || "", false)
-                const v = (typeof e.trackNumber === "number") ? e.trackNumber : -999
-                if (v !== -999) curTrack.aud = v
-                if (!enabled.get()) return
-                scheduleEnforce("aud")
-            })
         }
 
         function exportPrefs(): void {
             const idx = sget<string[]>(IDX_KEY, [])
             const prefs: any = {}
             for (let i = 0; i < idx.length; i++) { const r = sget<any>(idx[i], null); if (r) prefs[idx[i]] = r }
-            const blob = { marker: EXPORT_MARKER, v: 1, cfg: { enabled: enabled.get(), subs: persistSubs.get(), audio: persistAudio.get() }, prefs: prefs }
+            const blob = { marker: EXPORT_MARKER, v: 1, cfg: { enabled: enabled.get(), subs: persistSubs.get() }, prefs: prefs }
             let json = ""
             try { json = JSON.stringify(blob) } catch (_e) { json = "" }
             if (!json) { status.set("Export failed."); tray.update(); return }
@@ -380,7 +334,6 @@ function init() {
             if (blob.cfg) {
                 if (typeof blob.cfg.enabled === "boolean") enabled.set(blob.cfg.enabled)
                 if (typeof blob.cfg.subs === "boolean") persistSubs.set(blob.cfg.subs)
-                if (typeof blob.cfg.audio === "boolean") persistAudio.set(blob.cfg.audio)
                 saveCfg()
             }
             importRef.setValue("")
@@ -397,14 +350,12 @@ function init() {
             status.set("Cleared all saved choices.")
             log("✗ all saved preferences cleared")
         }
-        function prefLine(label: string, value: string): any {
-            return tray.flex({
-                items: [
-                    tray.text(label + " set to", { style: { color: "rgba(255,255,255,0.55)", fontSize: "12.5px" } }),
-                    tray.text(value, { style: { color: "rgba(255,255,255,0.95)", fontSize: "12.5px", fontWeight: "700" } }),
-                ],
-                gap: 1,
-            })
+
+        function subValue(): string {
+            const rec = readCascade()
+            if (rec && rec.sub) return rec.sub.off ? "Off" : (rec.sub.label || rec.sub.language || "On")
+            if (rec && rec.cap) return rec.cap.label || rec.cap.language || "On"
+            return "Default"
         }
 
         function dim(t: string): any {
@@ -426,7 +377,6 @@ function init() {
 
         ctx.registerEventHandler("ap-toggle", () => { enabled.set(!enabled.get()); saveCfg(); tray.update() })
         ctx.registerEventHandler("ap-subs", () => { persistSubs.set(!persistSubs.get()); saveCfg(); tray.update() })
-        ctx.registerEventHandler("ap-audio", () => { persistAudio.set(!persistAudio.get()); saveCfg(); tray.update() })
         ctx.registerEventHandler("ap-export", () => exportPrefs())
         ctx.registerEventHandler("ap-import", () => importPrefs())
         ctx.registerEventHandler("ap-reset", () => resetPrefs())
@@ -448,19 +398,13 @@ function init() {
                 return tray.stack({ items: rows, gap: 3 })
             }
 
-            rows.push(heading("Keep"))
             rows.push(tray.flex({
                 items: [
                     tray.button({ label: (persistSubs.get() ? "✓ " : "") + "Subtitles", onClick: "ap-subs", intent: persistSubs.get() ? "success-subtle" : "gray-subtle", size: "sm" }),
-                    tray.button({ label: (persistAudio.get() ? "✓ " : "") + "Audio (dub/sub)", onClick: "ap-audio", intent: persistAudio.get() ? "success-subtle" : "gray-subtle", size: "sm" }),
+                    tray.text(subValue(), { style: { fontWeight: "700", fontSize: "13px", color: "rgba(255,255,255,0.95)", alignSelf: "center" } }),
                 ],
-                gap: 2,
+                gap: 3,
             }))
-            const rec = readCascade()
-            const subVal = (rec && rec.sub) ? (rec.sub.off ? "Off" : (rec.sub.label || rec.sub.language || "On")) : ((rec && rec.cap) ? (rec.cap.label || rec.cap.language || "On") : "Default")
-            const audVal = (rec && rec.audio) ? (rec.audio.label || rec.audio.language || "set") : "Default"
-            rows.push(prefLine("Subtitles", subVal))
-            rows.push(prefLine("Audio", audVal))
 
             rows.push(divider())
             rows.push(tray.flex({
