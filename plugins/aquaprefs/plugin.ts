@@ -62,6 +62,7 @@ function init() {
             withContent: true,
             width: "460px",
         })
+        tray.render(renderTray)
 
         let gen = 0
         let armedPid = ""
@@ -384,7 +385,7 @@ function init() {
         ctx.registerEventHandler("ap-log-clear", () => { logs = []; sset(LOG_KEY, logs); ctx.toast.info("Logs cleared"); tray.update() })
         ctx.registerEventHandler("ap-log-toggle", () => { logsOpen.set(!logsOpen.get()); tray.update() })
 
-        tray.render(() => {
+        function renderTray(): any {
             const rows: any[] = []
             rows.push(tray.flex({
                 items: [
@@ -430,6 +431,6 @@ function init() {
             }))
             if (logsOpen.get()) rows.push(logBox())
             return tray.stack({ items: rows, gap: 3 })
-        })
+        }
     })
 }
