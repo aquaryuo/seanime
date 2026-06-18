@@ -8,12 +8,14 @@ function init() {
         const LOG_KEY = "log"
         const LOG_CAP = 200
         const EXPORT_MARKER = "AQUAPREFSv1"
-        const CLICK_TO_EVENT = 2500
-        const GRACE = 700
-        const APPLY_GUARD = 1500
+        const CLICK_SUPPRESS = 2500
+        const PICK_PENDING_MAX = 4000
+        const POLL_ATTEMPTS = 8
+        const POLL_INTERVAL = 350
+        const MAX_CORRECTIONS = 5
         const REARM_DEDUP = 1500
-        const REAPPLY_AT = [1500, 3500]
         const OPT_SEL = "[data-vc-element='setting-select-option']"
+        const LABEL_SEL = "[data-vc-element='setting-select-option-label']"
         const TITLE_SEL = "[data-vc-element='menu-title']"
 
         function sget<T>(k: string, d: T): T {
@@ -61,25 +63,19 @@ function init() {
             width: "460px",
         })
 
+        let gen = 0
         let armedPid = ""
         let lastArmAt = 0
-        let pendingClickAt = 0
-        let lastEvt: any = null
-        let applyingUntil = 0
-        let skipClicks = false
         let lastMenu = ""
-        let subPicked = false
-        let capPicked = false
-        let audPicked = false
-        let lastAppliedSub = -99
-        let lastAppliedAud = -99
-        let lastAppliedCap = -99
-        let subGen = 0
-        let audGen = 0
-        let capGen = 0
+        let skipClicks = false
+        const boundOpts: any = {}
+        const pendingClick: any = { sub: 0, cap: 0, aud: 0 }
+        const pickPending: any = { sub: false, cap: false, aud: false }
+        const enforceCount: any = { sub: 0, cap: 0, aud: 0 }
+        const lastDesired: any = { sub: -999, cap: -999, aud: -999 }
+        const stopEnforce: any = { sub: false, cap: false, aud: false }
 
         function pinfo(): any { try { return VC.getCurrentPlaybackInfo() || null } catch (_e) { return null } }
-
         function curMediaId(): number {
             try { const m = VC.getCurrentMedia(); if (m && typeof m.id === "number") return m.id } catch (_e) {}
             const pi = pinfo()
@@ -107,7 +103,6 @@ function init() {
             const ep = curEpisode()
             return ep ? "pref:e:" + mid + ":" + ep : "pref:m:" + mid
         }
-
         function readCascade(): any {
             const mid = curMediaId()
             const ep = curEpisode()
@@ -125,14 +120,7 @@ function init() {
             }
             return (out.sub || out.cap || out.audio) ? out : null
         }
-
-        function levelsStr(): string {
-            const mid = curMediaId(); const ep = curEpisode()
-            const hasE = !!((mid && ep) && sget<any>("pref:e:" + mid + ":" + ep, null))
-            const hasM = !!(mid && sget<any>("pref:m:" + mid, null))
-            const hasG = !!sget<any>("pref:global", null)
-            return "e:" + (hasE ? "y" : "-") + " m:" + (hasM ? "y" : "-") + " g:" + (hasG ? "y" : "-")
-        }
+        function ctxStr(): string { return "scope=" + scope.get() + " · media=" + curMediaId() + " · ep=" + curEpisode() }
 
         function indexAdd(k: string): void {
             const idx = sget<string[]>(IDX_KEY, [])
@@ -144,7 +132,6 @@ function init() {
             sset(k, Object.assign({}, cur, patch, { updatedAt: nowMs() }))
             indexAdd(k)
         }
-
         function matchTrack(list: any[], want: any): number {
             const lang = String(want.language || "").toLowerCase()
             const label = String(want.label || "").toLowerCase()
@@ -152,81 +139,111 @@ function init() {
             for (let i = 0; i < list.length; i++) if (label && String(list[i].label || "").toLowerCase() === label) return list[i].number
             return -2
         }
-
-        function applySub(sub: any): void {
-            const g = subGen
-            if (sub.off) { lastAppliedSub = -1; applyingUntil = nowMs() + APPLY_GUARD; try { VC.setSubtitleTrack(-1) } catch (_e) {} ; log("→ setSubtitleTrack(-1) off"); return }
-            VC.getTextTracks().then((tracks) => {
-                if (g !== subGen) { log("· applySub bailed (newer action)"); return }
-                const n = matchTrack((tracks || []).filter((t) => t.type === "subtitles"), sub)
-                if (n !== -2) { lastAppliedSub = n; applyingUntil = nowMs() + APPLY_GUARD; try { VC.setSubtitleTrack(n) } catch (_e) {} ; log("→ setSubtitleTrack(" + n + ") " + (sub.label || sub.language || "")) }
-                else { log("· applySub: no match for " + (sub.label || sub.language || "?") + " in tracks") }
-            }).catch(() => { log("· applySub: getTextTracks error") })
-        }
-        function applyCap(cap: any): void {
-            const g = capGen
-            if (cap.off) { lastAppliedCap = -1; applyingUntil = nowMs() + APPLY_GUARD; try { VC.setMediaCaptionTrack(-1) } catch (_e) {} ; log("→ setMediaCaptionTrack(-1) off"); return }
-            VC.getTextTracks().then((tracks) => {
-                if (g !== capGen) return
-                const n = matchTrack((tracks || []).filter((t) => t.type === "captions"), cap)
-                if (n !== -2) { lastAppliedCap = n; applyingUntil = nowMs() + APPLY_GUARD; try { VC.setMediaCaptionTrack(n) } catch (_e) {} ; log("→ setMediaCaptionTrack(" + n + ")") }
-                else { log("· applyCap: no caption match") }
-            }).catch(() => {})
-        }
-        function applyAudio(audio: any): void {
-            const pi = pinfo()
-            const at = (pi && pi.mkvMetadata && pi.mkvMetadata.audioTracks) ? pi.mkvMetadata.audioTracks : []
-            const lang = String(audio.language || "").toLowerCase()
-            if (at.length && lang) {
-                for (let i = 0; i < at.length; i++) {
-                    if (String(at[i].language || "").toLowerCase() === lang) { lastAppliedAud = at[i].number; applyingUntil = nowMs() + APPLY_GUARD; try { VC.setAudioTrack(at[i].number) } catch (_e) {} ; log("→ setAudioTrack(" + at[i].number + ") " + (audio.label || audio.language || "")); return }
-                }
-            }
-            log("· applyAudio: no mkv audio match (HLS/online?)")
-        }
-
-        function applySaved(kind: string): void {
-            const rec = readCascade()
-            if (!rec) { log("↻ auto-reapply " + kind + ": nothing saved [" + levelsStr() + "]"); return }
-            if (kind === "sub" && persistSubs.get() && rec.sub) { log("↻ auto-reapply sub=" + (rec.sub.off ? "off" : (rec.sub.label || rec.sub.language)) + " [" + levelsStr() + "]"); applySub(rec.sub) }
-            else if (kind === "cap" && persistSubs.get() && rec.cap) { log("↻ auto-reapply cap [" + levelsStr() + "]"); applyCap(rec.cap) }
-            else if (kind === "aud" && persistAudio.get() && rec.audio) { log("↻ auto-reapply audio [" + levelsStr() + "]"); applyAudio(rec.audio) }
-        }
-
-        function applyForCurrent(force: boolean): void {
-            if (!enabled.get() || !pinfo()) return
-            const where = levelsStr()
-            const rec = readCascade()
-            if (!rec) { log("↻ timer-reapply [" + where + "]: nothing saved"); return }
-            const parts: string[] = []
-            if (persistSubs.get()) {
-                if (rec.sub && (force || !subPicked)) { applySub(rec.sub); parts.push(rec.sub.off ? "sub=off" : "sub=" + (rec.sub.label || rec.sub.language || "?")) }
-                if (rec.cap && (force || !capPicked)) { applyCap(rec.cap); parts.push("cap") }
-            }
-            if (persistAudio.get() && rec.audio && (force || !audPicked)) { applyAudio(rec.audio); parts.push("audio") }
-            log("↻ timer-reapply [" + where + "]: " + (parts.length ? parts.join(", ") : "nothing (already user-picked)"))
-        }
-
         function matchByLabel(list: any[], label: string): any {
-            const L = label.toLowerCase()
-            const U = label.toUpperCase()
+            const L = label.toLowerCase(); const U = label.toUpperCase()
             for (let i = 0; i < list.length; i++) if (String(list[i].label || "").toLowerCase() === L) return list[i]
             for (let i = 0; i < list.length; i++) if (String(list[i].language || "").toLowerCase() === L) return list[i]
             for (let i = 0; i < list.length; i++) if (String(list[i].language || "").toUpperCase() === U) return list[i]
             return null
         }
+        function matchAudio(at: any[], want: any): number {
+            const lang = String(want.language || "").toLowerCase()
+            const label = String(want.label || "").toLowerCase()
+            for (let i = 0; i < at.length; i++) if (lang && String(at[i].language || "").toLowerCase() === lang) return at[i].number
+            for (let i = 0; i < at.length; i++) if (label && String(at[i].name || "").toLowerCase() === label) return at[i].number
+            return -2
+        }
 
-        function saveSubByLabel(label: string): void {
-            if (/^off$/i.test(label)) { subPicked = true; subGen++; const key = writeKey(); recordTo(key, { sub: { off: true } }); log("✓ saved sub=off @ " + key); return }
-            VC.getTextTracks().then((tracks) => {
+        function savedFor(kind: string): any {
+            const rec = readCascade()
+            if (!rec) return null
+            return kind === "sub" ? (rec.sub || null) : kind === "cap" ? (rec.cap || null) : (rec.audio || null)
+        }
+        function enabledFor(kind: string): boolean { return kind === "aud" ? persistAudio.get() : persistSubs.get() }
+
+        function setKind(kind: string, n: number, myGen: number): void {
+            if (myGen !== gen) return
+            if (n === lastDesired[kind]) {
+                enforceCount[kind]++
+                if (enforceCount[kind] > MAX_CORRECTIONS) {
+                    if (!stopEnforce[kind]) { stopEnforce[kind] = true; log("⚠ " + kind + " enforcement paused — player keeps overriding (" + n + ")") }
+                    return
+                }
+            } else { lastDesired[kind] = n; enforceCount[kind] = 1 }
+            try {
+                if (kind === "sub") VC.setSubtitleTrack(n)
+                else if (kind === "cap") VC.setMediaCaptionTrack(n)
+                else VC.setAudioTrack(n)
+                log("→ " + (kind === "sub" ? "setSubtitleTrack" : kind === "cap" ? "setMediaCaptionTrack" : "setAudioTrack") + "(" + n + ")")
+            } catch (_e) {}
+        }
+
+        function enforceKind(kind: string, current: number, myGen: number): Promise<string> {
+            if (myGen !== gen) return Promise.resolve("stale")
+            if (!enabled.get()) return Promise.resolve("off")
+            if (stopEnforce[kind]) return Promise.resolve("stopped")
+            if (pickPending[kind] || nowMs() - pendingClick[kind] <= CLICK_SUPPRESS) return Promise.resolve("user")
+            if (!enabledFor(kind)) return Promise.resolve("disabled")
+            const sv = savedFor(kind)
+            if (!sv) return Promise.resolve("none")
+            if (kind === "aud") {
+                const pi = pinfo()
+                const at = (pi && pi.mkvMetadata && pi.mkvMetadata.audioTracks) ? pi.mkvMetadata.audioTracks : []
+                if (!at.length) return Promise.resolve("no-tracks")
+                const n = matchAudio(at, sv)
+                if (n === -2) return Promise.resolve("no-match")
+                if (current === n) { enforceCount.aud = 0; return Promise.resolve("ok") }
+                setKind("aud", n, myGen); return Promise.resolve("applied")
+            }
+            return VC.getTextTracks().then((tracks) => {
+                if (myGen !== gen) return "stale"
                 const subs = (tracks || []).filter((t) => t.type === "subtitles")
                 const caps = (tracks || []).filter((t) => t.type === "captions")
-                const m = matchByLabel(subs, label)
-                if (m) { subPicked = true; subGen++; const key = writeKey(); recordTo(key, { sub: { off: false, language: m.language, label: m.label } }); log("✓ saved sub=" + (m.label || m.language) + " @ " + key); return }
-                const cm = matchByLabel(caps, label)
-                if (cm) { capPicked = true; capGen++; const key = writeKey(); recordTo(key, { cap: { off: false, language: cm.language, label: cm.label } }); log("✓ saved cap=" + (cm.label || cm.language) + " @ " + key); return }
-                log("· '" + label + "' matched no subtitle track — not saved")
-            }).catch(() => { log("· getTextTracks error while saving '" + label + "'") })
+                if (!subs.length && !caps.length) return "no-tracks"
+                if (sv.off) {
+                    if (current === -1) { enforceCount[kind] = 0; return "ok" }
+                    setKind(kind, -1, myGen); return "applied"
+                }
+                const list = kind === "cap" ? caps : subs
+                const n = matchTrack(list, sv)
+                if (n === -2) { return "no-match" }
+                if (current === n) { enforceCount[kind] = 0; return "ok" }
+                setKind(kind, n, myGen); return "applied"
+            }).catch(() => "error")
+        }
+
+        function pollLoad(myGen: number, attempt: number): void {
+            if (myGen !== gen || !enabled.get()) return
+            Promise.all([
+                enforceKind("sub", -999, myGen),
+                enforceKind("cap", -999, myGen),
+                enforceKind("aud", -999, myGen),
+            ]).then((st) => {
+                if (myGen !== gen) return
+                if (st.indexOf("no-tracks") >= 0 && attempt < POLL_ATTEMPTS) {
+                    ctx.setTimeout(() => pollLoad(myGen, attempt + 1), POLL_INTERVAL)
+                }
+            }).catch(() => {})
+        }
+
+        function arm(pid: string, fromLoad: boolean): void {
+            if (!pid) return
+            if (fromLoad) { if (pid === armedPid && nowMs() - lastArmAt < REARM_DEDUP) return }
+            else { if (pid === armedPid) return }
+            const reload = (pid === armedPid)
+            armedPid = pid
+            lastArmAt = nowMs()
+            gen++
+            const ks = ["sub", "cap", "aud"]
+            for (let i = 0; i < ks.length; i++) { const k = ks[i]; enforceCount[k] = 0; lastDesired[k] = -999; stopEnforce[k] = false; pickPending[k] = false; pendingClick[k] = 0 }
+            for (const id in boundOpts) delete boundOpts[id]
+            log("▶ LOAD" + (reload ? " (reload)" : "") + " pid=" + shortPid(pid) + " · " + ctxStr())
+            pollLoad(gen, 0)
+        }
+
+        function menuSkips(t: string): boolean {
+            const s = String(t || "").toLowerCase()
+            return s.indexOf("quality") >= 0 || s.indexOf("settings") >= 0
         }
 
         function saveAudByLabel(label: string): void {
@@ -236,76 +253,43 @@ function init() {
             for (let i = 0; i < at.length; i++) {
                 const nm = String(at[i].name || "").toLowerCase(); const lg = String(at[i].language || "")
                 if (nm === L || lg.toLowerCase() === L || lg.toUpperCase() === U) {
-                    audPicked = true; audGen++; const key = writeKey(); recordTo(key, { audio: { language: at[i].language || "", label: at[i].name || "" } }); log("✓ saved audio=" + (at[i].name || at[i].language) + " @ " + key); return
+                    const key = writeKey(); recordTo(key, { audio: { language: at[i].language || "", label: at[i].name || "" } }); log("✓ saved audio=" + (at[i].name || at[i].language) + " @ " + key); return
                 }
             }
             log("· audio '" + label + "' not resolvable (HLS/online?) — not saved")
         }
 
-        function recordByLabel(el: any): void {
-            const menu = lastMenu
-            const isAudio = /audio/i.test(menu)
-            const readLabel = el.query("[data-vc-element='setting-select-option-label']").then((spans: any[]) => {
+        function recordByLabel(el: any, isAudio: boolean, done: () => void): void {
+            el.query(LABEL_SEL).then((spans: any[]) => {
                 const sp = (spans && spans.length) ? spans[0] : el
                 return sp.getText()
-            })
-            readLabel.then((txt: string) => {
+            }).then((txt: string) => {
                 const label = String(txt || "").trim()
-                if (!label) { log("· click: could not read label"); return }
-                log("· you picked '" + label + "' in " + (menu || "?") + " menu")
-                if (isAudio) saveAudByLabel(label)
-                else saveSubByLabel(label)
-            }).catch(() => { log("· click: could not read label") })
-        }
-
-        function picked(kind: string): boolean {
-            return kind === "sub" ? subPicked : kind === "cap" ? capPicked : audPicked
-        }
-
-        function onTrackEvent(kind: string, v: number): void {
-            const lbl = v < 0 ? "off" : "track " + v
-            if (nowMs() - pendingClickAt <= CLICK_TO_EVENT) { pendingClickAt = 0; lastEvt = null; log("· " + kind + " " + lbl + " event (your pick — recorded from the menu)"); return }
-            const at = nowMs()
-            lastEvt = { kind: kind, v: v, at: at }
-            log("· " + kind + " " + lbl + " (auto / awaiting click)")
-            ctx.setTimeout(() => {
-                if (!lastEvt || lastEvt.at !== at) return
-                lastEvt = null
-                if (picked(kind)) { log("· " + kind + " " + lbl + " left as-is (you picked this playback)"); return }
-                applySaved(kind)
-            }, GRACE)
+                if (!label) { log("· click: could not read label"); done(); return }
+                log("· you picked '" + label + "' (" + (lastMenu || "?") + ")")
+                if (isAudio) { saveAudByLabel(label); done(); return }
+                if (/^off$/i.test(label)) { const key = writeKey(); recordTo(key, { sub: { off: true }, cap: null }); log("✓ saved sub=off @ " + key); done(); return }
+                VC.getTextTracks().then((tracks) => {
+                    const subs = (tracks || []).filter((t) => t.type === "subtitles")
+                    const caps = (tracks || []).filter((t) => t.type === "captions")
+                    const m = matchByLabel(subs, label)
+                    if (m) { const key = writeKey(); recordTo(key, { sub: { off: false, language: m.language, label: m.label }, cap: null }); log("✓ saved sub=" + (m.label || m.language) + " @ " + key); done(); return }
+                    const cm = matchByLabel(caps, label)
+                    if (cm) { const key = writeKey(); recordTo(key, { cap: { off: false, language: cm.language, label: cm.label }, sub: null }); log("✓ saved cap=" + (cm.label || cm.language) + " @ " + key); done(); return }
+                    log("· '" + label + "' matched no track — not saved"); done()
+                }).catch(() => { log("· getTextTracks error"); done() })
+            }).catch(() => { log("· click: could not read label"); done() })
         }
 
         function onOptionClick(el: any): void {
-            if (skipClicks) { log("· click ignored (" + (lastMenu || "non-track") + " menu)"); return }
-            pendingClickAt = nowMs()
-            lastEvt = null
-            recordByLabel(el)
-        }
-
-        function arm(pid: string, fromLoad: boolean): void {
-            if (!pid) return
-            if (fromLoad) {
-                if (pid === armedPid && nowMs() - lastArmAt < REARM_DEDUP) return
-            } else {
-                if (pid === armedPid) return
-            }
-            const reload = (pid === armedPid)
-            armedPid = pid
-            lastArmAt = nowMs()
-            subPicked = false; capPicked = false; audPicked = false
-            lastAppliedSub = -99; lastAppliedAud = -99; lastAppliedCap = -99
-            subGen++; audGen++; capGen++
-            if (fromLoad) { pendingClickAt = 0; lastEvt = null }
-            log("▶ LOAD" + (reload ? " (reload, same pid)" : "") + " pid=" + shortPid(pid) + " · scope=" + scope.get() + " · media=" + curMediaId() + " · ep=" + curEpisode())
-            for (let i = 0; i < REAPPLY_AT.length; i++) {
-                ctx.setTimeout(() => { if (pid === armedPid) applyForCurrent(false) }, REAPPLY_AT[i])
-            }
-        }
-
-        function menuSkips(t: string): boolean {
-            const s = String(t || "").toLowerCase()
-            return s.indexOf("quality") >= 0 || s.indexOf("settings") >= 0
+            if (skipClicks) { log("· click ignored (" + (lastMenu || "?") + ")"); return }
+            const isAudio = /audio/i.test(lastMenu)
+            const kinds = isAudio ? ["aud"] : ["sub", "cap"]
+            const t = nowMs()
+            for (let i = 0; i < kinds.length; i++) { pendingClick[kinds[i]] = t; pickPending[kinds[i]] = true }
+            const clearPending = () => { for (let i = 0; i < kinds.length; i++) pickPending[kinds[i]] = false }
+            ctx.setTimeout(clearPending, PICK_PENDING_MAX)
+            recordByLabel(el, isAudio, clearPending)
         }
 
         if (hasVC) {
@@ -317,7 +301,8 @@ function init() {
                     try {
                         el.getText().then((t) => {
                             const skip = menuSkips(t)
-                            if (t !== lastMenu) { lastMenu = String(t || "").trim(); log("· menu open: " + lastMenu + (skip ? " (clicks ignored)" : "")) }
+                            const name = String(t || "").trim()
+                            if (name && name !== lastMenu) { lastMenu = name; log("· menu open: " + name + (skip ? " (clicks ignored)" : "")) }
                             skipClicks = skip
                         }).catch(() => {})
                     } catch (_e) {}
@@ -327,7 +312,11 @@ function init() {
                 ctx.dom.observe(OPT_SEL, (els) => {
                     if (!els || !els.length) return
                     for (let i = 0; i < els.length; i++) {
-                        try { const el = els[i]; el.addEventListener("click", () => onOptionClick(el)) } catch (_e) {}
+                        const el = els[i]
+                        const id = el && el.id
+                        if (!id || boundOpts[id]) continue
+                        boundOpts[id] = true
+                        try { el.addEventListener("click", () => onOptionClick(el)) } catch (_e) {}
                     }
                 })
             } catch (_e) {}
@@ -337,26 +326,21 @@ function init() {
 
             VC.addEventListener("video-subtitle-track", (e) => {
                 arm((e && e.playbackId) || "", false)
-                if (!enabled.get() || !persistSubs.get()) return
+                if (!enabled.get()) return
                 const v = (typeof e.trackNumber === "number" && e.trackNumber >= 0) ? e.trackNumber : -1
-                if (v === lastAppliedSub && nowMs() < applyingUntil) { lastAppliedSub = -99; log("· sub echo (" + (v < 0 ? "off" : "track " + v) + ")"); return }
-                onTrackEvent("sub", v)
+                enforceKind("sub", v, gen)
             })
-
             VC.addEventListener("video-media-caption-track", (e) => {
                 arm((e && e.playbackId) || "", false)
-                if (!enabled.get() || !persistSubs.get()) return
+                if (!enabled.get()) return
                 const v = (typeof e.trackIndex === "number" && e.trackIndex >= 0) ? e.trackIndex : -1
-                if (v === lastAppliedCap && nowMs() < applyingUntil) { lastAppliedCap = -99; log("· cap echo (" + (v < 0 ? "off" : "track " + v) + ")"); return }
-                onTrackEvent("cap", v)
+                enforceKind("cap", v, gen)
             })
-
             VC.addEventListener("video-audio-track", (e) => {
                 arm((e && e.playbackId) || "", false)
-                if (!enabled.get() || !persistAudio.get()) return
-                const v = (typeof e.trackNumber === "number") ? e.trackNumber : -9
-                if (v === lastAppliedAud && nowMs() < applyingUntil) { lastAppliedAud = -99; log("· audio echo (track " + v + ")"); return }
-                onTrackEvent("aud", v)
+                if (!enabled.get()) return
+                const v = (typeof e.trackNumber === "number") ? e.trackNumber : -999
+                enforceKind("aud", v, gen)
             })
         }
 
@@ -373,7 +357,6 @@ function init() {
             status.set("Sent " + Object.keys(prefs).length + " saved choice(s) to the clipboard.")
             tray.update()
         }
-
         function importPrefs(): void {
             const raw = String(importRef.current || "").trim()
             if (!raw) { status.set("Paste an exported blob into the box first."); tray.update(); return }
@@ -399,7 +382,6 @@ function init() {
             status.set("Imported " + n + " saved choice(s).")
             tray.update()
         }
-
         function resetPrefs(): void {
             const idx = sget<string[]>(IDX_KEY, [])
             for (let i = 0; i < idx.length; i++) { try { ($storage as any).remove(idx[i]) } catch (_e) { sset(idx[i], null) } }
@@ -408,7 +390,6 @@ function init() {
             status.set("Cleared all saved choices.")
             log("✗ all saved preferences cleared")
         }
-
         function summary(): string {
             const rec = readCascade()
             if (!rec) return "Nothing saved yet — set your subtitle/audio in the player and it'll be remembered for next time."
@@ -445,7 +426,11 @@ function init() {
         ctx.registerEventHandler("ap-scope-episode", () => { scope.set("episode"); saveCfg(); tray.update() })
         ctx.registerEventHandler("ap-scope-series", () => { scope.set("series"); saveCfg(); tray.update() })
         ctx.registerEventHandler("ap-scope-global", () => { scope.set("global"); saveCfg(); tray.update() })
-        ctx.registerEventHandler("ap-apply-now", () => { applyForCurrent(true); status.set("Re-applied to the current playback."); tray.update() })
+        ctx.registerEventHandler("ap-apply-now", () => {
+            const ks = ["sub", "cap", "aud"]
+            for (let i = 0; i < ks.length; i++) { const k = ks[i]; stopEnforce[k] = false; enforceCount[k] = 0; lastDesired[k] = -999; pickPending[k] = false; pendingClick[k] = 0 }
+            gen++; log("↻ manual re-apply"); pollLoad(gen, 0); status.set("Re-applying saved choices…"); tray.update()
+        })
         ctx.registerEventHandler("ap-export", () => exportPrefs())
         ctx.registerEventHandler("ap-import", () => importPrefs())
         ctx.registerEventHandler("ap-reset", () => resetPrefs())
