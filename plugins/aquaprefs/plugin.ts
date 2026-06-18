@@ -7,7 +7,6 @@ function init() {
         const IDX_KEY = "pref:__index"
         const LOG_KEY = "log"
         const LOG_CAP = 30
-        const EXPORT_MARKER = "AQUAPREFSv1"
         const CLICK_SUPPRESS = 2500
         const GRACE = 450
         const PICK_PENDING_MAX = 4000
@@ -50,7 +49,6 @@ function init() {
         const enabled = ctx.state<boolean>(cfg.enabled !== false)
         const persistSubs = ctx.state<boolean>(cfg.subs !== false)
         const status = ctx.state<string>("")
-        const importRef = ctx.fieldRef<string>("")
         const logsOpen = ctx.state<boolean>(false)
 
         function saveCfg(): void {
@@ -200,12 +198,6 @@ function init() {
             }).catch(() => {})
         }
 
-        function forceReapply(): void {
-            const ks = ["sub", "cap"]
-            for (let i = 0; i < ks.length; i++) { const k = ks[i]; stopEnforce[k] = false; enforceCount[k] = 0; lastDesired[k] = -999; pickPending[k] = false; pendingClick[k] = 0; curTrack[k] = -1000 }
-            gen++; log("↻ re-apply"); pollLoad(gen, 0)
-        }
-
         function arm(pid: string, fromLoad: boolean): void {
             if (!pid) return
             if (fromLoad) { if (pid === armedPid && nowMs() - lastArmAt < REARM_DEDUP) return }
@@ -304,43 +296,6 @@ function init() {
             })
         }
 
-        function exportPrefs(): void {
-            const idx = sget<string[]>(IDX_KEY, [])
-            const prefs: any = {}
-            for (let i = 0; i < idx.length; i++) { const r = sget<any>(idx[i], null); if (r) prefs[idx[i]] = r }
-            const blob = { marker: EXPORT_MARKER, v: 1, cfg: { enabled: enabled.get(), subs: persistSubs.get() }, prefs: prefs }
-            let json = ""
-            try { json = JSON.stringify(blob) } catch (_e) { json = "" }
-            if (!json) { status.set("Export failed."); tray.update(); return }
-            try { ctx.dom.clipboard.write(json) } catch (_e) {}
-            ctx.toast.success("Preferences sent to clipboard")
-            status.set("Sent " + Object.keys(prefs).length + " saved choice(s) to the clipboard.")
-            tray.update()
-        }
-        function importPrefs(): void {
-            const raw = String(importRef.current || "").trim()
-            if (!raw) { status.set("Paste an exported blob into the box first."); tray.update(); return }
-            let blob: any = null
-            try { blob = JSON.parse(raw) } catch (_e) { blob = null }
-            if (!blob || blob.marker !== EXPORT_MARKER || !blob.prefs) { status.set("That isn't a valid preferences export."); tray.update(); return }
-            const idx = sget<string[]>(IDX_KEY, [])
-            let n = 0
-            for (const k in blob.prefs) {
-                if (k.indexOf("pref:") !== 0 || k === IDX_KEY) continue
-                sset(k, blob.prefs[k]); if (idx.indexOf(k) < 0) idx.push(k); n++
-            }
-            sset(IDX_KEY, idx)
-            if (blob.cfg) {
-                if (typeof blob.cfg.enabled === "boolean") enabled.set(blob.cfg.enabled)
-                if (typeof blob.cfg.subs === "boolean") persistSubs.set(blob.cfg.subs)
-                saveCfg()
-            }
-            importRef.setValue("")
-            forceReapply()
-            ctx.toast.success("Preferences imported")
-            status.set("Imported " + n + " saved choice(s) and re-applied to this playback.")
-            tray.update()
-        }
         function resetPrefs(): void {
             const idx = sget<string[]>(IDX_KEY, [])
             for (let i = 0; i < idx.length; i++) { try { ($storage as any).remove(idx[i]) } catch (_e) { sset(idx[i], null) } }
@@ -376,8 +331,6 @@ function init() {
 
         ctx.registerEventHandler("ap-toggle", () => { enabled.set(!enabled.get()); saveCfg(); tray.update() })
         ctx.registerEventHandler("ap-subs", () => { persistSubs.set(!persistSubs.get()); saveCfg(); tray.update() })
-        ctx.registerEventHandler("ap-export", () => exportPrefs())
-        ctx.registerEventHandler("ap-import", () => importPrefs())
         ctx.registerEventHandler("ap-reset", () => resetPrefs())
         ctx.registerEventHandler("ap-log-copy", () => { try { ctx.dom.clipboard.write(logs.join("\n")) } catch (_e) {} ctx.toast.success("Logs copied to clipboard") })
         ctx.registerEventHandler("ap-log-clear", () => { logs = []; sset(LOG_KEY, logs); ctx.toast.info("Logs cleared"); tray.update() })
@@ -408,13 +361,10 @@ function init() {
             rows.push(divider())
             rows.push(tray.flex({
                 items: [
-                    tray.button({ label: "Export", onClick: "ap-export", intent: "gray-subtle", size: "xs" }),
-                    tray.button({ label: "Import", onClick: "ap-import", intent: "gray-subtle", size: "xs" }),
-                    tray.button({ label: "Reset", onClick: "ap-reset", intent: "alert-subtle", size: "xs", style: { marginLeft: "auto" } }),
+                    tray.button({ label: "Reset", onClick: "ap-reset", intent: "alert-subtle", size: "xs" }),
                 ],
                 gap: 2,
             }))
-            rows.push(tray.input({ fieldRef: importRef, placeholder: "Paste export to import" }))
             if (status.get()) rows.push(dim(status.get()))
 
             rows.push(divider())
