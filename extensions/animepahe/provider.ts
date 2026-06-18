@@ -543,9 +543,9 @@ class Provider {
         } catch (_e) {}
     }
 
-    private fail(scope: string, message: string): string {
+    private fail(scope: string, message: string): Error {
         this.reportError(scope, message)
-        return message
+        return new Error(message)
     }
 
     private blockedMessage(): string {
