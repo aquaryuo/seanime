@@ -68,7 +68,7 @@ function init() {
         const fsTest = ctx.state<string>("")
         const fsLogView = ctx.state<boolean>(true)
         const fsLogFilter = ctx.state<boolean>(true)
-        const fsConsent = ctx.state<boolean>(false)
+        const fsConsent = ctx.state<boolean>(sget<boolean>("fs.consent", false))
         let sehGroups: { key: string; label: string; count: number; t: number }[] = []
 
         function nowMs(): number {
@@ -257,6 +257,7 @@ function init() {
                 $storage.set("fs.autoUpdate", fsAutoUpdate.get())
                 $storage.set("fs.browserMode", fsBrowserMode.get())
                 $storage.set("fs.dns", fsDns.get())
+                $storage.set("fs.consent", fsConsent.get())
             } catch (_e) {}
         }
 
@@ -906,6 +907,7 @@ function init() {
                         tray.update()
                         return
                     }
+                    try { $os.removeAll(archive) } catch (_e) {}
                     let okBin = false
                     try { const stb = $os.stat(binPath); if (stb) { try { okBin = stb.size() >= 1024 } catch (_e) { okBin = true } } } catch (_e) { okBin = false }
                     if (!okBin) {
@@ -1127,6 +1129,7 @@ function init() {
         })
         ctx.registerEventHandler("fs-consent-toggle", () => {
             fsConsent.set(!fsConsent.get())
+            fsPersist()
             tray.update()
         })
         ctx.registerEventHandler("fs-chromium-toggle", () => {
@@ -1396,6 +1399,17 @@ function init() {
             const st = fsStatus.get()
             if (uiMode.get() !== "advanced") {
                 const needsDownload = st !== "up" && st !== "starting" && !binaryDownloaded()
+                if (needsDownload && fsConsent.get()) {
+                    rows.push(dim("A newer solver (v" + SOLVER_VERSION + ") is ready to install — it replaces the previous version (old files are removed automatically)."))
+                    rows.push(tray.flex({
+                        items: [
+                            tray.button({ label: "Update & start", onClick: "fs-simple-start", intent: "success", size: "sm" }),
+                            tray.button({ label: "Advanced", onClick: "ui-mode-toggle", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto" } }),
+                        ],
+                        gap: 2,
+                    }))
+                    return rows
+                }
                 if (needsDownload) {
                     rows.push(dim("aquatils-solver runs locally to get blocked sources (Cloudflare / DDoS-Guard) loading. It's downloaded from GitHub and only contacts the sites you stream."))
                     rows.push(dim("Hard JS challenges (interactive Turnstile) need a Chromium browser. If you have Chrome or Edge, leave the box below off. If you don't, tick it to also fetch a minimal Chromium (~80 MB) into the plugin's cache."))
@@ -1550,6 +1564,8 @@ function init() {
             animeBtn.mount()
             refreshAnimeBtn()
         } catch (_e) {}
+
+        if (typeof $os !== "undefined") pruneOldSolverVersions()
 
         ctx.jobs.poll("aquatils-seh-poll", sehPoll, SEH_POLL_MS, { immediate: true })
         ctx.jobs.poll("aquatils-fs-poll", fsRefresh, FS_POLL_MS, { immediate: true })
