@@ -12,7 +12,7 @@ function init() {
         const PICK_PENDING_MAX = 4000
         const POLL_ATTEMPTS = 8
         const POLL_INTERVAL = 350
-        const MAX_CORRECTIONS = 5
+        const MAX_CORRECTIONS = 8
         const REARM_DEDUP = 1500
         const OPT_SEL = "[data-vc-element='setting-select-option']"
         const LABEL_SEL = "[data-vc-element='setting-select-option-label']"
@@ -74,6 +74,7 @@ function init() {
         const enforceCount: any = { sub: 0, cap: 0, aud: 0 }
         const lastDesired: any = { sub: -999, cap: -999, aud: -999 }
         const stopEnforce: any = { sub: false, cap: false, aud: false }
+        const curTrack: any = { sub: -999, cap: -999, aud: -999 }
 
         function pinfo(): any { try { return VC.getCurrentPlaybackInfo() || null } catch (_e) { return null } }
         function curMediaId(): number {
@@ -186,6 +187,7 @@ function init() {
             if (!enabledFor(kind)) return Promise.resolve("disabled")
             const sv = savedFor(kind)
             if (!sv) return Promise.resolve("none")
+            if (current === -999) return Promise.resolve("unknown")
             if (kind === "aud") {
                 const pi = pinfo()
                 const at = (pi && pi.mkvMetadata && pi.mkvMetadata.audioTracks) ? pi.mkvMetadata.audioTracks : []
@@ -215,12 +217,12 @@ function init() {
         function pollLoad(myGen: number, attempt: number): void {
             if (myGen !== gen || !enabled.get()) return
             Promise.all([
-                enforceKind("sub", -999, myGen),
-                enforceKind("cap", -999, myGen),
-                enforceKind("aud", -999, myGen),
+                enforceKind("sub", curTrack.sub, myGen),
+                enforceKind("cap", curTrack.cap, myGen),
+                enforceKind("aud", curTrack.aud, myGen),
             ]).then((st) => {
                 if (myGen !== gen) return
-                if (st.indexOf("no-tracks") >= 0 && attempt < POLL_ATTEMPTS) {
+                if ((st.indexOf("no-tracks") >= 0 || st.indexOf("unknown") >= 0) && attempt < POLL_ATTEMPTS) {
                     ctx.setTimeout(() => pollLoad(myGen, attempt + 1), POLL_INTERVAL)
                 }
             }).catch(() => {})
@@ -235,7 +237,7 @@ function init() {
             lastArmAt = nowMs()
             gen++
             const ks = ["sub", "cap", "aud"]
-            for (let i = 0; i < ks.length; i++) { const k = ks[i]; enforceCount[k] = 0; lastDesired[k] = -999; stopEnforce[k] = false; pickPending[k] = false; pendingClick[k] = 0 }
+            for (let i = 0; i < ks.length; i++) { const k = ks[i]; enforceCount[k] = 0; lastDesired[k] = -999; stopEnforce[k] = false; pickPending[k] = false; pendingClick[k] = 0; curTrack[k] = -999 }
             for (const id in boundOpts) delete boundOpts[id]
             log("▶ LOAD" + (reload ? " (reload)" : "") + " pid=" + shortPid(pid) + " · " + ctxStr())
             pollLoad(gen, 0)
@@ -326,20 +328,23 @@ function init() {
 
             VC.addEventListener("video-subtitle-track", (e) => {
                 arm((e && e.playbackId) || "", false)
-                if (!enabled.get()) return
                 const v = (typeof e.trackNumber === "number" && e.trackNumber >= 0) ? e.trackNumber : -1
+                curTrack.sub = v
+                if (!enabled.get()) return
                 enforceKind("sub", v, gen)
             })
             VC.addEventListener("video-media-caption-track", (e) => {
                 arm((e && e.playbackId) || "", false)
-                if (!enabled.get()) return
                 const v = (typeof e.trackIndex === "number" && e.trackIndex >= 0) ? e.trackIndex : -1
+                curTrack.cap = v
+                if (!enabled.get()) return
                 enforceKind("cap", v, gen)
             })
             VC.addEventListener("video-audio-track", (e) => {
                 arm((e && e.playbackId) || "", false)
-                if (!enabled.get()) return
                 const v = (typeof e.trackNumber === "number") ? e.trackNumber : -999
+                if (v !== -999) curTrack.aud = v
+                if (!enabled.get()) return
                 enforceKind("aud", v, gen)
             })
         }
@@ -428,7 +433,7 @@ function init() {
         ctx.registerEventHandler("ap-scope-global", () => { scope.set("global"); saveCfg(); tray.update() })
         ctx.registerEventHandler("ap-apply-now", () => {
             const ks = ["sub", "cap", "aud"]
-            for (let i = 0; i < ks.length; i++) { const k = ks[i]; stopEnforce[k] = false; enforceCount[k] = 0; lastDesired[k] = -999; pickPending[k] = false; pendingClick[k] = 0 }
+            for (let i = 0; i < ks.length; i++) { const k = ks[i]; stopEnforce[k] = false; enforceCount[k] = 0; lastDesired[k] = -999; pickPending[k] = false; pendingClick[k] = 0; curTrack[k] = -1000 }
             gen++; log("↻ manual re-apply"); pollLoad(gen, 0); status.set("Re-applying saved choices…"); tray.update()
         })
         ctx.registerEventHandler("ap-export", () => exportPrefs())
