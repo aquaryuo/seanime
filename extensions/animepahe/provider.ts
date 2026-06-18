@@ -11,10 +11,11 @@ class Provider {
     private baseTtl = 21600000
     private epCacheTtl = 900000
     private serverCacheTtl = 300000
+    private resolving: { [k: string]: Promise<EpisodeServer[]> } = {}
 
     getSettings(): Settings {
         return {
-            episodeServers: ["Auto"],
+            episodeServers: ["Auto", "1", "2", "3", "4", "5", "6", "7", "8"],
             supportsDub: true,
         }
     }
@@ -151,32 +152,33 @@ class Provider {
         const audio = parts[2] === "dub" ? "dub" : "sub"
         if (!episodeSession || !animeSession) throw this.fail("server", "invalid episode id")
 
+        const key = `${animeSession}:${episodeSession}:${audio}`
+        if (!this.resolving[key]) {
+            const p = this.resolveAllServers(animeSession, episodeSession, audio)
+            this.resolving[key] = p
+            const clear = (): void => { if (this.resolving[key] === p) delete this.resolving[key] }
+            p.then(clear, clear)
+        }
+        const all = await this.resolving[key]
+        if (all.length === 0) throw this.fail("server", audio === "dub" ? "no dub source for this episode" : "no source found for this episode")
+
+        if (server === "Auto" || server === "default" || !server) return all[0]
+        const idx = parseInt(server, 10)
+        if (isNaN(idx) || idx < 1 || idx > all.length) throw this.fail("server", `no player for slot ${server}`)
+        return all[idx - 1]
+    }
+
+    private async resolveAllServers(animeSession: string, episodeSession: string, audio: string): Promise<EpisodeServer[]> {
         const playUrl = `${this.baseUrl}/play/${animeSession}/${episodeSession}`
         const candidates = await this.playSources(animeSession, episodeSession, audio, playUrl)
-        if (candidates.length === 0) {
-            if (audio === "dub") throw this.fail("server", "no dub source for this episode")
-            throw this.fail("server", "no source found for this episode")
+        const out: EpisodeServer[] = []
+        for (const c of candidates) {
+            try {
+                const m3u8 = await this.resolveKwik(c.url, playUrl)
+                if (m3u8) out.push(this.buildServer(c.label, c, m3u8))
+            } catch (_e) {}
         }
-
-        if (server === "Auto" || server === "default" || !server) {
-            let lastErr: any
-            for (const c of candidates) {
-                try {
-                    const m3u8 = await this.resolveKwik(c.url, playUrl)
-                    if (m3u8) return this.buildServer("Auto", c, m3u8)
-                } catch (e) {
-                    lastErr = e
-                }
-            }
-            throw this.fail("server", lastErr ? `could not resolve source: ${lastErr}` : "could not resolve any source")
-        }
-
-        const idx = parseInt(server, 10)
-        if (isNaN(idx) || idx < 1 || idx > candidates.length) throw this.fail("server", `no player for slot ${server}`)
-        const chosen = candidates[idx - 1]
-        const m3u8 = await this.resolveKwik(chosen.url, playUrl)
-        if (!m3u8) throw this.fail("server", `could not resolve player ${server}`)
-        return this.buildServer(chosen.label, chosen, m3u8)
+        return out
     }
 
     private buildServer(label: string, c: PlaySource, m3u8: string): EpisodeServer {
