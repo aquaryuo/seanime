@@ -62,7 +62,6 @@ function init() {
             withContent: true,
             width: "460px",
         })
-        tray.render(renderTray)
 
         let gen = 0
         let armedPid = ""
@@ -259,7 +258,6 @@ function init() {
         }
 
         if (hasVC) {
-            log("◆ plugin loaded (enabled=" + enabled.get() + ")")
             try {
                 ctx.dom.observe(TITLE_SEL, (els) => {
                     if (!els || !els.length) return
@@ -432,5 +430,7 @@ function init() {
             if (logsOpen.get()) rows.push(logBox())
             return tray.stack({ items: rows, gap: 3 })
         }
+
+        tray.render(renderTray)
     })
 }
