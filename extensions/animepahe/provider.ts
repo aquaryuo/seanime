@@ -14,7 +14,7 @@ class Provider {
 
     getSettings(): Settings {
         return {
-            episodeServers: ["Auto", "1", "2", "3", "4", "5", "6", "7", "8"],
+            episodeServers: ["Auto"],
             supportsDub: true,
         }
     }
@@ -258,6 +258,9 @@ class Provider {
     }
 
     private async resolveKwik(embedUrl: string, playUrl: string): Promise<string | undefined> {
+        const ck = `apahe:m3u8:${embedUrl}`
+        const cached = this.readCache<string>(ck, this.serverCacheTtl)
+        if (cached) return cached
         let html = ""
         try {
             const res = await this.fetchRetry(embedUrl, { headers: { Referer: playUrl }, timeout: 12 })
@@ -287,6 +290,7 @@ class Provider {
                 }
             }
         }
+        if (found) this.writeCache(ck, found)
         return found
     }
 
