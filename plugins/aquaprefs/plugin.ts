@@ -7,9 +7,9 @@ function init() {
         const IDX_KEY = "pref:__index"
         const EXPORT_MARKER = "AQUAPREFSv1"
         const CLICK_TO_EVENT = 2500
-        const EVENT_TO_CLICK = 1000
+        const GRACE = 700
         const APPLY_GUARD = 1500
-        const REAPPLY_AT = [300, 1200, 2500]
+        const REAPPLY_AT = [1500, 3500]
         const OPT_SEL = "[data-vc-element='setting-select-option']"
         const TITLE_SEL = "[data-vc-element='menu-title']"
 
@@ -42,9 +42,9 @@ function init() {
         let lastEvt: any = null
         let applyingUntil = 0
         let skipClicks = false
-        let subDone = false
-        let capDone = false
-        let audDone = false
+        let subPicked = false
+        let capPicked = false
+        let audPicked = false
         let lastAppliedSub = -99
         let lastAppliedAud = -99
         let lastAppliedCap = -99
@@ -136,20 +136,20 @@ function init() {
 
         function applySub(sub: any): void {
             const g = subGen
-            if (sub.off) { subDone = true; lastAppliedSub = -1; applyingUntil = nowMs() + APPLY_GUARD; try { VC.setSubtitleTrack(-1) } catch (_e) {} ; return }
+            if (sub.off) { lastAppliedSub = -1; applyingUntil = nowMs() + APPLY_GUARD; try { VC.setSubtitleTrack(-1) } catch (_e) {} ; return }
             VC.getTextTracks().then((tracks) => {
                 if (g !== subGen) return
                 const n = matchTrack((tracks || []).filter((t) => t.type === "subtitles"), sub)
-                if (n !== -2) { subDone = true; lastAppliedSub = n; applyingUntil = nowMs() + APPLY_GUARD; try { VC.setSubtitleTrack(n) } catch (_e) {} }
+                if (n !== -2) { lastAppliedSub = n; applyingUntil = nowMs() + APPLY_GUARD; try { VC.setSubtitleTrack(n) } catch (_e) {} }
             }).catch(() => {})
         }
         function applyCap(cap: any): void {
             const g = capGen
-            if (cap.off) { capDone = true; lastAppliedCap = -1; applyingUntil = nowMs() + APPLY_GUARD; try { VC.setMediaCaptionTrack(-1) } catch (_e) {} ; return }
+            if (cap.off) { lastAppliedCap = -1; applyingUntil = nowMs() + APPLY_GUARD; try { VC.setMediaCaptionTrack(-1) } catch (_e) {} ; return }
             VC.getTextTracks().then((tracks) => {
                 if (g !== capGen) return
                 const n = matchTrack((tracks || []).filter((t) => t.type === "captions"), cap)
-                if (n !== -2) { capDone = true; lastAppliedCap = n; applyingUntil = nowMs() + APPLY_GUARD; try { VC.setMediaCaptionTrack(n) } catch (_e) {} }
+                if (n !== -2) { lastAppliedCap = n; applyingUntil = nowMs() + APPLY_GUARD; try { VC.setMediaCaptionTrack(n) } catch (_e) {} }
             }).catch(() => {})
         }
         function applyAudio(audio: any): void {
@@ -158,9 +158,18 @@ function init() {
             const lang = String(audio.language || "").toLowerCase()
             if (at.length && lang) {
                 for (let i = 0; i < at.length; i++) {
-                    if (String(at[i].language || "").toLowerCase() === lang) { audDone = true; lastAppliedAud = at[i].number; applyingUntil = nowMs() + APPLY_GUARD; try { VC.setAudioTrack(at[i].number) } catch (_e) {} ; return }
+                    if (String(at[i].language || "").toLowerCase() === lang) { lastAppliedAud = at[i].number; applyingUntil = nowMs() + APPLY_GUARD; try { VC.setAudioTrack(at[i].number) } catch (_e) {} ; return }
                 }
             }
+        }
+
+        function applySaved(kind: string): void {
+            const rec = readCascade()
+            if (!rec) return
+            if (kind === "sub" && persistSubs.get() && rec.sub) { applySub(rec.sub); dbgApply = "auto → re-applied " + (rec.sub.off ? "sub=off" : "sub=" + (rec.sub.label || rec.sub.language || "?")) + " [" + levelsStr() + "]" }
+            else if (kind === "cap" && persistSubs.get() && rec.cap) { applyCap(rec.cap); dbgApply = "auto → re-applied " + (rec.cap.off ? "cap=off" : "cap=" + (rec.cap.label || rec.cap.language || "?")) + " [" + levelsStr() + "]" }
+            else if (kind === "aud" && persistAudio.get() && rec.audio) { applyAudio(rec.audio); dbgApply = "auto → re-applied audio=" + (rec.audio.label || rec.audio.language || "?") + " [" + levelsStr() + "]" }
+            tray.update()
         }
 
         function applyForCurrent(force: boolean): void {
@@ -171,10 +180,10 @@ function init() {
             if (!rec) { dbgApply = "reapply [" + where + "]: nothing saved"; tray.update(); return }
             const parts: string[] = []
             if (persistSubs.get()) {
-                if (rec.sub && (force || !subDone)) { applySub(rec.sub); parts.push(rec.sub.off ? "sub=off" : "sub=" + (rec.sub.label || rec.sub.language || "?")) }
-                if (rec.cap && (force || !capDone)) { applyCap(rec.cap); parts.push(rec.cap.off ? "cap=off" : "cap=" + (rec.cap.label || rec.cap.language || "?")) }
+                if (rec.sub && (force || !subPicked)) { applySub(rec.sub); parts.push(rec.sub.off ? "sub=off" : "sub=" + (rec.sub.label || rec.sub.language || "?")) }
+                if (rec.cap && (force || !capPicked)) { applyCap(rec.cap); parts.push(rec.cap.off ? "cap=off" : "cap=" + (rec.cap.label || rec.cap.language || "?")) }
             }
-            if (persistAudio.get() && rec.audio && (force || !audDone)) { applyAudio(rec.audio); parts.push("audio=" + (rec.audio.label || rec.audio.language || ("#" + rec.audio.index))) }
+            if (persistAudio.get() && rec.audio && (force || !audPicked)) { applyAudio(rec.audio); parts.push("audio=" + (rec.audio.label || rec.audio.language || ("#" + rec.audio.index))) }
             dbgApply = "reapply [" + where + "]: " + (parts.length ? parts.join(", ") : "nothing to apply")
             tray.update()
         }
@@ -215,22 +224,33 @@ function init() {
 
         function record(kind: string, v: number): void {
             const lbl = v < 0 ? "off" : "track " + v
-            if (kind === "sub") { subGen++; subDone = true; dbgEvent = "subtitle → " + lbl + " (you)"; recordSub(v) }
-            else if (kind === "cap") { capGen++; capDone = true; dbgEvent = "caption → " + lbl + " (you)"; recordCap(v) }
-            else { audGen++; audDone = true; dbgEvent = "audio → track " + v + " (you)"; recordAud(v) }
+            if (kind === "sub") { subGen++; subPicked = true; dbgEvent = "subtitle → " + lbl + " (you)"; recordSub(v) }
+            else if (kind === "cap") { capGen++; capPicked = true; dbgEvent = "caption → " + lbl + " (you)"; recordCap(v) }
+            else { audGen++; audPicked = true; dbgEvent = "audio → track " + v + " (you)"; recordAud(v) }
             tray.update()
+        }
+
+        function picked(kind: string): boolean {
+            return kind === "sub" ? subPicked : kind === "cap" ? capPicked : audPicked
         }
 
         function onTrackEvent(kind: string, v: number): void {
             if (nowMs() - pendingClickAt <= CLICK_TO_EVENT) { pendingClickAt = 0; lastEvt = null; record(kind, v); return }
-            lastEvt = { kind: kind, v: v, at: nowMs() }
+            const at = nowMs()
+            lastEvt = { kind: kind, v: v, at: at }
             dbgEvent = (kind === "sub" ? "subtitle" : kind === "cap" ? "caption" : "audio") + " " + (v < 0 ? "off" : "track " + v) + " (auto / awaiting click)"
             tray.update()
+            ctx.setTimeout(() => {
+                if (!lastEvt || lastEvt.at !== at) return
+                lastEvt = null
+                if (picked(kind)) return
+                applySaved(kind)
+            }, GRACE)
         }
 
         function onOptionClick(): void {
             if (skipClicks) return
-            if (lastEvt && nowMs() - lastEvt.at <= EVENT_TO_CLICK) {
+            if (lastEvt && nowMs() - lastEvt.at <= GRACE) {
                 const ev = lastEvt; lastEvt = null; pendingClickAt = 0
                 record(ev.kind, ev.v); return
             }
@@ -240,7 +260,7 @@ function init() {
         function arm(pid: string, fromLoad: boolean): void {
             if (!pid || pid === armedPid) return
             armedPid = pid
-            subDone = false; capDone = false; audDone = false
+            subPicked = false; capPicked = false; audPicked = false
             lastAppliedSub = -99; lastAppliedAud = -99; lastAppliedCap = -99
             subGen++; audGen++; capGen++
             if (fromLoad) { pendingClickAt = 0; lastEvt = null }
