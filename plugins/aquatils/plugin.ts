@@ -10,7 +10,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.31"
+        const SOLVER_VERSION = "0.1.32"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -84,20 +84,63 @@ function init() {
             return (prev + chunk).slice(-12000)
         }
 
+        function hhmmss(ms: number): string {
+            try {
+                const d = new Date(ms)
+                const p = (n: number) => (n < 10 ? "0" + n : "" + n)
+                return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds())
+            } catch (_e) {
+                return ""
+            }
+        }
+
+        function plog(msg: string): void {
+            if (!msg) return
+            const t = hhmmss(nowMs())
+            fsLastOut = logAppend(fsLastOut, (t ? t + " " : "") + "[plugin] " + msg + "\n")
+        }
+
+        function setNote(msg: string): void {
+            fsNote.set(msg)
+            plog(msg)
+        }
+
+        function setTest(msg: string): void {
+            fsTest.set(msg)
+            plog(msg)
+        }
+
+        function setErr(msg: string): void {
+            fsErr.set(msg)
+            if (msg) plog("error: " + msg)
+        }
+
+        let fsProgKey = ""
+        function progressNote(label: string, pct: number): void {
+            fsNote.set(label + " " + pct + "%")
+            const key = label + ":" + Math.floor(pct / 20)
+            if (key !== fsProgKey) {
+                fsProgKey = key
+                plog(label + " " + pct + "%")
+            }
+        }
+
         function setStatus(next: string): void {
             const s = fsStatus
+            const prev = s.get()
             s.set(next)
+            if (next !== prev) plog("solver " + next)
             fsStartTicks = 0
             if (next === "up") {
-                fsNote.set("")
-                fsErr.set("")
+                setNote("")
+                setErr("")
                 fsRestarting = false
                 if (!fsUpSince) fsUpSince = nowMs()
                 fsNotified["down"] = false
                 fsNotified["crash"] = false
                 if (!fsAutoTested && fsMode.get() !== "remote") { fsAutoTested = true; void runTest() }
             } else if (next === "starting") {
-                fsErr.set("")
+                setErr("")
                 fsUpSince = 0
             } else {
                 fsRestarting = false
@@ -330,8 +373,8 @@ function init() {
                         if (fsStartTicks >= 18) {
                             setStatus("down")
                             const why = cleanTail(fsLastOut) || readLogTail(fsLogPath())
-                            fsErr.set(fsLastOut || why || "The solver didn't come up in time.")
-                            fsNote.set("The solver didn't come up" + (why ? ": " + why : "") + ".")
+                            setErr(fsLastOut || why || "The solver didn't come up in time.")
+                            setNote("The solver didn't come up" + (why ? ": " + why : "") + ".")
                         }
                     }
                 } else {
@@ -340,7 +383,7 @@ function init() {
                         setStatus("down")
                         fsSessions.set([])
                         if (fsDownStreak === 2 && fsAutoStart.get() && !fsManualStop && fsMode.get() !== "remote") {
-                            fsNote.set("Solver stopped — auto-restarting…")
+                            setNote("Solver stopped — auto-restarting…")
                             fsStart()
                         } else if (fsDownStreak === 2 && !fsManualStop && fsMode.get() !== "remote") {
                             notifyOnce("down", "Aqua's Utils: the solver isn't running. Open the tray to start it.")
@@ -356,12 +399,12 @@ function init() {
 
         async function runTest(): Promise<void> {
             fsTesting = true
-            fsTest.set("Testing…")
+            setTest("Testing…")
             tray.update()
             const ping = await fsProbe()
             if (!ping.up) {
                 fsTesting = false
-                fsTest.set("Not reachable at " + fsBase() + " — it may still be starting; wait for the green Running badge.")
+                setTest("Not reachable at " + fsBase() + " — it may still be starting; wait for the green Running badge.")
                 tray.update()
                 return
             }
@@ -382,11 +425,11 @@ function init() {
             const dt = t0 ? Math.round((nowMs() - t0) / 1000) : 0
             fsTesting = false
             if (r && r.status === "ok") {
-                fsTest.set("Test OK" + (fsVersion.get() ? " · v" + fsVersion.get() : "") + (dt ? " · " + dt + "s" : ""))
+                setTest("Test OK" + (fsVersion.get() ? " · v" + fsVersion.get() : "") + (dt ? " · " + dt + "s" : ""))
             } else if (r && r.message) {
-                fsTest.set("Reachable, but the solve failed: " + String(r.message))
+                setTest("Reachable, but the solve failed: " + String(r.message))
             } else {
-                fsTest.set("Reachable (v" + (fsVersion.get() || "?") + ") but the test timed out — the browser may still be warming up. Try again in a moment.")
+                setTest("Reachable (v" + (fsVersion.get() || "?") + ") but the test timed out — the browser may still be warming up. Try again in a moment.")
             }
             tray.update()
         }
@@ -420,7 +463,7 @@ function init() {
             } catch (_e) {
                 lines.push("• binary: filesystem unavailable (strict mode?)")
             }
-            fsTest.set(lines.join("  ·  "))
+            setTest(lines.join("  ·  "))
             tray.update()
         }
 
@@ -565,7 +608,7 @@ function init() {
             const cancel = dl.watch(id, (p: $downloader.DownloadProgress | undefined) => {
                 if (!p) return
                 if (p.status === "downloading") {
-                    fsNote.set("Downloading Chromium… " + Math.round(p.percentage) + "%")
+                    progressNote("Downloading Chromium…", Math.round(p.percentage))
                     tray.update()
                 } else if (p.status === "completed") {
                     cancel()
@@ -578,7 +621,7 @@ function init() {
                     } else {
                         try { $os.removeAll(dir) } catch (_e) {}
                         try { $storage.set("fs.chromiumVer", "") } catch (_e) {}
-                        fsErr.set("Chromium download/extract failed — Stage B (hard challenges) will be unavailable.")
+                        setErr("Chromium download/extract failed — Stage B (hard challenges) will be unavailable.")
                         tray.update()
                     }
                     done(ok)
@@ -595,33 +638,33 @@ function init() {
             if (!fsWantChromium.get()) { cb(""); return }
             const plt = chromiumCfTPlatform()
             if (!plt || !downloaderReady()) { cb(""); return }
-            fsNote.set("Fetching a minimal Chromium…")
+            setNote("Fetching a minimal Chromium…")
             tray.update()
             void chromiumStable(plt).then((st) => {
-                if (!st.url) { fsErr.set("Couldn't find a Chromium download for this platform (" + plt + ") in the release feed; starting without Stage B."); tray.update(); cb(""); return }
+                if (!st.url) { setErr("Couldn't find a Chromium download for this platform (" + plt + ") in the release feed; starting without Stage B."); tray.update(); cb(""); return }
                 downloadChromium(st, (ok) => cb(ok ? chromiumCachedPath() : ""))
             })
         }
 
         function updateChromium(): void {
-            if (typeof $os === "undefined" || typeof $osExtra === "undefined" || !dl) { fsNote.set("Not available in strict secure mode."); tray.update(); return }
+            if (typeof $os === "undefined" || typeof $osExtra === "undefined" || !dl) { setNote("Not available in strict secure mode."); tray.update(); return }
             const plt = chromiumCfTPlatform()
-            if (!plt) { fsNote.set("Chromium isn't available on this OS/arch."); tray.update(); return }
-            if (!chromiumDownloadedHere()) { fsNote.set("No Chromium is downloaded — it's fetched on demand."); tray.update(); return }
-            if (!downloaderReady()) { fsNote.set("Chromium update isn't available here."); tray.update(); return }
-            fsNote.set("Checking for a newer Chromium…")
+            if (!plt) { setNote("Chromium isn't available on this OS/arch."); tray.update(); return }
+            if (!chromiumDownloadedHere()) { setNote("No Chromium is downloaded — it's fetched on demand."); tray.update(); return }
+            if (!downloaderReady()) { setNote("Chromium update isn't available here."); tray.update(); return }
+            setNote("Checking for a newer Chromium…")
             tray.update()
             void chromiumStable(plt).then((st) => {
-                if (!st.version || !st.url) { fsNote.set("Couldn't reach the Chromium release feed."); tray.update(); return }
+                if (!st.version || !st.url) { setNote("Couldn't reach the Chromium release feed."); tray.update(); return }
                 const cur = $storage.get<string>("fs.chromiumVer") || ""
-                if (cur && !verNewer(st.version, cur)) { fsNote.set("Chromium is up to date (" + cur + ")."); tray.update(); return }
+                if (cur && !verNewer(st.version, cur)) { setNote("Chromium is up to date (" + cur + ")."); tray.update(); return }
                 try { $os.removeAll($filepath.join(aquatilsDir(), "chromium")) } catch (_e) {}
                 try { $storage.set("fs.chromiumVer", "") } catch (_e) {}
                 chromiumOverride = ""
-                fsNote.set("Updating Chromium…")
+                setNote("Updating Chromium…")
                 tray.update()
                 downloadChromium(st, (ok) => {
-                    fsNote.set(ok ? ("Chromium updated to " + st.version + ".") : "Chromium update failed.")
+                    setNote(ok ? ("Chromium updated to " + st.version + ".") : "Chromium update failed.")
                     tray.update()
                 })
             })
@@ -676,7 +719,7 @@ function init() {
                 c.env = env
             } catch (_e) {}
             fsBinary = c
-            fsLastOut = ""
+            plog("starting solver " + SOLVER_VERSION + "…")
             try {
                 ac.run((data, err, code, _s) => {
                     if (gen !== fsBinaryGen) return
@@ -695,7 +738,7 @@ function init() {
                     fsStartTicks = 0
                     fsRestarting = false
                     if (wasUp) {
-                        fsNote.set("Solver stopped (code " + code + ").")
+                        setNote("Solver stopped (code " + code + ").")
                         if (!fsManualStop) notifyOnce("down", "Aqua's Utils: the solver stopped (code " + code + ").")
                     } else {
                         const why = cleanTail(fsLastOut) || readLogTail(logPath)
@@ -704,8 +747,8 @@ function init() {
                             try { $storage.set("fs.solverReady", "") } catch (_e) {}
                             try { $os.removeAll($filepath.join($os.cacheDir(), "aquatils", FS_VERSION, FS_CONTAINER)) } catch (_e) {}
                         }
-                        fsErr.set(fsLastOut || why || ("Solver exited (code " + code + ")"))
-                        fsNote.set("Solver exited (code " + code + ")" + (why ? ": " + why : "") + "." + blocked)
+                        setErr(fsLastOut || why || ("Solver exited (code " + code + ")"))
+                        setNote("Solver exited (code " + code + ")" + (why ? ": " + why : "") + "." + blocked)
                         ctx.toast.error("Solver exited (code " + code + ")")
                         notifyOnce("crash", "Aqua's Utils: the solver failed to start (code " + code + "). Open the tray for details.")
                     }
@@ -713,13 +756,13 @@ function init() {
                 })
                 setStatus("starting")
                 fsStartTicks = 0
-                fsErr.set("")
-                fsNote.set("Solver started; waiting for it to come up…")
+                setErr("")
+                setNote("Solver started; waiting for it to come up…")
             } catch (_e) {
                 fsBinary = null
                 setStatus("down")
-                fsErr.set(String(_e))
-                fsNote.set("Launch failed: " + String(_e))
+                setErr(String(_e))
+                setNote("Launch failed: " + String(_e))
                 ctx.toast.error("Solver launch failed")
             }
             tray.update()
@@ -792,9 +835,9 @@ function init() {
                     }
                 } catch (_e) {}
                 if (solverBinExists()) {
-                    fsNote.set("Couldn't fully remove the solver — a file may still be locked. Make sure it's stopped, then try again.")
+                    setNote("Couldn't fully remove the solver — a file may still be locked. Make sure it's stopped, then try again.")
                 } else {
-                    fsNote.set(removed ? "Removed the downloaded solver. Press Start to fetch it again." : "No solver download was present.")
+                    setNote(removed ? "Removed the downloaded solver. Press Start to fetch it again." : "No solver download was present.")
                 }
                 tray.update()
             })
@@ -809,7 +852,7 @@ function init() {
                 try { $os.removeAll($filepath.join(aquatilsDir(), "chromium")) } catch (_e) {}
                 try { $storage.set("fs.chromiumVer", "") } catch (_e) {}
                 chromiumOverride = ""
-                fsNote.set(present ? "Removed the downloaded Chromium." : "No Chromium download was present.")
+                setNote(present ? "Removed the downloaded Chromium." : "No Chromium download was present.")
                 tray.update()
             })
         }
@@ -826,14 +869,14 @@ function init() {
             if (fsBusy) return
             if (typeof $os === "undefined" || typeof $osExtra === "undefined" || !dl) {
                 setStatus("down")
-                fsNote.set("Seanime's strict secure mode blocks local file & download access — only Remote mode works here. Turn off strict secure mode in Seanime settings, or use Remote mode with a solver you run yourself.")
+                setNote("Seanime's strict secure mode blocks local file & download access — only Remote mode works here. Turn off strict secure mode in Seanime settings, or use Remote mode with a solver you run yourself.")
                 ctx.toast.warning(fsNote.get())
                 tray.update()
                 return
             }
             const pick = binaryAsset()
             if (!pick) {
-                fsNote.set("No prebuilt binary for this OS/arch — use Remote mode.")
+                setNote("No prebuilt binary for this OS/arch — use Remote mode.")
                 ctx.toast.warning(fsNote.get())
                 tray.update()
                 return
@@ -842,7 +885,7 @@ function init() {
             try {
                 cacheDir = $os.cacheDir()
             } catch (_e) {
-                fsNote.set("No cache-dir access for the download.")
+                setNote("No cache-dir access for the download.")
                 tray.update()
                 return
             }
@@ -860,7 +903,7 @@ function init() {
             } catch (_e) {}
             if (!downloaderReady()) {
                 setStatus("down")
-                fsNote.set("Solver auto-download isn't available here — use Remote mode.")
+                setNote("Solver auto-download isn't available here — use Remote mode.")
                 ctx.toast.warning(fsNote.get())
                 tray.update()
                 return
@@ -868,7 +911,7 @@ function init() {
             fsBusy = true
             setStatus("starting")
             const launchGen = fsBinaryGen
-            fsNote.set("Downloading solver " + SOLVER_VERSION + " — if Seanime asks, click Allow to permit the download.")
+            setNote("Downloading solver " + SOLVER_VERSION + " — if Seanime asks, click Allow to permit the download.")
             try { ctx.toast.info("Seanime will ask permission next — click Allow to download the solver.") } catch (_e) {}
             tray.update()
             const url = "https://github.com/" + SOLVER_REPO + "/releases/download/solver-v" + SOLVER_VERSION + "/" + pick.asset
@@ -880,13 +923,13 @@ function init() {
                 fsBusy = false
                 setStatus("down")
                 const em = String(_e)
-                fsErr.set(em)
+                setErr(em)
                 let msg = "Download blocked: " + em
                 if (em.indexOf("denied") >= 0) msg = "Download declined. Re-run and click Allow on the Seanime popup."
                 else if (em.indexOf("unavailable") >= 0) msg = "Seanime couldn't show the permission popup (no app window connected). Open the Seanime app window, then re-run."
                 else if (em.indexOf("deadline") >= 0 || em.indexOf("timeout") >= 0 || em.indexOf("context") >= 0) msg = "The permission popup timed out. Re-run and click Allow."
                 else if (em.indexOf("not authorized") >= 0) msg = "Download path not authorized — please report this (plugin bug)."
-                fsNote.set(msg)
+                setNote(msg)
                 ctx.toast.error(msg)
                 tray.update()
                 return
@@ -895,7 +938,7 @@ function init() {
                 if (!p) return
                 if (p.status === "downloading") {
                     fsStartTicks = 0
-                    fsNote.set("Downloading… " + Math.round(p.percentage) + "%")
+                    progressNote("Downloading…", Math.round(p.percentage))
                     tray.update()
                 } else if (p.status === "completed") {
                     cancel()
@@ -904,7 +947,7 @@ function init() {
                         fsBusy = false
                         return
                     }
-                    fsNote.set("Extracting…")
+                    setNote("Extracting…")
                     tray.update()
                     try {
                         if (pick.zip) $osExtra.unzip(archive, dir)
@@ -912,7 +955,7 @@ function init() {
                     } catch (_e) {
                         fsBusy = false
                         setStatus("down")
-                        fsNote.set("Extraction failed.")
+                        setNote("Extraction failed.")
                         tray.update()
                         return
                     }
@@ -924,7 +967,7 @@ function init() {
                         setStatus("down")
                         try { $storage.set("fs.solverReady", "") } catch (_e) {}
                         try { $os.removeAll(dir) } catch (_e) {}
-                        fsNote.set("The downloaded solver looks incomplete — press Start to try again.")
+                        setNote("The downloaded solver looks incomplete — press Start to try again.")
                         tray.update()
                         return
                     }
@@ -936,7 +979,7 @@ function init() {
                     fsDownloadId = ""
                     fsBusy = false
                     setStatus("down")
-                    fsNote.set("Download failed: " + (p.error || ""))
+                    setNote("Download failed: " + (p.error || ""))
                     tray.update()
                 }
             })
@@ -946,7 +989,7 @@ function init() {
             fsManualStop = false
             try { $storage.set("fs.manualStop", false) } catch (_e) {}
             if (fsMode.get() === "remote") {
-                fsNote.set("Remote mode: start the solver yourself; this only manages sessions at " + fsBase() + ".")
+                setNote("Remote mode: start the solver yourself; this only manages sessions at " + fsBase() + ".")
                 tray.update()
                 void fsRefresh()
             } else {
@@ -958,14 +1001,14 @@ function init() {
             fsManualStop = true
             try { $storage.set("fs.manualStop", true) } catch (_e) {}
             if (fsMode.get() === "remote") {
-                fsNote.set("Remote mode: stop the solver on its host.")
+                setNote("Remote mode: stop the solver on its host.")
                 tray.update()
             } else {
                 fsBusy = false
                 binaryStop()
                 setStatus("down")
                 fsStartTicks = 0
-                fsNote.set("Solver stopped.")
+                setNote("Solver stopped.")
                 tray.update()
             }
         }
@@ -1045,8 +1088,8 @@ function init() {
         })
         ctx.registerEventHandler("fs-logs-refresh", () => refreshLogs())
         ctx.registerEventHandler("fs-logs-copy", () => {
-            const file = fsMode.get() !== "remote" ? readLogFull(fsLogPath()) : ""
-            const t = file ? filterLog(file) : currentLog()
+            let t = currentLog()
+            if (!t && fsMode.get() !== "remote") t = filterLog(readLogFull(fsLogPath()))
             if (!t) return
             try {
                 ctx.dom.clipboard.write(t)
@@ -1134,7 +1177,7 @@ function init() {
         ctx.registerEventHandler("fs-simple-start", () => {
             fsManualStop = false
             setStatus("starting")
-            fsNote.set("Starting solver…")
+            setNote("Starting solver…")
             tray.update()
             fsStart()
         })
@@ -1158,7 +1201,7 @@ function init() {
             fsStart()
         })
         ctx.registerEventHandler("fs-restart-update", () => {
-            fsNote.set("Restarting to apply the updated solver…")
+            setNote("Restarting to apply the updated solver…")
             tray.update()
             fsStart()
         })
@@ -1361,7 +1404,7 @@ function init() {
             }
             if (fsErr.get()) {
                 rows.push(tray.div({
-                    items: [tray.text(fsNote.get() || fsErr.get(), { style: { fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5", color: "rgba(255,255,255,0.85)" } })],
+                    items: [tray.text(fsErr.get(), { style: { fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5", color: "rgba(255,255,255,0.85)" } })],
                     style: { background: "rgba(255,90,90,0.08)", border: "1px solid rgba(255,90,90,0.25)", borderRadius: "6px", padding: "8px", maxHeight: "160px", overflowY: "auto" },
                 }))
                 const acts: any[] = [tray.button({ label: "Retry", onClick: "fs-start", intent: "primary-subtle", size: "xs" })]
@@ -1370,10 +1413,7 @@ function init() {
                 }
                 acts.push(tray.button({ label: "Copy diagnostics", onClick: "fs-copy-diag", intent: "gray-subtle", size: "xs", style: { marginLeft: "auto" } }))
                 rows.push(tray.flex({ items: acts, gap: 2 }))
-            } else if (fsNote.get()) {
-                rows.push(dim(fsNote.get()))
             }
-            if (fsTest.get()) rows.push(dim(fsTest.get()))
             return rows
         }
 
