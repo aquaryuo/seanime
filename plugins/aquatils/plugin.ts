@@ -10,7 +10,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.30"
+        const SOLVER_VERSION = "0.1.31"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -81,8 +81,7 @@ function init() {
 
         function logAppend(prev: string, chunk: string): string {
             if (!chunk) return prev
-            const piece = chunk.charAt(chunk.length - 1) === "\n" ? chunk : chunk + "\n"
-            return (prev + piece).slice(-6000)
+            return (prev + chunk).slice(-12000)
         }
 
         function setStatus(next: string): void {
@@ -478,6 +477,16 @@ function init() {
             if (!p) return ""
             try {
                 return cleanTail($toString($os.readFile(p)))
+            } catch (_e) {
+                return ""
+            }
+        }
+
+        function readLogFull(p: string): string {
+            if (!p) return ""
+            try {
+                const raw = $toString($os.readFile(p)).replace(/\r/g, "").replace(/[^\x20-\x7E\n]+/g, " ")
+                return raw.slice(-262144).replace(/^\n+/, "").replace(/\n+$/, "")
             } catch (_e) {
                 return ""
             }
@@ -1036,7 +1045,8 @@ function init() {
         })
         ctx.registerEventHandler("fs-logs-refresh", () => refreshLogs())
         ctx.registerEventHandler("fs-logs-copy", () => {
-            const t = currentLog()
+            const file = fsMode.get() !== "remote" ? readLogFull(fsLogPath()) : ""
+            const t = file ? filterLog(file) : currentLog()
             if (!t) return
             try {
                 ctx.dom.clipboard.write(t)
@@ -1047,6 +1057,7 @@ function init() {
         })
         ctx.registerEventHandler("fs-logs-clear", () => {
             fsLastOut = ""
+            try { $os.truncate(fsLogPath(), 0) } catch (_e) {}
             tray.update()
         })
         ctx.registerEventHandler("fs-logs-filter", () => {
