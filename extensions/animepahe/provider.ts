@@ -159,7 +159,7 @@ class Provider {
         for (const c of candidates) {
             try {
                 const m3u8 = await this.resolveKwik(c.url, playUrl)
-                if (m3u8) sources.push({ url: m3u8, type: "m3u8", quality: c.label, subtitles: [] })
+                if (m3u8) sources.push({ url: this.proxyM3u8(m3u8, c.url), type: "m3u8", quality: c.label, subtitles: [] })
             } catch (_e) {}
         }
         if (sources.length === 0) throw this.fail("server", "could not resolve any source")
@@ -489,6 +489,13 @@ class Provider {
         if (!/^https?:\/\/[^\s/]+/i.test(u)) return ""
         const base = u.replace(/\/+$/, "")
         return /\/v1$/.test(base) ? base : `${base}/v1`
+    }
+
+    private proxyM3u8(m3u8: string, referer: string): string {
+        const ep = this.solverEndpoint()
+        if (!ep) return m3u8
+        const base = ep.replace(/\/v1$/, "")
+        return `${base}/m3u8?u=${encodeURIComponent(m3u8)}&r=${encodeURIComponent(referer)}`
     }
 
     private async solverPost(ep: string, payload: { [k: string]: any }): Promise<any> {
