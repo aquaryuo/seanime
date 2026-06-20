@@ -251,8 +251,8 @@ function init() {
 
         // Tall-but-detached floating modal: leaves a gap above and below so it reads as
         // a floating panel on the side rather than a flush full-height drawer. Matches the
-        // fixed wrapper gaps below (1.25rem top + 1.25rem bottom = 2.5rem).
-        const PANEL_H = "calc(100dvh - 2.5rem)"
+        // fixed wrapper gaps below (4.5rem top + 4.5rem bottom = 9rem).
+        const PANEL_H = "calc(100dvh - 9rem)"
         const tray = ctx.newTray({
             iconUrl: "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/icon.png",
             withContent: true,
@@ -275,7 +275,7 @@ function init() {
         // content don't work — Radix sizes/positions a wrapper element (the content's
         // parent), so we neutralise its transform and fix it in place. top/bottom are
         // exact; LEFT is the sidebar width + gap (tune this one value if needed).
-        const PANEL_TOP = "1.25rem", PANEL_BOTTOM = "1.25rem", PANEL_LEFT = "4.5rem"
+        const PANEL_TOP = "4.5rem", PANEL_BOTTOM = "4.5rem", PANEL_LEFT = "6rem"
         try {
             if (ctx.dom && ctx.dom.observe) {
                 ctx.dom.observe('[data-plugin-tray-popover-content="aquatils"] [class*="max-h-[35rem]"]', (els) => {
