@@ -276,7 +276,10 @@ function init() {
                     styleEls(els, [["max-height", PANEL_H], ["maxHeight", PANEL_H], ["padding", "0px"]])
                 })
                 ctx.dom.observe('[data-plugin-tray-popover-content="aquatils"]', (els) => {
-                    styleEls(els, [["margin-top", "1rem"], ["marginTop", "1rem"], ["margin-right", "1rem"], ["marginRight", "1rem"]])
+                    styleEls(els, [
+                        ["margin-top", "-2.5rem"], ["marginTop", "-2.5rem"],
+                        ["margin-left", "1.25rem"], ["marginLeft", "1.25rem"],
+                    ])
                 })
             }
         } catch (_e) {}
