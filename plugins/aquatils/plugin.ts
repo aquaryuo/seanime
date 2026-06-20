@@ -53,6 +53,8 @@ function init() {
         let fsBinaryGen = 0
         let fsDownloadId = ""
         let fsLastOut = ""
+        let fsCleanOut = ""
+        let fsPollSkip = false
         let fsRestarting = false
         let fsUpSince = 0
         let fsDownStreak = 0
@@ -92,9 +94,33 @@ function init() {
 
         function logAppend(prev: string, chunk: string): string {
             if (!chunk) return prev
-            const c = scrubLog(chunk)
-            const piece = c.charAt(c.length - 1) === "\n" ? c : c + "\n"
+            const piece = chunk.charAt(chunk.length - 1) === "\n" ? chunk : chunk + "\n"
             return (prev + piece).slice(-12000)
+        }
+
+        function isPollingLine(l: string): boolean {
+            const isPoll = l.indexOf("sessions.list") >= 0 || l.indexOf("sessions.create") >= 0
+            if (l.indexOf("Incoming request") >= 0) { fsPollSkip = isPoll; return isPoll }
+            if (isPoll) { fsPollSkip = true; return true }
+            if (fsPollSkip) {
+                fsPollSkip = false
+                if (l.indexOf("Response in") >= 0 || l.indexOf("200 OK") >= 0 || l.indexOf("POST http") >= 0) return true
+            }
+            return false
+        }
+
+        function pushLog(chunk: string): void {
+            if (!chunk) return
+            const c = scrubLog(chunk)
+            fsLastOut = logAppend(fsLastOut, c)
+            const lines = c.split("\n")
+            let clean = ""
+            for (let i = 0; i < lines.length; i++) {
+                const l = lines[i]
+                if (!l) continue
+                if (!isPollingLine(l)) clean += l + "\n"
+            }
+            if (clean) fsCleanOut = logAppend(fsCleanOut, clean)
         }
 
         function hhmmss(ms: number): string {
@@ -112,7 +138,7 @@ function init() {
             const clean = msg.replace(/…/g, "...").replace(/[—–]/g, "-").replace(/·/g, "|").replace(/[ \t]{2,}/g, " ").replace(/\s+$/, "")
             if (!clean) return
             const t = hhmmss(nowMs())
-            fsLastOut = logAppend(fsLastOut, (t ? t + " " : "") + "[plugin] " + clean + "\n")
+            pushLog((t ? t + " " : "") + "[plugin] " + clean + "\n")
         }
 
         function setNote(msg: string): void {
@@ -754,9 +780,9 @@ function init() {
                 ac.run((data, err, code, _s) => {
                     if (gen !== fsBinaryGen) return
                     if (err) {
-                        try { fsLastOut = logAppend(fsLastOut, $toString(err)) } catch (_e) {}
+                        try { pushLog($toString(err)) } catch (_e) {}
                     } else if (data) {
-                        try { fsLastOut = logAppend(fsLastOut, $toString(data)) } catch (_e) {}
+                        try { pushLog($toString(data)) } catch (_e) {}
                     }
                     if (code === undefined) {
                         if (fsLogView.get()) tray.update()
@@ -1122,7 +1148,10 @@ function init() {
         ctx.registerEventHandler("fs-logs-refresh", () => refreshLogs())
         ctx.registerEventHandler("fs-logs-copy", () => {
             let t = currentLog()
-            if (!t && fsMode.get() !== "remote") t = filterLog(readLogFull(fsLogPath()))
+            if (!t && fsMode.get() !== "remote") {
+                const f = readLogFull(fsLogPath())
+                t = fsLogFilter.get() ? filterLog(f) : f
+            }
             if (!t) return
             try {
                 ctx.dom.clipboard.write(t)
@@ -1133,6 +1162,8 @@ function init() {
         })
         ctx.registerEventHandler("fs-logs-clear", () => {
             fsLastOut = ""
+            fsCleanOut = ""
+            fsPollSkip = false
             try { $os.truncate(fsLogPath(), 0) } catch (_e) {}
             tray.update()
         })
@@ -1300,8 +1331,9 @@ function init() {
             return out.join("\n")
         }
         function currentLog(): string {
-            const cleaned = (fsLastOut || "").replace(/\r/g, "").replace(/[^\x20-\x7E\n]+/g, " ")
-            return filterLog(cleaned).slice(-6000).replace(/^\n+/, "").replace(/\n+$/, "")
+            const src = fsLogFilter.get() ? fsCleanOut : fsLastOut
+            const cleaned = (src || "").replace(/\r/g, "").replace(/[^\x20-\x7E\n]+/g, " ")
+            return cleaned.slice(-6000).replace(/^\n+/, "").replace(/\n+$/, "")
         }
         function statusBadge(): any {
             const st = fsStatus.get()
@@ -1652,7 +1684,13 @@ function init() {
         if (typeof $os !== "undefined") pruneOldSolverVersions()
 
         if (fsMode.get() !== "remote") {
-            try { const hist = readLogFull(fsLogPath()); if (hist) fsLastOut = hist.slice(-10000) + "\n" } catch (_e) {}
+            try {
+                const hist = readLogFull(fsLogPath())
+                if (hist) {
+                    fsLastOut = hist.slice(-10000) + "\n"
+                    fsCleanOut = filterLog(hist).slice(-10000) + "\n"
+                }
+            } catch (_e) {}
         }
         plog("aquatils loaded (managing solver " + SOLVER_VERSION + ")")
 
