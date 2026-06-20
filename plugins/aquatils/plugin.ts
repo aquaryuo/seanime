@@ -52,6 +52,7 @@ function init() {
         let fsStartTicks = 0
         let fsBinaryGen = 0
         let fsBadStarts = 0
+        let fsAvBlocked = false
         let fsDownloadId = ""
         let fsLastOut = ""
         let fsCleanOut = ""
@@ -188,6 +189,7 @@ function init() {
                 setErr("")
                 fsRestarting = false
                 fsBadStarts = 0
+                fsAvBlocked = false
                 if (!fsUpSince) fsUpSince = nowMs()
                 fsNotified["down"] = false
                 fsNotified["crash"] = false
@@ -436,9 +438,11 @@ function init() {
                     if (fsDownStreak >= 2) {
                         setStatus("down")
                         fsSessions.set([])
-                        if (fsDownStreak === 2 && fsAutoStart.get() && !fsManualStop && fsMode.get() !== "remote") {
+                        if (fsDownStreak === 2 && fsAutoStart.get() && !fsManualStop && fsMode.get() !== "remote" && !fsAvBlocked && !solverQuarantined()) {
                             setNote("Solver stopped — auto-restarting…")
                             fsStart()
+                        } else if (fsDownStreak === 2 && !fsManualStop && fsMode.get() !== "remote" && (fsAvBlocked || solverQuarantined())) {
+                            notifyOnce("av", "Aqua's Utils: antivirus removed the solver. Add an exclusion for %LOCALAPPDATA%\\aquatils, then Start.")
                         } else if (fsDownStreak === 2 && !fsManualStop && fsMode.get() !== "remote") {
                             notifyOnce("down", "Aqua's Utils: the solver isn't running. Open the tray to start it.")
                         }
@@ -550,6 +554,12 @@ function init() {
         function binaryDownloaded(): boolean {
             if (!solverBinExists()) return false
             try { return $storage.get<string>("fs.solverReady") === FS_VERSION } catch (_e) { return false }
+        }
+
+        // The current version was downloaded + verified (marker set) but the binary
+        // file is now gone — i.e. antivirus quarantined it, not a missing/old install.
+        function solverQuarantined(): boolean {
+            try { return $storage.get<string>("fs.solverReady") === FS_VERSION && !solverBinExists() } catch (_e) { return false }
         }
 
         function fsLogPath(): string {
@@ -795,7 +805,14 @@ function init() {
                     setStatus("down")
                     fsStartTicks = 0
                     fsRestarting = false
-                    if (wasUp) {
+                    if (wasUp && !solverBinExists()) {
+                        fsAvBlocked = true
+                        plog("antivirus removed the solver (binary quarantined while running)")
+                        setErr("Antivirus (e.g. Windows Defender) removed the solver while it was running — it flags the unsigned binary as suspicious (it hides its window and drives a browser). Add a Windows Security exclusion for the aquatils folder (%LOCALAPPDATA%\\aquatils), then press Start.")
+                        setNote("Removed by antivirus — add an exclusion for the aquatils folder, then Start.")
+                        ctx.toast.error("Antivirus removed the solver — add an exclusion for the aquatils folder.")
+                        notifyOnce("av", "Aqua's Utils: antivirus removed the solver. Add an exclusion for %LOCALAPPDATA%\\aquatils, then Start.")
+                    } else if (wasUp) {
                         setNote("Solver stopped (code " + code + ").")
                         if (!fsManualStop) notifyOnce("down", "Aqua's Utils: the solver stopped (code " + code + ").")
                     } else {
@@ -803,8 +820,8 @@ function init() {
                         const execBlocked = /cannot execute the specified program|not a valid win32 application|is not recognized as an internal|exec format error|access is denied|contains a virus|operation did not complete successfully/i.test(fsLastOut)
                         const binGone = !solverBinExists()
                         if (execBlocked || binGone) {
-                            plog("antivirus blocked the solver" + (binGone ? " (binary quarantined/removed)" : " (execution blocked)"))
-                            if (binGone) { try { $storage.set("fs.solverReady", "") } catch (_e) {} }
+                            fsAvBlocked = true
+                            plog("antivirus blocked the solver" + (binGone ? " (binary quarantined/removed while running)" : " (execution blocked)"))
                             setErr("Antivirus (e.g. Windows Defender) " + (binGone ? "removed" : "blocked") + " the solver — it flags the unsigned binary as suspicious (it hides its window and drives a browser). Add a Windows Security exclusion for the aquatils folder (%LOCALAPPDATA%\\aquatils), then press Start.")
                             setNote("Blocked by antivirus — add an exclusion for the aquatils folder, then Start.")
                             ctx.toast.error("Antivirus blocked the solver — add an exclusion for the aquatils folder.")
@@ -1321,6 +1338,16 @@ function init() {
                 ctx.toast.error("Couldn't copy to clipboard")
             }
         })
+        ctx.registerEventHandler("fs-copy-cache-path", () => {
+            try {
+                const p = aquatilsDir()
+                if (!p) return
+                ctx.dom.clipboard.write(p)
+                ctx.toast.success("Folder path copied — add it as a Windows Security exclusion, then Start.")
+            } catch (_e) {
+                ctx.toast.error("Couldn't copy the path")
+            }
+        })
         ctx.registerEventHandler("fs-copy", () => {
             const text = fsErr.get() || fsNote.get()
             if (!text) return
@@ -1560,6 +1587,18 @@ function init() {
             if (uiMode.get() !== "advanced") {
                 const needsDownload = st !== "up" && st !== "starting" && !binaryDownloaded()
                 if (needsDownload && fsConsent.get()) {
+                    if (fsAvBlocked || solverQuarantined()) {
+                        rows.push(dim("Your antivirus removed the solver after it started — Windows Defender flags the unsigned binary as suspicious. Add a Windows Security exclusion for the folder below, then Start (it re-downloads into the excluded folder)."))
+                        rows.push(tray.flex({
+                            items: [
+                                tray.button({ label: "Copy folder to exclude", onClick: "fs-copy-cache-path", intent: "primary-subtle", size: "sm" }),
+                                tray.button({ label: "Start", onClick: "fs-simple-start", intent: "success", size: "sm" }),
+                                tray.button({ label: "Advanced", onClick: "ui-mode-toggle", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto" } }),
+                            ],
+                            gap: 2,
+                        }))
+                        return rows
+                    }
                     rows.push(dim("A newer solver (v" + SOLVER_VERSION + ") is ready to install — it replaces the previous version (old files are removed automatically)."))
                     rows.push(tray.flex({
                         items: [
