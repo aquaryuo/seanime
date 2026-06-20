@@ -1051,14 +1051,21 @@ function init() {
                         return
                     }
                     try { $os.removeAll(archive) } catch (_e) {}
-                    let okBin = false
-                    try { const stb = $os.stat(binPath); if (stb) { try { okBin = stb.size() >= 1024 } catch (_e) { okBin = true } } } catch (_e) { okBin = false }
+                    let exeSize = 0
+                    let exeOk = false
+                    try {
+                        const stb = $os.stat(binPath)
+                        if (stb) { exeOk = true; try { exeSize = stb.size() } catch (_e) { exeSize = -1 } }
+                    } catch (_e) {}
+                    plog("extracted solver.exe " + (exeSize >= 0 ? fmtSize(exeSize) : "size?") + " (archive " + fmtSize(archiveSize) + (expected ? " of " + fmtSize(expected) : "") + ")")
+                    const okBin = exeOk && (exeSize < 0 || (exeSize >= 1024 && (archiveSize === 0 || exeSize >= archiveSize)))
                     if (!okBin) {
                         fsBusy = false
                         setStatus("down")
                         try { $storage.set("fs.solverReady", "") } catch (_e) {}
                         try { $os.removeAll(dir) } catch (_e) {}
-                        setNote("The downloaded solver looks incomplete — press Start to try again.")
+                        setErr("The downloaded solver is incomplete" + (exeSize > 0 ? " (" + fmtSize(exeSize) + ")" : "") + " — the download is being cut short. Press Start to try again.")
+                        setNote("Download incomplete — press Start to retry.")
                         tray.update()
                         return
                     }
