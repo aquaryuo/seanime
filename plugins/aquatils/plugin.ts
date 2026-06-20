@@ -1188,7 +1188,7 @@ function init() {
 
         function solverDetail(): string {
             if (fsMode.get() === "remote") return "Remote solver"
-            return "solver · Cloudflare + DDoS-Guard (+ Turnstile via Chrome)"
+            return "Unblocks protected stream sources"
         }
 
         function solverUpdatePending(): boolean {
@@ -1462,18 +1462,11 @@ function init() {
         }
         function statusBadge(): any {
             const st = fsStatus.get()
-            let color = "#9aa0a8", label = "Checking"
-            if (st === "up") { color = "#34d399"; label = "Running" }
-            else if (st === "starting") { color = "#fbbf24"; label = "Starting" }
-            else if (st === "down") { color = "#6b7280"; label = "Off" }
-            return tray.flex({
-                items: [
-                    tray.div({ items: [], style: { width: "9px", height: "9px", borderRadius: "50%", background: color, boxShadow: "0 0 10px " + color + ", 0 0 3px " + color, flexShrink: "0" } }),
-                    tray.text(label, { style: { fontSize: "13px", fontWeight: "600", color: "rgba(255,255,255,0.92)", letterSpacing: "0.02em" } }),
-                ],
-                gap: 2,
-                style: { alignItems: "center" },
-            })
+            const s = { borderRadius: "5px" }
+            if (st === "up") return tray.badge({ text: "Running", intent: "success", size: "md", style: s })
+            if (st === "starting") return tray.badge({ text: "Starting", intent: "warning", size: "md", style: s })
+            if (st === "down") return tray.badge({ text: "Off", intent: "gray", size: "md", style: s })
+            return tray.badge({ text: "Checking", intent: "gray", size: "md", style: s })
         }
         function uptimeStr(): string {
             const t = nowMs()
