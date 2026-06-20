@@ -372,6 +372,7 @@ function init() {
                         fsAutoUpgradeTried = true
                         notifyOnce("upg", "Aqua's Utils: auto-updating the solver to v" + SOLVER_VERSION + " — click Allow if Seanime asks.")
                         try { ctx.toast.info("Auto-updating the solver to v" + SOLVER_VERSION + " — click Allow if Seanime asks.") } catch (_e) {}
+                        plog("auto-updating solver to v" + SOLVER_VERSION + " (was v" + (fsVersion.get() || "?") + ")")
                         fsStart()
                     } else if (!fsAutoUpdate.get()) {
                         notifyOnce("upd", "Aqua's Utils: a newer solver (v" + SOLVER_VERSION + ") is ready — open the tray and tap Restart to update.")
@@ -1087,6 +1088,7 @@ function init() {
         ctx.registerEventHandler("fs-start", () => fsStart())
         ctx.registerEventHandler("fs-stop", () => fsStop())
         ctx.registerEventHandler("fs-restart", () => {
+            plog("restart requested")
             fsBusy = false
             fsRestarting = true
             tray.update()
@@ -1635,6 +1637,11 @@ function init() {
         } catch (_e) {}
 
         if (typeof $os !== "undefined") pruneOldSolverVersions()
+
+        if (fsMode.get() !== "remote") {
+            try { const hist = readLogFull(fsLogPath()); if (hist) fsLastOut = hist.slice(-10000) } catch (_e) {}
+        }
+        plog("aquatils loaded (managing solver " + SOLVER_VERSION + ")")
 
         ctx.jobs.poll("aquatils-seh-poll", sehPoll, SEH_POLL_MS, { immediate: true })
         ctx.jobs.poll("aquatils-fs-poll", fsRefresh, FS_POLL_MS, { immediate: true })
