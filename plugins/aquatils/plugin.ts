@@ -250,8 +250,9 @@ function init() {
         }
 
         // Tall-but-detached floating modal: leaves a gap above and below so it reads as
-        // a floating panel on the side rather than a flush full-height drawer.
-        const PANEL_H = "calc(100dvh - 5.5rem)"
+        // a floating panel on the side rather than a flush full-height drawer. Matches the
+        // fixed wrapper gaps below (1.25rem top + 1.25rem bottom = 2.5rem).
+        const PANEL_H = "calc(100dvh - 2.5rem)"
         const tray = ctx.newTray({
             iconUrl: "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/icon.png",
             withContent: true,
@@ -270,16 +271,33 @@ function init() {
                 }
             }
         }
+        // Pin the panel as a FIXED floating modal with explicit gaps. Margins on the
+        // content don't work — Radix sizes/positions a wrapper element (the content's
+        // parent), so we neutralise its transform and fix it in place. top/bottom are
+        // exact; LEFT is the sidebar width + gap (tune this one value if needed).
+        const PANEL_TOP = "1.25rem", PANEL_BOTTOM = "1.25rem", PANEL_LEFT = "4.5rem"
         try {
             if (ctx.dom && ctx.dom.observe) {
                 ctx.dom.observe('[data-plugin-tray-popover-content="aquatils"] [class*="max-h-[35rem]"]', (els) => {
                     styleEls(els, [["max-height", PANEL_H], ["maxHeight", PANEL_H], ["padding", "0px"]])
                 })
                 ctx.dom.observe('[data-plugin-tray-popover-content="aquatils"]', (els) => {
-                    styleEls(els, [
-                        ["margin-top", "-2.5rem"], ["marginTop", "-2.5rem"],
-                        ["margin-left", "1.25rem"], ["marginLeft", "1.25rem"],
-                    ])
+                    styleEls(els, [["margin", "0"], ["max-height", "none"], ["maxHeight", "none"]])
+                    for (let i = 0; i < els.length; i++) {
+                        try {
+                            const p = els[i].getParent()
+                            if (p && p.then) {
+                                p.then((wrapper) => {
+                                    if (!wrapper) return
+                                    styleEls([wrapper], [
+                                        ["transform", "none"], ["position", "fixed"],
+                                        ["top", PANEL_TOP], ["bottom", PANEL_BOTTOM],
+                                        ["left", PANEL_LEFT], ["right", "auto"], ["margin", "0"],
+                                    ])
+                                }).catch(() => {})
+                            }
+                        } catch (_e) {}
+                    }
                 })
             }
         } catch (_e) {}
