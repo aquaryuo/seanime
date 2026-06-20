@@ -256,6 +256,24 @@ function init() {
             minHeight: "100dvh",
         })
 
+        // Seanime wraps plugin tray content in a div capped at max-h-[35rem] (560px) with
+        // its own scroll, leaving the rest of the 100dvh panel empty below it. tray.css is
+        // scoped to siblings/children so it can't reach that ancestor — use the DOM API to
+        // lift the cap directly so the content fills the full-height panel.
+        try {
+            if (ctx.dom && ctx.dom.observe) {
+                ctx.dom.observe('[data-plugin-tray-popover-content="aquatils"] [class*="max-h-[35rem]"]', (els) => {
+                    for (let i = 0; i < els.length; i++) {
+                        try {
+                            els[i].setStyle("max-height", "100dvh")
+                            els[i].setStyle("maxHeight", "100dvh")
+                            els[i].setStyle("padding", "0px")
+                        } catch (_e) {}
+                    }
+                })
+            }
+        } catch (_e) {}
+
         function sehPersist(): void {
             try {
                 $storage.set("seh.errors", errors.get())
@@ -1744,10 +1762,6 @@ function init() {
 
         tray.render(() => {
             const rows: any[] = []
-            // Seanime wraps plugin content in a div capped at max-h-[35rem] (560px) with
-            // its own scroll, which leaves the rest of the 100dvh panel empty. Lift that
-            // cap so the content fills the full-height panel and the log area can grow.
-            rows.push(tray.css({ css: '[data-plugin-tray-popover-content="aquatils"] .max-h-\\[35rem\\]{max-height:100dvh!important;padding:0!important;}' }))
             const errCount = errors.get().length
             rows.push(tray.flex({
                 items: [
