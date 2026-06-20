@@ -252,7 +252,7 @@ function init() {
         const tray = ctx.newTray({
             iconUrl: "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/icon.png",
             withContent: true,
-            width: "min(760px, 96vw)",
+            width: "480px",
             minHeight: "100dvh",
         })
 
