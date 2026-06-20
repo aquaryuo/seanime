@@ -81,7 +81,8 @@ function init() {
 
         function logAppend(prev: string, chunk: string): string {
             if (!chunk) return prev
-            return (prev + chunk).slice(-12000)
+            const piece = chunk.charAt(chunk.length - 1) === "\n" ? chunk : chunk + "\n"
+            return (prev + piece).slice(-12000)
         }
 
         function hhmmss(ms: number): string {
@@ -1639,7 +1640,7 @@ function init() {
         if (typeof $os !== "undefined") pruneOldSolverVersions()
 
         if (fsMode.get() !== "remote") {
-            try { const hist = readLogFull(fsLogPath()); if (hist) fsLastOut = hist.slice(-10000) } catch (_e) {}
+            try { const hist = readLogFull(fsLogPath()); if (hist) fsLastOut = hist.slice(-10000) + "\n" } catch (_e) {}
         }
         plog("aquatils loaded (managing solver " + SOLVER_VERSION + ")")
 
