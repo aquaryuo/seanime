@@ -1591,7 +1591,7 @@ function init() {
             }
             rows.push(tray.div({
                 items: logItems,
-                style: { background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "6px", padding: "8px", flexGrow: 1, minHeight: "160px", overflowY: "auto" },
+                style: { background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "6px", padding: "8px", flexGrow: "1", minHeight: "160px", overflowY: "auto" },
             }))
             return rows
         }
