@@ -252,8 +252,8 @@ function init() {
         const tray = ctx.newTray({
             iconUrl: "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/icon.png",
             withContent: true,
-            width: "480px",
-            minHeight: "min(78vh, 760px)",
+            width: "min(760px, 96vw)",
+            minHeight: "100dvh",
         })
 
         function sehPersist(): void {
@@ -1756,7 +1756,18 @@ function init() {
             rows.push(divider())
             const section = view.get() === "cf" ? cfRows() : view.get() === "settings" ? settingsRows() : errorRows()
             for (let i = 0; i < section.length; i++) rows.push(section[i])
-            return tray.stack({ items: rows, gap: 3 })
+            return tray.stack({
+                items: rows,
+                gap: 3,
+                style: {
+                    minHeight: "100dvh",
+                    padding: "18px 16px",
+                    background: "linear-gradient(180deg, rgba(16,18,24,0.78), rgba(9,10,14,0.84))",
+                    backdropFilter: "blur(28px) saturate(150%)",
+                    WebkitBackdropFilter: "blur(28px) saturate(150%)",
+                    borderLeft: "1px solid rgba(255,255,255,0.10)",
+                },
+            })
         })
 
         let animeBtn: any = null
