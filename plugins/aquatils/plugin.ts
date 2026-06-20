@@ -10,7 +10,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.32"
+        const SOLVER_VERSION = "0.1.33"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -79,9 +79,21 @@ function init() {
             }
         }
 
+        function scrubLog(s: string): string {
+            if (!s) return s
+            return s
+                .replace(/\b([a-z][a-z0-9+.-]*):\/\/[^\s"'<>)\]]+/gi, "$1://<redacted>")
+                .replace(/[A-Z]:\\Users\\[^\\\s"']+/gi, "C:\\Users\\<redacted>")
+                .replace(/\/(?:home|Users)\/[^/\s"']+/g, "/<redacted>")
+                .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, "<ip>")
+                .replace(/\b[0-9a-f]{20,}\b/gi, "<redacted>")
+                .replace(/[A-Za-z0-9_-]{32,}={0,2}/g, "<redacted>")
+        }
+
         function logAppend(prev: string, chunk: string): string {
             if (!chunk) return prev
-            const piece = chunk.charAt(chunk.length - 1) === "\n" ? chunk : chunk + "\n"
+            const c = scrubLog(chunk)
+            const piece = c.charAt(c.length - 1) === "\n" ? c : c + "\n"
             return (prev + piece).slice(-12000)
         }
 
@@ -527,7 +539,7 @@ function init() {
                 const t = lines[i].replace(/[^\x20-\x7E]+/g, " ").replace(/\s+/g, " ").trim()
                 if (t) out.unshift(t)
             }
-            return out.join(" | ").slice(-220)
+            return scrubLog(out.join(" | ")).slice(-220)
         }
 
         function readLogTail(p: string): string {
@@ -543,7 +555,7 @@ function init() {
             if (!p) return ""
             try {
                 const raw = $toString($os.readFile(p)).replace(/\r/g, "").replace(/[^\x20-\x7E\n]+/g, " ")
-                return raw.slice(-262144).replace(/^\n+/, "").replace(/\n+$/, "")
+                return scrubLog(raw.slice(-262144)).replace(/^\n+/, "").replace(/\n+$/, "")
             } catch (_e) {
                 return ""
             }
