@@ -1800,8 +1800,8 @@ function init() {
             const errCount = errors.get().length
             rows.push(tray.flex({
                 items: [
-                    tray.button({ label: "Solver", onClick: "view-cf", intent: view.get() === "cf" ? "primary" : "gray-subtle", size: "sm", style: view.get() === "cf" ? ACCENT_STYLE : undefined }),
-                    tray.button({ label: errCount ? "Errors (" + errCount + ")" : "Errors", onClick: "view-errors", intent: view.get() === "errors" ? "primary" : "gray-subtle", size: "sm", style: view.get() === "errors" ? ACCENT_STYLE : undefined }),
+                    tray.button({ label: "Solver", onClick: "view-cf", intent: view.get() === "cf" ? "primary" : "gray-subtle", size: "sm", style: view.get() === "cf" ? ACCENT_STYLE : {} }),
+                    tray.button({ label: errCount ? "Errors (" + errCount + ")" : "Errors", onClick: "view-errors", intent: view.get() === "errors" ? "primary" : "gray-subtle", size: "sm", style: view.get() === "errors" ? ACCENT_STYLE : {} }),
                     tray.button({ label: "⚙", onClick: "view-settings", intent: view.get() === "settings" ? "primary" : "gray-subtle", size: "sm", style: view.get() === "settings" ? { ...ACCENT_STYLE, marginLeft: "auto" } : { marginLeft: "auto" } }),
                 ],
                 gap: 2,
