@@ -282,7 +282,10 @@ function init() {
                     styleEls(els, [["max-height", PANEL_H], ["maxHeight", PANEL_H], ["padding", "0px"]])
                 })
                 ctx.dom.observe('[data-plugin-tray-popover-content="aquatils"]', (els) => {
-                    styleEls(els, [["margin", "0"], ["max-height", "none"], ["maxHeight", "none"]])
+                    // bg-gray-950 here is opaque — it becomes the panel's backdrop, so the
+                    // blur shows solid gray instead of the app. Make it transparent so the
+                    // backdrop-filter actually frosts the page behind the modal.
+                    styleEls(els, [["margin", "0"], ["max-height", "none"], ["maxHeight", "none"], ["background", "transparent"], ["box-shadow", "none"], ["boxShadow", "none"]])
                     for (let i = 0; i < els.length; i++) {
                         try {
                             const p = els[i].getParent()
@@ -1810,9 +1813,9 @@ function init() {
                     flexDirection: "column",
                     minHeight: PANEL_H,
                     padding: "18px 16px",
-                    background: "linear-gradient(180deg, rgba(16,18,24,0.78), rgba(9,10,14,0.84))",
-                    backdropFilter: "blur(28px) saturate(150%)",
-                    WebkitBackdropFilter: "blur(28px) saturate(150%)",
+                    background: "linear-gradient(180deg, rgba(18,19,24,0.40), rgba(10,11,15,0.52))",
+                    backdropFilter: "blur(30px) saturate(115%)",
+                    WebkitBackdropFilter: "blur(30px) saturate(115%)",
                     border: "1px solid rgba(255,255,255,0.12)",
                     borderRadius: "16px",
                     boxShadow: "0 24px 60px -12px rgba(0,0,0,0.7)",
