@@ -52,7 +52,7 @@ function init() {
         let fsStartTicks = 0
         let fsBinaryGen = 0
         let fsBadStarts = 0
-        let fsAvBlocked = false
+        let fsAvBlocked = sget<boolean>("fs.avBlocked", false)
         let fsDownloadId = ""
         let fsLastOut = ""
         let fsCleanOut = ""
@@ -61,6 +61,8 @@ function init() {
         let fsUpSince = 0
         let fsDownStreak = 0
         let fsTesting = false
+        let fsTestUntil = 0
+        let fsLastLiveUpdate = 0
         let fsManualStop = sget<boolean>("fs.manualStop", false)
         let fsAutoTested = false
         let fsAutoUpgradeTried = false
@@ -71,7 +73,6 @@ function init() {
         const fsHint = ctx.state<string>("")
         const fsVersion = ctx.state<string>("")
         const fsTest = ctx.state<string>("")
-        const fsLogView = ctx.state<boolean>(true)
         const fsLogFilter = ctx.state<boolean>(true)
         const fsConsent = ctx.state<boolean>(sget<boolean>("fs.consent", false))
         let sehGroups: { key: string; label: string; count: number; t: number }[] = []
@@ -192,9 +193,11 @@ function init() {
                 fsRestarting = false
                 fsBadStarts = 0
                 fsAvBlocked = false
+                try { $storage.set("fs.avBlocked", false) } catch (_e) {}
                 if (!fsUpSince) fsUpSince = nowMs()
                 fsNotified["down"] = false
                 fsNotified["crash"] = false
+                if (!solverUpdatePending()) { fsAutoUpgradeTried = false; fsNotified["upd"] = false; fsNotified["upg"] = false }
                 if (!fsAutoTested && fsMode.get() !== "remote") { fsAutoTested = true; void runTest() }
             } else if (next === "starting") {
                 setErr("")
@@ -455,7 +458,7 @@ function init() {
         }
 
         async function fsRefresh(): Promise<void> {
-            if (fsTesting) return
+            if (fsTesting && nowMs() < fsTestUntil) return
             const p = await fsProbe()
             if (p.up) {
                 if (p.version) fsVersion.set(p.version)
@@ -479,7 +482,7 @@ function init() {
                 if (fsAutoUpdate.get() && fsMode.get() !== "remote") maybeAutoUpdateChromium()
             } else {
                 if (fsStatus.get() === "starting") {
-                    if (fsMode.get() === "binary") {
+                    if (fsMode.get() === "binary" && !fsDownloadId) {
                         fsStartTicks++
                         if (fsStartTicks >= 18) {
                             setStatus("down")
@@ -512,43 +515,42 @@ function init() {
 
         async function runTest(): Promise<void> {
             fsTesting = true
-            setTest("Testing…")
-            tray.update()
-            const ping = await fsProbe()
-            if (!ping.up) {
-                fsTesting = false
-                setTest("Not reachable at " + fsBase() + " — it may still be starting; wait for the green Running badge.")
+            fsTestUntil = nowMs() + 70000
+            try {
+                setTest("Testing…")
                 tray.update()
-                return
-            }
-            if (ping.version) fsVersion.set(ping.version)
-            setStatus("up")
-            fsDownStreak = 0
-            tray.update()
-            const extra: { [k: string]: any } = { url: "https://www.google.com", maxTimeout: 45000 }
-            if (ping.sessions) {
-                const sess = (fsSession.get() || FS_DEFAULT_SESSION).trim()
-                if (sess) {
-                    if (ping.sessions.indexOf(sess) < 0) await fsApi("sessions.create", { session: sess })
-                    extra.session = sess
+                const ping = await fsProbe()
+                if (!ping.up) {
+                    setTest("Not reachable at " + fsBase() + " — it may still be starting; wait for the green Running badge.")
+                    tray.update()
+                    return
                 }
+                if (ping.version) fsVersion.set(ping.version)
+                setStatus("up")
+                fsDownStreak = 0
+                tray.update()
+                const extra: { [k: string]: any } = { url: "https://www.google.com", maxTimeout: 45000 }
+                if (ping.sessions) {
+                    const sess = (fsSession.get() || FS_DEFAULT_SESSION).trim()
+                    if (sess) {
+                        if (ping.sessions.indexOf(sess) < 0) await fsApi("sessions.create", { session: sess })
+                        extra.session = sess
+                    }
+                }
+                const t0 = nowMs()
+                const r = await fsApi("request.get", extra, 55)
+                const dt = t0 ? Math.round((nowMs() - t0) / 1000) : 0
+                if (r && r.status === "ok") {
+                    setTest("Test OK" + (fsVersion.get() ? " · v" + fsVersion.get() : "") + (dt ? " · " + dt + "s" : ""))
+                } else if (r && r.message) {
+                    setTest("Reachable, but the solve failed: " + String(r.message))
+                } else {
+                    setTest("Reachable (v" + (fsVersion.get() || "?") + ") but the test timed out — the browser may still be warming up. Try again in a moment.")
+                }
+                tray.update()
+            } finally {
+                fsTesting = false
             }
-            const t0 = nowMs()
-            const r = await fsApi("request.get", extra, 55)
-            const dt = t0 ? Math.round((nowMs() - t0) / 1000) : 0
-            fsTesting = false
-            if (r && r.status === "ok") {
-                setTest("Test OK" + (fsVersion.get() ? " · v" + fsVersion.get() : "") + (dt ? " · " + dt + "s" : ""))
-            } else if (r && r.message) {
-                setTest("Reachable, but the solve failed: " + String(r.message))
-            } else {
-                setTest("Reachable (v" + (fsVersion.get() || "?") + ") but the test timed out — the browser may still be warming up. Try again in a moment.")
-            }
-            tray.update()
-        }
-
-        function refreshLogs(): void {
-            tray.update()
         }
 
         async function runDoctor(): Promise<void> {
@@ -852,7 +854,8 @@ function init() {
                         try { pushLog($toString(data)) } catch (_e) {}
                     }
                     if (code === undefined) {
-                        if (fsLogView.get()) tray.update()
+                        const t = nowMs()
+                        if (t - fsLastLiveUpdate >= 250) { fsLastLiveUpdate = t; tray.update() }
                         return
                     }
                     const wasUp = fsStatus.get() === "up"
@@ -862,6 +865,7 @@ function init() {
                     fsRestarting = false
                     if (wasUp && !solverBinExists()) {
                         fsAvBlocked = true
+                        try { $storage.set("fs.avBlocked", true) } catch (_e) {}
                         plog("antivirus removed the solver (binary quarantined while running)")
                         setErr("Antivirus (e.g. Windows Defender) removed the solver while it was running — it flags the unsigned binary as suspicious (it hides its window and drives a browser).")
                         fsHint.set("Add a Windows Security exclusion for the aquatils folder (%LOCALAPPDATA%\\aquatils), then press Start.")
@@ -877,6 +881,7 @@ function init() {
                         const binGone = !solverBinExists()
                         if (execBlocked || binGone) {
                             fsAvBlocked = true
+                            try { $storage.set("fs.avBlocked", true) } catch (_e) {}
                             plog("antivirus blocked the solver" + (binGone ? " (binary quarantined/removed while running)" : " (execution blocked)"))
                             setErr("Antivirus (e.g. Windows Defender) " + (binGone ? "removed" : "blocked") + " the solver — it flags the unsigned binary as suspicious (it hides its window and drives a browser).")
                             fsHint.set("Add a Windows Security exclusion for the aquatils folder (%LOCALAPPDATA%\\aquatils), then press Start.")
@@ -974,7 +979,6 @@ function init() {
             try { $storage.set("fs.manualStop", true) } catch (_e) {}
             binaryStop(() => {
                 setStatus("down")
-                try { $storage.set("fs.solverReady", "") } catch (_e) {}
                 let removed = false
                 try {
                     const base = aquatilsDir()
@@ -988,8 +992,10 @@ function init() {
                     }
                 } catch (_e) {}
                 if (solverBinExists()) {
+                    try { $storage.set("fs.solverReady", FS_VERSION) } catch (_e) {}
                     setNote("Couldn't fully remove the solver — a file may still be locked. Make sure it's stopped, then try again.")
                 } else {
+                    try { $storage.set("fs.solverReady", "") } catch (_e) {}
                     setNote(removed ? "Removed the downloaded solver. Press Start to fetch it again." : "No solver download was present.")
                 }
                 tray.update()
@@ -1164,6 +1170,8 @@ function init() {
         function fsStart(): void {
             fsManualStop = false
             try { $storage.set("fs.manualStop", false) } catch (_e) {}
+            fsAvBlocked = false
+            try { $storage.set("fs.avBlocked", false) } catch (_e) {}
             if (fsMode.get() === "remote") {
                 setNote("Remote mode: start the solver yourself; this only manages sessions at " + fsBase() + ".")
                 tray.update()
@@ -1235,7 +1243,9 @@ function init() {
             }
         })
         ctx.registerEventHandler("seh-save", () => {
-            appBase.set((appRef.current || "").trim() || SEH_DEFAULT_APP)
+            const raw = (appRef.current || "").trim() || SEH_DEFAULT_APP
+            if (!/^https?:\/\/.+/i.test(raw)) { ctx.toast.error("Server URL must start with http:// or https://"); return }
+            appBase.set(raw)
             sehAuthWarned = false
             sehPersist()
             ctx.toast.success("Saved Seanime URL")
@@ -1247,23 +1257,15 @@ function init() {
         ctx.registerEventHandler("fs-restart", () => {
             plog("restart requested")
             fsBusy = false
-            fsRestarting = true
-            tray.update()
             fsStop()
             fsBusy = false
+            fsRestarting = true
+            tray.update()
             fsStart()
-        })
-        ctx.registerEventHandler("fs-refresh", () => {
-            void fsRefresh()
         })
         ctx.registerEventHandler("fs-test", () => {
             void runTest()
         })
-        ctx.registerEventHandler("fs-viewlog", () => {
-            fsLogView.set(!fsLogView.get())
-            tray.update()
-        })
-        ctx.registerEventHandler("fs-logs-refresh", () => refreshLogs())
         ctx.registerEventHandler("fs-logs-copy", () => {
             let t = currentLog()
             if (!t && fsMode.get() !== "remote") {
@@ -1306,9 +1308,6 @@ function init() {
                 })
             })(gi)
         }
-        ctx.registerEventHandler("fs-create-session", () => {
-            void fsEnsureSession().then(() => fsRefresh())
-        })
         ctx.registerEventHandler("fs-mode-remote", () => {
             fsMode.set("remote")
             fsPersist()
@@ -1355,7 +1354,6 @@ function init() {
             $storage.set("ui.mode", uiMode.get())
             tray.update()
         })
-        ctx.registerEventHandler("fs-simple-setup", () => simpleSetup())
         ctx.registerEventHandler("fs-simple-start", () => {
             fsManualStop = false
             setStatus("starting")
@@ -1405,19 +1403,14 @@ function init() {
                 ctx.toast.error("Couldn't copy the path")
             }
         })
-        ctx.registerEventHandler("fs-copy", () => {
-            const text = fsErr.get() || fsNote.get()
-            if (!text) return
-            try {
-                ctx.dom.clipboard.write(text)
-                ctx.toast.success("Error copied to clipboard")
-            } catch (_e) {
-                ctx.toast.error("Couldn't copy to clipboard")
-            }
-        })
         ctx.registerEventHandler("fs-save", () => {
-            fsHost.set((fsHostRef.current || "").trim() || FS_DEFAULT_HOST)
-            fsPort.set((fsPortRef.current || "").trim() || FS_DEFAULT_PORT)
+            const host = (fsHostRef.current || "").trim() || FS_DEFAULT_HOST
+            const port = (fsPortRef.current || "").trim() || FS_DEFAULT_PORT
+            if (/[:/]/.test(host)) { ctx.toast.error("Host must be a bare hostname or IP (no http:// and no port)"); return }
+            const pn = Number(port)
+            if (!/^\d{1,5}$/.test(port) || pn < 1 || pn > 65535) { ctx.toast.error("Port must be a number between 1 and 65535"); return }
+            fsHost.set(host)
+            fsPort.set(port)
             fsSession.set((fsSessionRef.current || "").trim() || FS_DEFAULT_SESSION)
             fsPersist()
             ctx.toast.success("Saved solver settings")
@@ -1516,11 +1509,17 @@ function init() {
                 ],
                 gap: 2,
             }))
-            const lineStyle = { fontSize: "11px", fontFamily: "ui-monospace, monospace", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: "1.5", color: "rgba(255,255,255,0.8)" }
-            const items = sehGroups.map((g) => tray.text(g.label + (g.count > 1 ? "  ×" + g.count : ""), { style: lineStyle }))
+            const lineStyle = { fontSize: "11px", fontFamily: "ui-monospace, monospace", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: "1.5", color: "rgba(255,255,255,0.8)", flexGrow: "1", minWidth: "0" }
+            const items = sehGroups.map((g, i) => tray.flex({
+                items: [
+                    tray.text(g.label + (g.count > 1 ? "  ×" + g.count : ""), { style: lineStyle }),
+                    tray.button({ label: "⧉", onClick: "seh-copy-" + i, intent: "gray-subtle", size: "sm", style: { marginLeft: "6px" } }),
+                ],
+                gap: 1,
+            }))
             rows.push(tray.div({
                 items: items,
-                style: { background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "6px", padding: "8px", maxHeight: "280px", overflowY: "auto" },
+                style: { background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "6px", padding: "8px", flexGrow: "1", minHeight: "160px", overflowY: "auto" },
             }))
             return rows
         }
@@ -1580,6 +1579,10 @@ function init() {
                 items: [statusBadge(), tray.text(detail, { style: { color: "rgba(255,255,255,0.6)", fontSize: "13px", overflowWrap: "anywhere", wordBreak: "break-word" } })],
                 gap: 2,
             }))
+            const note = fsNote.get()
+            if (note && !fsErr.get() && fsStatus.get() !== "up") {
+                rows.push(tray.text(note, { style: { fontSize: "12px", color: "rgba(255,255,255,0.6)", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5" } }))
+            }
             if (solverUpdatePending()) {
                 rows.push(tray.alert({
                     intent: "warning",
@@ -1623,7 +1626,7 @@ function init() {
             rows.push(tray.flex({
                 items: [
                     tray.button({ label: "Copy logs", onClick: "fs-logs-copy", intent: "gray-subtle", size: "sm" }),
-                    tray.button({ label: fsLogFilter.get() ? "Polling: hidden" : "Polling: shown", onClick: "fs-logs-filter", intent: fsLogFilter.get() ? "primary-subtle" : "gray-subtle", size: "sm" }),
+                    tray.button({ label: (fsLogFilter.get() ? "☑" : "☐") + " Hide polling lines", onClick: "fs-logs-filter", intent: fsLogFilter.get() ? "primary-subtle" : "gray-subtle", size: "sm" }),
                     tray.button({ label: "Clear", onClick: "fs-logs-clear", intent: "alert-subtle", size: "sm", style: { marginLeft: "auto" } }),
                 ],
                 gap: 2,
@@ -1635,7 +1638,13 @@ function init() {
                 const lines = log.split("\n").slice(-80)
                 logItems = lines.map((l) => tray.text(l.length ? l : " ", { style: lineStyle }))
             } else {
-                logItems = [tray.text(fsMode.get() === "remote" ? "Logs aren't available in Remote mode (the server runs elsewhere)." : "No output captured yet — start the solver.", { style: { fontSize: "11px", color: "rgba(255,255,255,0.5)" } })]
+                const active = fsStatus.get() === "up" || fsStatus.get() === "starting"
+                const emptyMsg = fsMode.get() === "remote"
+                    ? "Logs aren't available in Remote mode (the server runs elsewhere)."
+                    : active
+                        ? "No recent log lines — new output will appear here."
+                        : "No output captured yet — start the solver."
+                logItems = [tray.text(emptyMsg, { style: { fontSize: "11px", color: "rgba(255,255,255,0.5)" } })]
             }
             rows.push(tray.div({
                 items: logItems,
@@ -1644,18 +1653,31 @@ function init() {
             return rows
         }
 
+        function appendLogs(rows: any[]): void {
+            if (fsMode.get() === "remote") return
+            const ls = logsSection()
+            for (let i = 0; i < ls.length; i++) rows.push(ls[i])
+        }
+
         function cfRows(): any[] {
             const rows: any[] = cfStatusRows()
             const st = fsStatus.get()
             if (uiMode.get() !== "advanced") {
                 const needsDownload = st !== "up" && st !== "starting" && !binaryDownloaded()
-                if (needsDownload && fsConsent.get() && (fsAvBlocked || solverQuarantined())) {
+                if (needsDownload && (fsAvBlocked || solverQuarantined())) {
                     if (!fsErr.get()) {
                         rows.push(dim("Your antivirus removed the solver after it started — Windows Defender flags the unsigned binary as suspicious. Add a Windows Security exclusion for the folder below, then Start (it re-downloads into the excluded folder)."))
                         rows.push(tray.flex({
                             items: [
                                 tray.button({ label: "Copy folder to exclude", onClick: "fs-copy-cache-path", intent: "primary-subtle", size: "sm" }),
                                 tray.button({ label: "Start", onClick: "fs-simple-start", intent: "success", size: "sm", style: ACCENT_STYLE }),
+                                tray.button({ label: "Advanced", onClick: "ui-mode-toggle", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto" } }),
+                            ],
+                            gap: 2,
+                        }))
+                    } else {
+                        rows.push(tray.flex({
+                            items: [
                                 tray.button({ label: "Advanced", onClick: "ui-mode-toggle", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto" } }),
                             ],
                             gap: 2,
@@ -1704,7 +1726,7 @@ function init() {
                     items.push(tray.button({ label: "Advanced", onClick: "ui-mode-toggle", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto" } }))
                     rows.push(tray.flex({ items: items, gap: 2 }))
                 }
-                if (fsMode.get() !== "remote") { const ls = logsSection(); for (let i = 0; i < ls.length; i++) rows.push(ls[i]) }
+                appendLogs(rows)
                 return rows
             }
             rows.push(tray.button({ label: "← Back to Simple", onClick: "ui-mode-toggle", intent: "gray-subtle", size: "sm" }))
@@ -1751,6 +1773,12 @@ function init() {
                 ],
                 gap: 2,
             }))
+            if (fsTest.get()) {
+                rows.push(tray.div({
+                    items: [tray.text(fsTest.get(), { style: { fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5", color: "rgba(255,255,255,0.75)" } })],
+                    style: { background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "6px", padding: "8px" },
+                }))
+            }
 
             rows.push(divider())
             rows.push(heading("Downloads"))
@@ -1774,6 +1802,7 @@ function init() {
                 }))
             }
 
+            appendLogs(rows)
             return rows
         }
 
