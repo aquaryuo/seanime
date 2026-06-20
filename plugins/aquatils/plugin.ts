@@ -96,8 +96,10 @@ function init() {
 
         function plog(msg: string): void {
             if (!msg) return
+            const clean = msg.replace(/…/g, "...").replace(/[—–]/g, "-").replace(/·/g, "|").replace(/[ \t]{2,}/g, " ").replace(/\s+$/, "")
+            if (!clean) return
             const t = hhmmss(nowMs())
-            fsLastOut = logAppend(fsLastOut, (t ? t + " " : "") + "[plugin] " + msg + "\n")
+            fsLastOut = logAppend(fsLastOut, (t ? t + " " : "") + "[plugin] " + clean + "\n")
         }
 
         function setNote(msg: string): void {
@@ -115,14 +117,24 @@ function init() {
             if (msg) plog("error: " + msg)
         }
 
-        let fsProgKey = ""
-        function progressNote(label: string, pct: number): void {
+        let dlLogAt = 0
+        function fmtSize(bytes: number): string {
+            if (!bytes || bytes < 0) return "0"
+            if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + "MB"
+            if (bytes >= 1024) return Math.round(bytes / 1024) + "KB"
+            return bytes + "B"
+        }
+        function dlProgress(label: string, p: $downloader.DownloadProgress): void {
+            const pct = Math.round(p.percentage || 0)
             fsNote.set(label + " " + pct + "%")
-            const key = label + ":" + Math.floor(pct / 20)
-            if (key !== fsProgKey) {
-                fsProgKey = key
-                plog(label + " " + pct + "%")
-            }
+            const now = nowMs()
+            if (now && dlLogAt && now - dlLogAt < 2500) return
+            dlLogAt = now || 1
+            const got = p.totalBytes || 0, tot = p.totalSize || 0, spd = p.speed || 0
+            let line = label + " " + pct + "%"
+            if (got || tot) line += " (" + fmtSize(got) + (tot ? " of " + fmtSize(tot) : "") + (spd ? ", " + fmtSize(spd) + "/s" : "") + ")"
+            else line += spd ? " (" + fmtSize(spd) + "/s)" : " (connecting…)"
+            plog(line)
         }
 
         function setStatus(next: string): void {
@@ -604,14 +616,17 @@ function init() {
             try { $os.mkdirAll(dir, 493) } catch (_e) {}
             const zip = $filepath.join(dir, "chrome.zip")
             let id = ""
-            try { id = dl.download(st.url, zip) } catch (_e) { done(false); return }
+            try { id = dl.download(st.url, zip) } catch (_e) { setErr("Chromium download couldn't start: " + String(_e)); done(false); return }
+            plog("downloading Chromium" + (st.version ? " " + st.version : "") + " (Stage B browser)")
+            dlLogAt = 0
             const cancel = dl.watch(id, (p: $downloader.DownloadProgress | undefined) => {
                 if (!p) return
                 if (p.status === "downloading") {
-                    progressNote("Downloading Chromium…", Math.round(p.percentage))
+                    dlProgress("Downloading Chromium", p)
                     tray.update()
                 } else if (p.status === "completed") {
                     cancel()
+                    plog("extracting Chromium…")
                     let unzipOk = true
                     try { $osExtra.unzip(zip, dir) } catch (_e) { unzipOk = false }
                     try { $os.removeAll(zip) } catch (_e) {}
@@ -627,6 +642,7 @@ function init() {
                     done(ok)
                 } else if (p.status === "error") {
                     cancel()
+                    setErr("Chromium download failed: " + (p.error || "unknown error"))
                     done(false)
                 }
             })
@@ -911,10 +927,12 @@ function init() {
             fsBusy = true
             setStatus("starting")
             const launchGen = fsBinaryGen
-            setNote("Downloading solver " + SOLVER_VERSION + " — if Seanime asks, click Allow to permit the download.")
+            setNote("Downloading solver " + SOLVER_VERSION + " - if Seanime asks, click Allow to permit the download.")
             try { ctx.toast.info("Seanime will ask permission next — click Allow to download the solver.") } catch (_e) {}
             tray.update()
             const url = "https://github.com/" + SOLVER_REPO + "/releases/download/solver-v" + SOLVER_VERSION + "/" + pick.asset
+            plog("downloading solver binary " + pick.asset + " from github.com/" + SOLVER_REPO)
+            dlLogAt = 0
             let id = ""
             try {
                 id = dl.download(url, archive)
@@ -938,7 +956,7 @@ function init() {
                 if (!p) return
                 if (p.status === "downloading") {
                     fsStartTicks = 0
-                    progressNote("Downloading…", Math.round(p.percentage))
+                    dlProgress("Downloading solver " + SOLVER_VERSION, p)
                     tray.update()
                 } else if (p.status === "completed") {
                     cancel()
@@ -947,7 +965,7 @@ function init() {
                         fsBusy = false
                         return
                     }
-                    setNote("Extracting…")
+                    setNote("Extracting solver " + SOLVER_VERSION + "…")
                     tray.update()
                     try {
                         if (pick.zip) $osExtra.unzip(archive, dir)
