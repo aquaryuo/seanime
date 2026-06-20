@@ -1744,6 +1744,10 @@ function init() {
 
         tray.render(() => {
             const rows: any[] = []
+            // Seanime wraps plugin content in a div capped at max-h-[35rem] (560px) with
+            // its own scroll, which leaves the rest of the 100dvh panel empty. Lift that
+            // cap so the content fills the full-height panel and the log area can grow.
+            rows.push(tray.css({ css: '[data-plugin-tray-popover-content="aquatils"] .max-h-\\[35rem\\]{max-height:100dvh!important;padding:0!important;}' }))
             const errCount = errors.get().length
             rows.push(tray.flex({
                 items: [
