@@ -249,27 +249,34 @@ function init() {
             return out.join("\n")
         }
 
+        // Tall-but-detached floating modal: leaves a gap above and below so it reads as
+        // a floating panel on the side rather than a flush full-height drawer.
+        const PANEL_H = "calc(100dvh - 5.5rem)"
         const tray = ctx.newTray({
             iconUrl: "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/icon.png",
             withContent: true,
             width: "480px",
-            minHeight: "100dvh",
+            minHeight: PANEL_H,
         })
 
         // Seanime wraps plugin tray content in a div capped at max-h-[35rem] (560px) with
-        // its own scroll, leaving the rest of the 100dvh panel empty below it. tray.css is
-        // scoped to siblings/children so it can't reach that ancestor — use the DOM API to
-        // lift the cap directly so the content fills the full-height panel.
+        // its own scroll. tray.css is scoped to siblings/children so it can't reach that
+        // ancestor — use the DOM API to lift the cap to the panel height, and detach the
+        // popover from the edges so it floats.
+        function styleEls(els: any[], pairs: [string, string][]): void {
+            for (let i = 0; i < els.length; i++) {
+                for (let j = 0; j < pairs.length; j++) {
+                    try { els[i].setStyle(pairs[j][0], pairs[j][1]) } catch (_e) {}
+                }
+            }
+        }
         try {
             if (ctx.dom && ctx.dom.observe) {
                 ctx.dom.observe('[data-plugin-tray-popover-content="aquatils"] [class*="max-h-[35rem]"]', (els) => {
-                    for (let i = 0; i < els.length; i++) {
-                        try {
-                            els[i].setStyle("max-height", "100dvh")
-                            els[i].setStyle("maxHeight", "100dvh")
-                            els[i].setStyle("padding", "0px")
-                        } catch (_e) {}
-                    }
+                    styleEls(els, [["max-height", PANEL_H], ["maxHeight", PANEL_H], ["padding", "0px"]])
+                })
+                ctx.dom.observe('[data-plugin-tray-popover-content="aquatils"]', (els) => {
+                    styleEls(els, [["margin-top", "1rem"], ["marginTop", "1rem"], ["margin-right", "1rem"], ["marginRight", "1rem"]])
                 })
             }
         } catch (_e) {}
@@ -1780,12 +1787,14 @@ function init() {
                 style: {
                     display: "flex",
                     flexDirection: "column",
-                    minHeight: "100dvh",
+                    minHeight: PANEL_H,
                     padding: "18px 16px",
                     background: "linear-gradient(180deg, rgba(16,18,24,0.78), rgba(9,10,14,0.84))",
                     backdropFilter: "blur(28px) saturate(150%)",
                     WebkitBackdropFilter: "blur(28px) saturate(150%)",
-                    borderLeft: "1px solid rgba(255,255,255,0.10)",
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    borderRadius: "16px",
+                    boxShadow: "0 24px 60px -12px rgba(0,0,0,0.7)",
                 },
             })
         })
