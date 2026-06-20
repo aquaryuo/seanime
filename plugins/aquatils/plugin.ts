@@ -252,7 +252,8 @@ function init() {
         const tray = ctx.newTray({
             iconUrl: "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/icon.png",
             withContent: true,
-            width: "min(760px, 92vw)",
+            width: "480px",
+            minHeight: "min(78vh, 760px)",
         })
 
         function sehPersist(): void {
@@ -1590,7 +1591,7 @@ function init() {
             }
             rows.push(tray.div({
                 items: logItems,
-                style: { background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "6px", padding: "8px", maxHeight: "min(46vh, 360px)", overflowY: "auto" },
+                style: { background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "6px", padding: "8px", maxHeight: "min(60vh, 520px)", overflowY: "auto" },
             }))
             return rows
         }
