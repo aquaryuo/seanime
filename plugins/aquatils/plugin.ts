@@ -800,32 +800,36 @@ function init() {
                         if (!fsManualStop) notifyOnce("down", "Aqua's Utils: the solver stopped (code " + code + ").")
                     } else {
                         const why = cleanTail(fsLastOut) || readLogTail(logPath)
-                        const corrupt = /cannot execute the specified program|not a valid win32|is not recognized as an internal|exec format error/i.test(fsLastOut)
-                        plog("solver exited (code " + code + ") before coming up" + (corrupt ? "; binary won't execute" : (why ? "" : "; no output captured")))
-                        if (corrupt) {
-                            plog("removing the solver binary (won't execute) so the next start re-downloads")
-                            try { $storage.set("fs.solverReady", "") } catch (_e) {}
-                            try { $os.removeAll($filepath.join($os.cacheDir(), "aquatils", FS_VERSION, FS_CONTAINER)) } catch (_e) {}
-                            setErr("The downloaded solver couldn't run — likely a corrupt/incomplete download or antivirus. Press Start to download it again.")
-                            setNote("Solver download was corrupt — press Start to re-download.")
-                        } else if (!why) {
-                            fsBadStarts++
-                            if (fsBadStarts >= 2) {
-                                plog("removing the solver binary after " + fsBadStarts + " no-output starts — it will re-download")
-                                try { $storage.set("fs.solverReady", "") } catch (_e) {}
-                                try { $os.removeAll($filepath.join($os.cacheDir(), "aquatils", FS_VERSION, FS_CONTAINER)) } catch (_e) {}
-                                setErr("The solver produced no output across repeated starts — re-downloading. Press Start.")
-                                setNote("Re-downloading the solver — press Start.")
-                            } else {
-                                setErr("The solver exited (code " + code + ") with no output. Press Start to retry — the download is kept.")
-                                setNote("Solver exited (code " + code + ") — press Start to retry.")
-                            }
+                        const execBlocked = /cannot execute the specified program|not a valid win32 application|is not recognized as an internal|exec format error|access is denied|contains a virus|operation did not complete successfully/i.test(fsLastOut)
+                        const binGone = !solverBinExists()
+                        if (execBlocked || binGone) {
+                            plog("antivirus blocked the solver" + (binGone ? " (binary quarantined/removed)" : " (execution blocked)"))
+                            if (binGone) { try { $storage.set("fs.solverReady", "") } catch (_e) {} }
+                            setErr("Antivirus (e.g. Windows Defender) " + (binGone ? "removed" : "blocked") + " the solver — it flags the unsigned binary as suspicious (it hides its window and drives a browser). Add a Windows Security exclusion for the aquatils folder (%LOCALAPPDATA%\\aquatils), then press Start.")
+                            setNote("Blocked by antivirus — add an exclusion for the aquatils folder, then Start.")
+                            ctx.toast.error("Antivirus blocked the solver — add an exclusion for the aquatils folder.")
+                            notifyOnce("av", "Aqua's Utils: antivirus blocked the solver. Add an exclusion for %LOCALAPPDATA%\\aquatils, then Start.")
                         } else {
-                            setErr(why)
-                            setNote("Solver exited (code " + code + "): " + why)
+                            plog("solver exited (code " + code + ")" + (why ? " after producing output" : "; no output captured"))
+                            if (!why) {
+                                fsBadStarts++
+                                if (fsBadStarts >= 2) {
+                                    plog("removing the solver binary after " + fsBadStarts + " no-output starts — it will re-download")
+                                    try { $storage.set("fs.solverReady", "") } catch (_e) {}
+                                    try { $os.removeAll($filepath.join($os.cacheDir(), "aquatils", FS_VERSION, FS_CONTAINER)) } catch (_e) {}
+                                    setErr("The solver produced no output across repeated starts — re-downloading. Press Start.")
+                                    setNote("Re-downloading the solver — press Start.")
+                                } else {
+                                    setErr("The solver exited (code " + code + ") with no output. Press Start to retry — the download is kept.")
+                                    setNote("Solver exited (code " + code + ") — press Start to retry.")
+                                }
+                            } else {
+                                setErr(why)
+                                setNote("Solver exited (code " + code + "): " + why)
+                            }
+                            ctx.toast.error("Solver exited (code " + code + ")")
+                            notifyOnce("crash", "Aqua's Utils: the solver failed to start (code " + code + "). Open the tray for details.")
                         }
-                        ctx.toast.error("Solver exited (code " + code + ")")
-                        notifyOnce("crash", "Aqua's Utils: the solver failed to start (code " + code + "). Open the tray for details.")
                     }
                     tray.update()
                 })
