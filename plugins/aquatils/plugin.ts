@@ -51,6 +51,7 @@ function init() {
         let fsBinary: $os.Cmd | null = null
         let fsStartTicks = 0
         let fsBinaryGen = 0
+        let fsBadStarts = 0
         let fsDownloadId = ""
         let fsLastOut = ""
         let fsCleanOut = ""
@@ -186,6 +187,7 @@ function init() {
                 setNote("")
                 setErr("")
                 fsRestarting = false
+                fsBadStarts = 0
                 if (!fsUpSince) fsUpSince = nowMs()
                 fsNotified["down"] = false
                 fsNotified["crash"] = false
@@ -798,10 +800,18 @@ function init() {
                         if (!fsManualStop) notifyOnce("down", "Aqua's Utils: the solver stopped (code " + code + ").")
                     } else {
                         const why = cleanTail(fsLastOut) || readLogTail(logPath)
-                        const blocked = !why ? " No output was captured — it died before logging (corrupt download, antivirus, or a missing system library)." : ""
+                        plog("solver exited (code " + code + ") before coming up" + (why ? "" : "; no output captured"))
+                        let blocked = ""
                         if (!why) {
-                            try { $storage.set("fs.solverReady", "") } catch (_e) {}
-                            try { $os.removeAll($filepath.join($os.cacheDir(), "aquatils", FS_VERSION, FS_CONTAINER)) } catch (_e) {}
+                            fsBadStarts++
+                            if (fsBadStarts >= 2) {
+                                plog("removing the solver binary after " + fsBadStarts + " no-output starts — it will re-download")
+                                try { $storage.set("fs.solverReady", "") } catch (_e) {}
+                                try { $os.removeAll($filepath.join($os.cacheDir(), "aquatils", FS_VERSION, FS_CONTAINER)) } catch (_e) {}
+                                blocked = " No output across repeated starts — re-downloading (corrupt download, antivirus, or a missing system library)."
+                            } else {
+                                blocked = " No output captured this time — press Start to retry (the download is kept)."
+                            }
                         }
                         setErr(fsLastOut || why || ("Solver exited (code " + code + ")"))
                         setNote("Solver exited (code " + code + ")" + (why ? ": " + why : "") + "." + blocked)
