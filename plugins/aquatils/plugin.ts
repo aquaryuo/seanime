@@ -1649,21 +1649,19 @@ function init() {
             const st = fsStatus.get()
             if (uiMode.get() !== "advanced") {
                 const needsDownload = st !== "up" && st !== "starting" && !binaryDownloaded()
-                if (needsDownload && fsConsent.get()) {
-                    if (fsAvBlocked || solverQuarantined()) {
-                        if (!fsErr.get()) {
-                            rows.push(dim("Your antivirus removed the solver after it started — Windows Defender flags the unsigned binary as suspicious. Add a Windows Security exclusion for the folder below, then Start (it re-downloads into the excluded folder)."))
-                            rows.push(tray.flex({
-                                items: [
-                                    tray.button({ label: "Copy folder to exclude", onClick: "fs-copy-cache-path", intent: "primary-subtle", size: "sm" }),
-                                    tray.button({ label: "Start", onClick: "fs-simple-start", intent: "success", size: "sm", style: ACCENT_STYLE }),
-                                    tray.button({ label: "Advanced", onClick: "ui-mode-toggle", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto" } }),
-                                ],
-                                gap: 2,
-                            }))
-                        }
-                        return rows
+                if (needsDownload && fsConsent.get() && (fsAvBlocked || solverQuarantined())) {
+                    if (!fsErr.get()) {
+                        rows.push(dim("Your antivirus removed the solver after it started — Windows Defender flags the unsigned binary as suspicious. Add a Windows Security exclusion for the folder below, then Start (it re-downloads into the excluded folder)."))
+                        rows.push(tray.flex({
+                            items: [
+                                tray.button({ label: "Copy folder to exclude", onClick: "fs-copy-cache-path", intent: "primary-subtle", size: "sm" }),
+                                tray.button({ label: "Start", onClick: "fs-simple-start", intent: "success", size: "sm", style: ACCENT_STYLE }),
+                                tray.button({ label: "Advanced", onClick: "ui-mode-toggle", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto" } }),
+                            ],
+                            gap: 2,
+                        }))
                     }
+                } else if (needsDownload && fsConsent.get()) {
                     rows.push(dim("A newer solver (v" + SOLVER_VERSION + ") is ready to install — it replaces the previous version (old files are removed automatically)."))
                     rows.push(tray.flex({
                         items: [
@@ -1672,9 +1670,7 @@ function init() {
                         ],
                         gap: 2,
                     }))
-                    return rows
-                }
-                if (needsDownload) {
+                } else if (needsDownload) {
                     rows.push(dim("aquatils-solver runs locally to get blocked sources (Cloudflare / DDoS-Guard) loading. It's downloaded from GitHub and only contacts the sites you stream."))
                     rows.push(dim("Hard JS challenges (interactive Turnstile) need a Chromium browser. If you have Chrome or Edge, leave the box below off. If you don't, tick it to also fetch a minimal Chromium (~80 MB) into the plugin's cache."))
                     rows.push(tray.button({
@@ -1696,18 +1692,18 @@ function init() {
                         ],
                         gap: 2,
                     }))
-                    return rows
-                }
-                const items: any[] = []
-                if (st === "up" || st === "starting") {
-                    items.push(tray.button({ label: "Stop", onClick: "fs-stop", intent: "alert", size: "sm", disabled: fsRestarting }))
-                    items.push(tray.button({ label: fsRestarting ? "Restarting…" : "Restart", onClick: "fs-restart", intent: "warning-subtle", size: "sm", disabled: fsRestarting }))
-                    if (st === "up") items.push(tray.button({ label: "Test", onClick: "fs-test", intent: "gray-subtle", size: "sm" }))
                 } else {
-                    items.push(tray.button({ label: "Start", onClick: "fs-simple-start", intent: "success", size: "sm", style: ACCENT_STYLE }))
+                    const items: any[] = []
+                    if (st === "up" || st === "starting") {
+                        items.push(tray.button({ label: "Stop", onClick: "fs-stop", intent: "alert", size: "sm", disabled: fsRestarting }))
+                        items.push(tray.button({ label: fsRestarting ? "Restarting…" : "Restart", onClick: "fs-restart", intent: "warning-subtle", size: "sm", disabled: fsRestarting }))
+                        if (st === "up") items.push(tray.button({ label: "Test", onClick: "fs-test", intent: "gray-subtle", size: "sm" }))
+                    } else {
+                        items.push(tray.button({ label: "Start", onClick: "fs-simple-start", intent: "success", size: "sm", style: ACCENT_STYLE }))
+                    }
+                    items.push(tray.button({ label: "Advanced", onClick: "ui-mode-toggle", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto" } }))
+                    rows.push(tray.flex({ items: items, gap: 2 }))
                 }
-                items.push(tray.button({ label: "Advanced", onClick: "ui-mode-toggle", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto" } }))
-                rows.push(tray.flex({ items: items, gap: 2 }))
                 if (fsMode.get() !== "remote") { const ls = logsSection(); for (let i = 0; i < ls.length; i++) rows.push(ls[i]) }
                 return rows
             }
