@@ -565,7 +565,7 @@ function init() {
             const out: string[] = []
             for (let i = lines.length - 1; i >= 0 && out.length < 3; i--) {
                 const t = lines[i].replace(/[^\x20-\x7E]+/g, " ").replace(/\s+/g, " ").trim()
-                if (t) out.unshift(t)
+                if (t && t.indexOf("[plugin]") < 0) out.unshift(t)
             }
             return scrubLog(out.join(" | ")).slice(-220)
         }
@@ -800,21 +800,30 @@ function init() {
                         if (!fsManualStop) notifyOnce("down", "Aqua's Utils: the solver stopped (code " + code + ").")
                     } else {
                         const why = cleanTail(fsLastOut) || readLogTail(logPath)
-                        plog("solver exited (code " + code + ") before coming up" + (why ? "" : "; no output captured"))
-                        let blocked = ""
-                        if (!why) {
+                        const corrupt = /cannot execute the specified program|not a valid win32|is not recognized as an internal|exec format error/i.test(fsLastOut)
+                        plog("solver exited (code " + code + ") before coming up" + (corrupt ? "; binary won't execute" : (why ? "" : "; no output captured")))
+                        if (corrupt) {
+                            plog("removing the solver binary (won't execute) so the next start re-downloads")
+                            try { $storage.set("fs.solverReady", "") } catch (_e) {}
+                            try { $os.removeAll($filepath.join($os.cacheDir(), "aquatils", FS_VERSION, FS_CONTAINER)) } catch (_e) {}
+                            setErr("The downloaded solver couldn't run — likely a corrupt/incomplete download or antivirus. Press Start to download it again.")
+                            setNote("Solver download was corrupt — press Start to re-download.")
+                        } else if (!why) {
                             fsBadStarts++
                             if (fsBadStarts >= 2) {
                                 plog("removing the solver binary after " + fsBadStarts + " no-output starts — it will re-download")
                                 try { $storage.set("fs.solverReady", "") } catch (_e) {}
                                 try { $os.removeAll($filepath.join($os.cacheDir(), "aquatils", FS_VERSION, FS_CONTAINER)) } catch (_e) {}
-                                blocked = " No output across repeated starts — re-downloading (corrupt download, antivirus, or a missing system library)."
+                                setErr("The solver produced no output across repeated starts — re-downloading. Press Start.")
+                                setNote("Re-downloading the solver — press Start.")
                             } else {
-                                blocked = " No output captured this time — press Start to retry (the download is kept)."
+                                setErr("The solver exited (code " + code + ") with no output. Press Start to retry — the download is kept.")
+                                setNote("Solver exited (code " + code + ") — press Start to retry.")
                             }
+                        } else {
+                            setErr(why)
+                            setNote("Solver exited (code " + code + "): " + why)
                         }
-                        setErr(fsLastOut || why || ("Solver exited (code " + code + ")"))
-                        setNote("Solver exited (code " + code + ")" + (why ? ": " + why : "") + "." + blocked)
                         ctx.toast.error("Solver exited (code " + code + ")")
                         notifyOnce("crash", "Aqua's Utils: the solver failed to start (code " + code + "). Open the tray for details.")
                     }
@@ -1013,6 +1022,20 @@ function init() {
                     fsDownloadId = ""
                     if (fsBinaryGen !== launchGen) {
                         fsBusy = false
+                        return
+                    }
+                    let archiveSize = 0
+                    try { const sa = $os.stat(archive); if (sa) { try { archiveSize = sa.size() } catch (_e) {} } } catch (_e) {}
+                    const expected = p.totalSize || 0
+                    if (expected > 0 && archiveSize > 0 && archiveSize < expected - 4096) {
+                        fsBusy = false
+                        setStatus("down")
+                        plog("download truncated: " + fmtSize(archiveSize) + " of " + fmtSize(expected) + " — discarding")
+                        try { $storage.set("fs.solverReady", "") } catch (_e) {}
+                        try { $os.removeAll(dir) } catch (_e) {}
+                        setErr("The solver download was incomplete (" + fmtSize(archiveSize) + " of " + fmtSize(expected) + ") — your connection to GitHub looks slow. Press Start to try again.")
+                        setNote("Download incomplete — press Start to retry.")
+                        tray.update()
                         return
                     }
                     setNote("Extracting solver " + SOLVER_VERSION + "…")
