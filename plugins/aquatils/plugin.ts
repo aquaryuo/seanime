@@ -1462,10 +1462,18 @@ function init() {
         }
         function statusBadge(): any {
             const st = fsStatus.get()
-            if (st === "up") return tray.badge({ text: "● Running", intent: "success", size: "md" })
-            if (st === "starting") return tray.badge({ text: "◐ Starting", intent: "warning", size: "md" })
-            if (st === "down") return tray.badge({ text: "○ Off", intent: "gray", size: "md" })
-            return tray.badge({ text: "◌ Checking", intent: "gray", size: "md" })
+            let color = "#9aa0a8", label = "Checking"
+            if (st === "up") { color = "#34d399"; label = "Running" }
+            else if (st === "starting") { color = "#fbbf24"; label = "Starting" }
+            else if (st === "down") { color = "#6b7280"; label = "Off" }
+            return tray.flex({
+                items: [
+                    tray.div({ items: [], style: { width: "9px", height: "9px", borderRadius: "50%", background: color, boxShadow: "0 0 10px " + color + ", 0 0 3px " + color, flexShrink: "0" } }),
+                    tray.text(label, { style: { fontSize: "13px", fontWeight: "600", color: "rgba(255,255,255,0.92)", letterSpacing: "0.02em" } }),
+                ],
+                gap: 2,
+                style: { alignItems: "center" },
+            })
         }
         function uptimeStr(): string {
             const t = nowMs()
@@ -1816,7 +1824,6 @@ function init() {
                     background: "linear-gradient(180deg, rgba(18,19,24,0.40), rgba(10,11,15,0.52))",
                     backdropFilter: "blur(30px) saturate(115%)",
                     WebkitBackdropFilter: "blur(30px) saturate(115%)",
-                    border: "1px solid rgba(255,255,255,0.12)",
                     borderRadius: "16px",
                     boxShadow: "0 24px 60px -12px rgba(0,0,0,0.7)",
                 },
