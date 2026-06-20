@@ -1462,11 +1462,11 @@ function init() {
         }
         function statusBadge(): any {
             const st = fsStatus.get()
-            const s = { borderRadius: "5px" }
-            if (st === "up") return tray.badge({ text: "Running", intent: "success", size: "md", style: s })
-            if (st === "starting") return tray.badge({ text: "Starting", intent: "warning", size: "md", style: s })
-            if (st === "down") return tray.badge({ text: "Off", intent: "gray", size: "md", style: s })
-            return tray.badge({ text: "Checking", intent: "gray", size: "md", style: s })
+            const s = { borderRadius: "3px" }
+            if (st === "up") return tray.badge({ text: "▶ Running", intent: "success", size: "md", style: s })
+            if (st === "starting") return tray.badge({ text: "◐ Starting", intent: "warning", size: "md", style: s })
+            if (st === "down") return tray.badge({ text: "⏻ Off", intent: "gray", size: "md", style: s })
+            return tray.badge({ text: "◌ Checking", intent: "gray", size: "md", style: s })
         }
         function uptimeStr(): string {
             const t = nowMs()
