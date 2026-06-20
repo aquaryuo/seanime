@@ -1610,7 +1610,7 @@ function init() {
                 if (fsMode.get() !== "remote" && !chromiumDownloadedHere() && !fsWantChromium.get()) {
                     acts.push(tray.button({ label: "Enable Chromium", onClick: "fs-enable-chromium", intent: "gray-subtle", size: "sm" }))
                 }
-                acts.push(tray.button({ label: "📋", onClick: "fs-copy-diag", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto" } }))
+                acts.push(tray.button({ label: "⧉", onClick: "fs-copy-diag", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto" } }))
                 rows.push(tray.flex({ items: acts, gap: 2 }))
             }
             return rows
@@ -1751,7 +1751,7 @@ function init() {
                 items: [
                     tray.button({ label: "Test", onClick: "fs-test", intent: "gray-subtle", size: "sm" }),
                     tray.button({ label: "Doctor", onClick: "fs-doctor", intent: "gray-subtle", size: "sm" }),
-                    tray.button({ label: "📋", onClick: "fs-copy-diag", intent: "gray-subtle", size: "sm" }),
+                    tray.button({ label: "⧉", onClick: "fs-copy-diag", intent: "gray-subtle", size: "sm" }),
                 ],
                 gap: 2,
             }))
