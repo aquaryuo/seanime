@@ -1591,7 +1591,7 @@ function init() {
             }
             rows.push(tray.div({
                 items: logItems,
-                style: { background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "6px", padding: "8px", maxHeight: "min(60vh, 520px)", overflowY: "auto" },
+                style: { background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "6px", padding: "8px", flexGrow: 1, minHeight: "160px", overflowY: "auto" },
             }))
             return rows
         }
@@ -1760,6 +1760,8 @@ function init() {
                 items: rows,
                 gap: 3,
                 style: {
+                    display: "flex",
+                    flexDirection: "column",
                     minHeight: "100dvh",
                     padding: "18px 16px",
                     background: "linear-gradient(180deg, rgba(16,18,24,0.78), rgba(9,10,14,0.84))",
