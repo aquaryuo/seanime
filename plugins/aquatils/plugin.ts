@@ -1533,7 +1533,6 @@ function init() {
                 intent: fsAutoStart.get() ? "success-subtle" : "gray-subtle",
                 size: "sm",
             }))
-            rows.push(dim("Start the solver automatically when Seanime launches."))
             rows.push(divider())
             rows.push(tray.button({
                 label: fsAutoUpdate.get() ? "✓ Auto-update solver & Chromium" : "Auto-update solver & Chromium: off",
@@ -1541,7 +1540,6 @@ function init() {
                 intent: fsAutoUpdate.get() ? "success-subtle" : "gray-subtle",
                 size: "sm",
             }))
-            rows.push(dim("When on, the solver (and a downloaded Chromium) update themselves once a newer version is bundled. When off, you'll get a notice to update manually."))
             rows.push(divider())
             rows.push(tray.button({
                 label: "Browser tier: " + (fsBrowserMode.get() === "offscreen" ? "Off-screen (max stealth)" : "Invisible (headless)"),
@@ -1549,7 +1547,6 @@ function init() {
                 intent: "primary-subtle",
                 size: "sm",
             }))
-            rows.push(dim("How the solver drives a browser for hard JS gates (Cloudflare/Turnstile). Neither shows a normal window. Invisible: --headless=new on the real GPU. Off-screen: a real window placed off your screen — stronger against bot-detection, may briefly flash on launch."))
             rows.push(divider())
             const dnsLabel = fsDns.get() === "cloudflare" ? "Cloudflare" : fsDns.get() === "google" ? "Google" : fsDns.get() === "quad9" ? "Quad9" : "Off (use system DNS)"
             rows.push(tray.button({
@@ -1558,7 +1555,6 @@ function init() {
                 intent: fsDns.get() !== "off" ? "success-subtle" : "gray-subtle",
                 size: "sm",
             }))
-            rows.push(dim("If your ISP blocks a site by tampering with DNS (you'd see a non-site placeholder/notice page), turn this on: the solver resolves names over an encrypted channel (DNS-over-TLS) so the block is bypassed. Off uses your system's DNS."))
             rows.push(divider())
             rows.push(tray.button({
                 label: notify.get() ? "✓ Error notifications: on" : "Error notifications: off",
@@ -1566,9 +1562,8 @@ function init() {
                 intent: notify.get() ? "success-subtle" : "gray-subtle",
                 size: "sm",
             }))
-            rows.push(dim("Toasts when an extension reports an error. Off by default."))
             rows.push(divider())
-            rows.push(dim("Seanime server URL (used to read logs for the Errors tab)"))
+            rows.push(dim("Seanime server URL"))
             rows.push(tray.input({ fieldRef: appRef, placeholder: SEH_DEFAULT_APP }))
             rows.push(tray.button({ label: "Save", onClick: "seh-save", intent: "primary", size: "sm" }))
             return rows
@@ -1615,7 +1610,7 @@ function init() {
                 if (fsMode.get() !== "remote" && !chromiumDownloadedHere() && !fsWantChromium.get()) {
                     acts.push(tray.button({ label: "Enable Chromium", onClick: "fs-enable-chromium", intent: "gray-subtle", size: "sm" }))
                 }
-                acts.push(tray.button({ label: "Copy diagnostics", onClick: "fs-copy-diag", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto" } }))
+                acts.push(tray.button({ label: "📋", onClick: "fs-copy-diag", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto" } }))
                 rows.push(tray.flex({ items: acts, gap: 2 }))
             }
             return rows
@@ -1728,8 +1723,6 @@ function init() {
                 ],
                 gap: 2,
             }))
-            rows.push(dim(m === "remote" ? "Point at a solver you run yourself — any FlareSolverr-/v1 endpoint (e.g. a container you manage)." : "Downloads & runs the self-contained solver (uTLS first; auto-escalates to a real browser only for hard JS gates like Turnstile)."))
-
             rows.push(divider())
             rows.push(tray.flex({
                 items: [
@@ -1739,12 +1732,6 @@ function init() {
                 ],
                 gap: 2,
             }))
-            if (m !== "remote") {
-                rows.push(dim(chromiumDownloadedHere()
-                    ? "Stage B (hard JS / interactive Turnstile): a minimal Chromium is in the cache and is used automatically when uTLS can't clear a gate."
-                    : "Stage B (hard JS / interactive Turnstile) needs a Chromium. The solver will try a system Chrome/Edge if one is installed, but that can't be verified here — if hard challenges fail, tick 'fetch a minimal Chromium' below."))
-            }
-
             rows.push(divider())
             rows.push(heading("Configuration"))
             if (m === "remote") {
@@ -1764,14 +1751,13 @@ function init() {
                 items: [
                     tray.button({ label: "Test", onClick: "fs-test", intent: "gray-subtle", size: "sm" }),
                     tray.button({ label: "Doctor", onClick: "fs-doctor", intent: "gray-subtle", size: "sm" }),
-                    tray.button({ label: "Copy diagnostics", onClick: "fs-copy-diag", intent: "gray-subtle", size: "sm" }),
+                    tray.button({ label: "📋", onClick: "fs-copy-diag", intent: "gray-subtle", size: "sm" }),
                 ],
                 gap: 2,
             }))
 
             rows.push(divider())
             rows.push(heading("Downloads"))
-            rows.push(dim("Uninstalling the plugin doesn't delete these — remove them here first if you want the disk space back."))
             const solverHere = binaryDownloaded()
             const chrHere = chromiumDownloadedHere()
             const chrDir = chromiumDirExists()
