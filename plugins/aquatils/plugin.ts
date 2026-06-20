@@ -253,6 +253,9 @@ function init() {
         // a floating panel on the side rather than a flush full-height drawer. Matches the
         // fixed wrapper gaps below (4.5rem top + 4.5rem bottom = 9rem).
         const PANEL_H = "calc(100dvh - 9rem)"
+        // Accent gradient matched to the plugin icon (warm orange -> gold sunburst).
+        const ACCENT_GRAD = "linear-gradient(135deg, #F2912F, #FFC840)"
+        const ACCENT_STYLE: Record<string, string> = { background: ACCENT_GRAD, border: "none", color: "#1c1407", fontWeight: "600" }
         const tray = ctx.newTray({
             iconUrl: "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/icon.png",
             withContent: true,
@@ -1462,7 +1465,7 @@ function init() {
         }
         function statusBadge(): any {
             const st = fsStatus.get()
-            const s = { borderRadius: "3px" }
+            const s = { borderRadius: "2px" }
             if (st === "up") return tray.badge({ text: "▶ Running", intent: "success", size: "md", style: s })
             if (st === "starting") return tray.badge({ text: "◐ Starting", intent: "warning", size: "md", style: s })
             if (st === "down") return tray.badge({ text: "⏻ Off", intent: "gray", size: "md", style: s })
@@ -1508,8 +1511,8 @@ function init() {
             }
             rows.push(tray.flex({
                 items: [
-                    tray.button({ label: "Copy all", onClick: "seh-copy-all", intent: "gray-subtle", size: "xs" }),
-                    tray.button({ label: "Clear", onClick: "seh-clear", intent: "alert-subtle", size: "xs", style: { marginLeft: "auto" } }),
+                    tray.button({ label: "Copy all", onClick: "seh-copy-all", intent: "gray-subtle", size: "sm" }),
+                    tray.button({ label: "Clear", onClick: "seh-clear", intent: "alert-subtle", size: "sm", style: { marginLeft: "auto" } }),
                 ],
                 gap: 2,
             }))
@@ -1588,7 +1591,7 @@ function init() {
                     title: "Solver update ready",
                     description: "A newer solver (v" + SOLVER_VERSION + ") is bundled; you're running v" + fsVersion.get() + ".",
                 }))
-                rows.push(tray.button({ label: "Restart to update", onClick: "fs-restart-update", intent: "primary", size: "sm" }))
+                rows.push(tray.button({ label: "Restart to update", onClick: "fs-restart-update", intent: "primary", size: "sm", style: ACCENT_STYLE }))
             }
             if (st === "up" && fsMode.get() !== "remote" && !chromiumDownloadedHere()) {
                 rows.push(dim("Stage B note: no fetched Chromium present. uTLS clears most gates; if an interactive Turnstile fails and you have no system Chrome/Edge, enable 'fetch a minimal Chromium' in Advanced."))
@@ -1606,13 +1609,13 @@ function init() {
                 }
                 const acts: any[] = []
                 if (fsAvBlocked || solverQuarantined()) {
-                    acts.push(tray.button({ label: "Copy folder to exclude", onClick: "fs-copy-cache-path", intent: "primary-subtle", size: "xs" }))
+                    acts.push(tray.button({ label: "Copy folder to exclude", onClick: "fs-copy-cache-path", intent: "primary-subtle", size: "sm" }))
                 }
-                acts.push(tray.button({ label: "Retry", onClick: "fs-start", intent: "primary-subtle", size: "xs" }))
+                acts.push(tray.button({ label: "Retry", onClick: "fs-start", intent: "primary-subtle", size: "sm" }))
                 if (fsMode.get() !== "remote" && !chromiumDownloadedHere() && !fsWantChromium.get()) {
-                    acts.push(tray.button({ label: "Enable Chromium", onClick: "fs-enable-chromium", intent: "gray-subtle", size: "xs" }))
+                    acts.push(tray.button({ label: "Enable Chromium", onClick: "fs-enable-chromium", intent: "gray-subtle", size: "sm" }))
                 }
-                acts.push(tray.button({ label: "Copy diagnostics", onClick: "fs-copy-diag", intent: "gray-subtle", size: "xs", style: { marginLeft: "auto" } }))
+                acts.push(tray.button({ label: "Copy diagnostics", onClick: "fs-copy-diag", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto" } }))
                 rows.push(tray.flex({ items: acts, gap: 2 }))
             }
             return rows
@@ -1624,9 +1627,9 @@ function init() {
             rows.push(heading("Logs"))
             rows.push(tray.flex({
                 items: [
-                    tray.button({ label: "Copy logs", onClick: "fs-logs-copy", intent: "gray-subtle", size: "xs" }),
-                    tray.button({ label: fsLogFilter.get() ? "Polling: hidden" : "Polling: shown", onClick: "fs-logs-filter", intent: fsLogFilter.get() ? "primary-subtle" : "gray-subtle", size: "xs" }),
-                    tray.button({ label: "Clear", onClick: "fs-logs-clear", intent: "alert-subtle", size: "xs", style: { marginLeft: "auto" } }),
+                    tray.button({ label: "Copy logs", onClick: "fs-logs-copy", intent: "gray-subtle", size: "sm" }),
+                    tray.button({ label: fsLogFilter.get() ? "Polling: hidden" : "Polling: shown", onClick: "fs-logs-filter", intent: fsLogFilter.get() ? "primary-subtle" : "gray-subtle", size: "sm" }),
+                    tray.button({ label: "Clear", onClick: "fs-logs-clear", intent: "alert-subtle", size: "sm", style: { marginLeft: "auto" } }),
                 ],
                 gap: 2,
             }))
@@ -1658,7 +1661,7 @@ function init() {
                             rows.push(tray.flex({
                                 items: [
                                     tray.button({ label: "Copy folder to exclude", onClick: "fs-copy-cache-path", intent: "primary-subtle", size: "sm" }),
-                                    tray.button({ label: "Start", onClick: "fs-simple-start", intent: "success", size: "sm" }),
+                                    tray.button({ label: "Start", onClick: "fs-simple-start", intent: "success", size: "sm", style: ACCENT_STYLE }),
                                     tray.button({ label: "Advanced", onClick: "ui-mode-toggle", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto" } }),
                                 ],
                                 gap: 2,
@@ -1669,7 +1672,7 @@ function init() {
                     rows.push(dim("A newer solver (v" + SOLVER_VERSION + ") is ready to install — it replaces the previous version (old files are removed automatically)."))
                     rows.push(tray.flex({
                         items: [
-                            tray.button({ label: "Update & start", onClick: "fs-simple-start", intent: "success", size: "sm" }),
+                            tray.button({ label: "Update & start", onClick: "fs-simple-start", intent: "success", size: "sm", style: ACCENT_STYLE }),
                             tray.button({ label: "Advanced", onClick: "ui-mode-toggle", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto" } }),
                         ],
                         gap: 2,
@@ -1693,7 +1696,7 @@ function init() {
                     }))
                     rows.push(tray.flex({
                         items: [
-                            tray.button({ label: "Download & start", onClick: "fs-simple-start", intent: "success", size: "sm", disabled: !fsConsent.get() }),
+                            tray.button({ label: "Download & start", onClick: "fs-simple-start", intent: "success", size: "sm", style: ACCENT_STYLE, disabled: !fsConsent.get() }),
                             tray.button({ label: "Advanced", onClick: "ui-mode-toggle", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto" } }),
                         ],
                         gap: 2,
@@ -1706,14 +1709,14 @@ function init() {
                     items.push(tray.button({ label: fsRestarting ? "Restarting…" : "Restart", onClick: "fs-restart", intent: "warning-subtle", size: "sm", disabled: fsRestarting }))
                     if (st === "up") items.push(tray.button({ label: "Test", onClick: "fs-test", intent: "gray-subtle", size: "sm" }))
                 } else {
-                    items.push(tray.button({ label: "Start", onClick: "fs-simple-start", intent: "success", size: "sm" }))
+                    items.push(tray.button({ label: "Start", onClick: "fs-simple-start", intent: "success", size: "sm", style: ACCENT_STYLE }))
                 }
                 items.push(tray.button({ label: "Advanced", onClick: "ui-mode-toggle", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto" } }))
                 rows.push(tray.flex({ items: items, gap: 2 }))
                 if (fsMode.get() !== "remote") { const ls = logsSection(); for (let i = 0; i < ls.length; i++) rows.push(ls[i]) }
                 return rows
             }
-            rows.push(tray.button({ label: "← Back to Simple", onClick: "ui-mode-toggle", intent: "gray-subtle", size: "xs" }))
+            rows.push(tray.button({ label: "← Back to Simple", onClick: "ui-mode-toggle", intent: "gray-subtle", size: "sm" }))
             const m = fsMode.get()
 
             rows.push(divider())
@@ -1730,7 +1733,7 @@ function init() {
             rows.push(divider())
             rows.push(tray.flex({
                 items: [
-                    tray.button({ label: "Start", onClick: "fs-start", intent: "success", size: "sm" }),
+                    tray.button({ label: "Start", onClick: "fs-start", intent: "success", size: "sm", style: ACCENT_STYLE }),
                     tray.button({ label: "Stop", onClick: "fs-stop", intent: "alert", size: "sm", disabled: fsRestarting }),
                     tray.button({ label: fsRestarting ? "Restarting…" : "Restart", onClick: "fs-restart", intent: "warning-subtle", size: "sm", disabled: fsRestarting }),
                 ],
@@ -1759,9 +1762,9 @@ function init() {
             rows.push(heading("Diagnostics"))
             rows.push(tray.flex({
                 items: [
-                    tray.button({ label: "Test", onClick: "fs-test", intent: "gray-subtle", size: "xs" }),
-                    tray.button({ label: "Doctor", onClick: "fs-doctor", intent: "gray-subtle", size: "xs" }),
-                    tray.button({ label: "Copy diagnostics", onClick: "fs-copy-diag", intent: "gray-subtle", size: "xs" }),
+                    tray.button({ label: "Test", onClick: "fs-test", intent: "gray-subtle", size: "sm" }),
+                    tray.button({ label: "Doctor", onClick: "fs-doctor", intent: "gray-subtle", size: "sm" }),
+                    tray.button({ label: "Copy diagnostics", onClick: "fs-copy-diag", intent: "gray-subtle", size: "sm" }),
                 ],
                 gap: 2,
             }))
@@ -1774,8 +1777,8 @@ function init() {
             const chrDir = chromiumDirExists()
             rows.push(tray.flex({
                 items: [
-                    tray.button({ label: solverHere ? "Remove solver" : "Solver: none", onClick: "fs-remove-solver", intent: solverHere ? "alert-subtle" : "gray-subtle", size: "xs", disabled: !solverHere }),
-                    tray.button({ label: chrDir ? "Remove Chromium" : "Chromium: none", onClick: "fs-remove-chromium", intent: chrDir ? "alert-subtle" : "gray-subtle", size: "xs", disabled: !chrDir }),
+                    tray.button({ label: solverHere ? "Remove solver" : "Solver: none", onClick: "fs-remove-solver", intent: solverHere ? "alert-subtle" : "gray-subtle", size: "sm", disabled: !solverHere }),
+                    tray.button({ label: chrDir ? "Remove Chromium" : "Chromium: none", onClick: "fs-remove-chromium", intent: chrDir ? "alert-subtle" : "gray-subtle", size: "sm", disabled: !chrDir }),
                 ],
                 gap: 2,
             }))
@@ -1783,7 +1786,7 @@ function init() {
                 rows.push(tray.flex({
                     items: [
                         tray.text("Chromium " + chromiumCachedVersion(), { style: { fontSize: "12px", color: "rgba(255,255,255,0.55)" } }),
-                        tray.button({ label: "Update Chromium", onClick: "fs-update-chromium", intent: "gray-subtle", size: "xs", style: { marginLeft: "auto" } }),
+                        tray.button({ label: "Update Chromium", onClick: "fs-update-chromium", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto" } }),
                     ],
                     gap: 2,
                 }))
@@ -1797,9 +1800,9 @@ function init() {
             const errCount = errors.get().length
             rows.push(tray.flex({
                 items: [
-                    tray.button({ label: "Solver", onClick: "view-cf", intent: view.get() === "cf" ? "primary" : "gray-subtle", size: "sm" }),
-                    tray.button({ label: errCount ? "Errors (" + errCount + ")" : "Errors", onClick: "view-errors", intent: view.get() === "errors" ? "primary" : "gray-subtle", size: "sm" }),
-                    tray.button({ label: "⚙", onClick: "view-settings", intent: view.get() === "settings" ? "primary" : "gray-subtle", size: "sm", style: { marginLeft: "auto" } }),
+                    tray.button({ label: "Solver", onClick: "view-cf", intent: view.get() === "cf" ? "primary" : "gray-subtle", size: "sm", style: view.get() === "cf" ? ACCENT_STYLE : undefined }),
+                    tray.button({ label: errCount ? "Errors (" + errCount + ")" : "Errors", onClick: "view-errors", intent: view.get() === "errors" ? "primary" : "gray-subtle", size: "sm", style: view.get() === "errors" ? ACCENT_STYLE : undefined }),
+                    tray.button({ label: "⚙", onClick: "view-settings", intent: view.get() === "settings" ? "primary" : "gray-subtle", size: "sm", style: view.get() === "settings" ? { ...ACCENT_STYLE, marginLeft: "auto" } : { marginLeft: "auto" } }),
                 ],
                 gap: 2,
             }))
