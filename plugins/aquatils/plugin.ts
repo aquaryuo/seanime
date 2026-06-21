@@ -869,7 +869,7 @@ function init() {
                         fsAvBlocked = true
                         try { $storage.set("fs.avBlocked", true) } catch (_e) {}
                         plog("antivirus removed the solver (binary quarantined while running)")
-                        setErr("Antivirus (e.g. Windows Defender) removed the solver while it was running — it flags the unsigned binary as suspicious (it hides its window and drives a browser).")
+                        setErr("Antivirus (e.g. Windows Defender) removed the solver while it was running — it flags the solver as suspicious because it automates a background browser.")
                         fsHint.set("Add a Windows Security exclusion for the aquatils folder (%LOCALAPPDATA%\\aquatils), then press Start.")
                         setNote("Removed by antivirus — add an exclusion for the aquatils folder, then Start.")
                         ctx.toast.error("Antivirus removed the solver — add an exclusion for the aquatils folder.")
@@ -885,7 +885,7 @@ function init() {
                             fsAvBlocked = true
                             try { $storage.set("fs.avBlocked", true) } catch (_e) {}
                             plog("antivirus blocked the solver" + (binGone ? " (binary quarantined/removed while running)" : " (execution blocked)"))
-                            setErr("Antivirus (e.g. Windows Defender) " + (binGone ? "removed" : "blocked") + " the solver — it flags the unsigned binary as suspicious (it hides its window and drives a browser).")
+                            setErr("Antivirus (e.g. Windows Defender) " + (binGone ? "removed" : "blocked") + " the solver — it flags the solver as suspicious because it automates a background browser.")
                             fsHint.set("Add a Windows Security exclusion for the aquatils folder (%LOCALAPPDATA%\\aquatils), then press Start.")
                             setNote("Blocked by antivirus — add an exclusion for the aquatils folder, then Start.")
                             ctx.toast.error("Antivirus blocked the solver — add an exclusion for the aquatils folder.")
@@ -1666,7 +1666,7 @@ function init() {
                 const needsDownload = st !== "up" && st !== "starting" && !binaryDownloaded()
                 if (needsDownload && (fsAvBlocked || solverQuarantined())) {
                     if (!fsErr.get()) {
-                        rows.push(dim("Your antivirus removed the solver after it started — Windows Defender flags the unsigned binary as suspicious. Add a Windows Security exclusion for the folder below, then Start (it re-downloads into the excluded folder)."))
+                        rows.push(dim("Your antivirus removed the solver after it started — Windows Defender flags it as suspicious because it automates a background browser. Add a Windows Security exclusion for the folder below, then Start (it re-downloads into the excluded folder)."))
                         rows.push(tray.flex({
                             items: [
                                 tray.button({ label: "Copy folder to exclude", onClick: "fs-copy-cache-path", intent: "gray-subtle", size: "sm", style: ACCENT_SUBTLE }),
