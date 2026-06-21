@@ -8,6 +8,7 @@ class Provider {
     private cacheTtl = 900000
     private serverCacheTtl = 300000
     private tokenTtl = 18000000
+    private clearanceTtl = 1200000
     private subEndpoint = "https://sub.ryuo.to"
 
     private normBase(u: string): string {
@@ -483,6 +484,8 @@ class Provider {
             }
             if (playableNoSubs) return playableNoSubs
             if (firstResolved) {
+                const cl = this.cachedClearance(this.hostOf(firstResolved.videoSources[0].url))
+                if (cl) firstResolved.headers = this.withClearance(firstResolved.headers, cl)
                 return firstResolved
             }
             throw "anikoto: no playable server found for this episode"
@@ -494,7 +497,9 @@ class Provider {
         const $ = await this.serverListDoc(dataIds)
         const picked = this.collectServers($, [target.group]).filter((c) => c.name === target.name)[0]
         if (!picked) throw "anikoto: that server is not available for this episode"
-        return await this.resolveServer(picked.linkId, target.label, ctx, audio)
+        const resolved = await this.resolveServer(picked.linkId, target.label, ctx, audio)
+        await this.ensurePlayable(resolved)
+        return resolved
     }
 
     private parseServerLabel(server: string, audio: string): { group: string; name: string; label: string; ok: boolean } {
@@ -578,11 +583,14 @@ class Provider {
         const src = server.videoSources[0]
         if (!src || !src.url) return false
         try {
+            const origHeaders = server.headers
+            const pre = this.cachedClearance(this.hostOf(src.url))
+            if (pre) server.headers = this.withClearance(origHeaders, pre)
             let body = await this.fetchPlaylist(src.url, server.headers)
             if (body === undefined && allowSolver && this.solverEnabled()) {
-                const cl = await this.solverClearance(src.url)
+                const cl = await this.clearanceForHost(src.url, !!pre)
                 if (cl) {
-                    server.headers = this.withClearance(server.headers, cl)
+                    server.headers = this.withClearance(origHeaders, cl)
                     body = await this.fetchPlaylist(src.url, server.headers)
                 }
             }
@@ -592,7 +600,7 @@ class Provider {
             const checks = await Promise.all(
                 variants.map((v) => fetch(v, { headers: server.headers, timeout: 4 }).then((r) => r.ok).catch(() => false))
             )
-            return checks.every((ok) => ok)
+            return checks.some((ok) => ok)
         } catch (_e) {
             return false
         }
@@ -652,9 +660,51 @@ class Provider {
     private withClearance(headers: { [k: string]: string }, cl: { cookie: string; ua: string }): { [k: string]: string } {
         const out: { [k: string]: string } = {}
         for (const k in headers) out[k] = headers[k]
-        out.Cookie = out.Cookie ? `${out.Cookie}; ${cl.cookie}` : cl.cookie
+        const kept: string[] = []
+        for (const part of (out.Cookie || "").split(";")) {
+            const p = part.trim()
+            if (p && !/^(cf_clearance|__cf|cf_)/i.test(p)) kept.push(p)
+        }
+        kept.push(cl.cookie)
+        out.Cookie = kept.join("; ")
         if (cl.ua) out["User-Agent"] = cl.ua
         return out
+    }
+
+    private hostOf(u: string): string {
+        const m = u.match(/^https?:\/\/([^/]+)/i)
+        return m ? m[1].toLowerCase() : ""
+    }
+
+    private cachedClearance(host: string): { cookie: string; ua: string } | undefined {
+        if (!host) return undefined
+        return this.readCache<{ cookie: string; ua: string }>(`anikoto:cf:${host}`, this.clearanceTtl)
+    }
+
+    private async clearanceForHost(url: string, force: boolean): Promise<{ cookie: string; ua: string } | undefined> {
+        const host = this.hostOf(url)
+        if (!force) {
+            const cached = this.cachedClearance(host)
+            if (cached) return cached
+        }
+        if (!this.solverEnabled()) return undefined
+        const cl = await this.solverClearance(url)
+        if (!cl || !cl.ua) return undefined
+        if (host) this.writeCache(`anikoto:cf:${host}`, cl)
+        return cl
+    }
+
+    private async ensurePlayable(server: EpisodeServer): Promise<void> {
+        const src = server.videoSources[0]
+        if (!src || !src.url) return
+        if (!this.solverEnabled()) return
+        const origHeaders = server.headers
+        const pre = this.cachedClearance(this.hostOf(src.url))
+        if (pre) server.headers = this.withClearance(origHeaders, pre)
+        const body = await this.fetchPlaylist(src.url, server.headers)
+        if (body !== undefined) return
+        const cl = await this.clearanceForHost(src.url, !!pre)
+        if (cl) server.headers = this.withClearance(origHeaders, cl)
     }
 
     private variantLevelUrls(master: string, masterUrl: string): string[] {
