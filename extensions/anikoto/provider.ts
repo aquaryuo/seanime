@@ -495,29 +495,12 @@ class Provider {
         if (!target.ok) throw "anikoto: that server is not available for this audio track"
 
         const $ = await this.serverListDoc(dataIds)
-        const sameType = this.collectServers($, [target.group])
-        const picked = sameType.filter((c) => c.name === target.name)[0]
+        const picked = this.collectServers($, [target.group]).filter((c) => c.name === target.name)[0]
         if (!picked) throw "anikoto: that server is not available for this episode"
-        const ordered = [picked].concat(sameType.filter((c) => c !== picked))
-
-        let firstResolved: EpisodeServer | undefined
-        for (const c of ordered) {
-            let resolved: EpisodeServer | undefined
-            try {
-                resolved = await this.resolveServer(c.linkId, target.label, ctx, audio)
-            } catch (_e) {
-                resolved = undefined
-            }
-            if (!resolved) continue
-            if (!firstResolved) firstResolved = resolved
-            if (await this.isPlayable(resolved, c === picked)) return resolved
-        }
-        if (firstResolved) {
-            const cl = this.cachedClearance(this.hostOf(firstResolved.videoSources[0].url))
-            if (cl) firstResolved.headers = this.withClearance(firstResolved.headers, cl)
-            return firstResolved
-        }
-        throw "anikoto: that server is not available for this episode"
+        const resolved = await this.resolveServer(picked.linkId, target.label, ctx, audio)
+        const cl = this.cachedClearance(this.hostOf(resolved.videoSources[0].url))
+        if (cl) resolved.headers = this.withClearance(resolved.headers, cl)
+        return resolved
     }
 
     private parseServerLabel(server: string, audio: string): { group: string; name: string; label: string; ok: boolean } {
