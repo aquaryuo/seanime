@@ -1736,10 +1736,12 @@ function init() {
             rows.push(heading("Launch mode"))
             rows.push(tray.flex({
                 items: [
-                    tray.button({ label: "Binary", onClick: "fs-mode-binary", intent: m !== "remote" ? "primary" : "gray-subtle", size: "sm" }),
+                    tray.button({ label: "Bundled Solver", onClick: "fs-mode-binary", intent: m !== "remote" ? "primary" : "gray-subtle", size: "sm" }),
+                    tray.text("Default", { style: { color: "#6aa1ff", fontSize: "12px", marginLeft: "2px" } }),
                     tray.button({ label: "Remote", onClick: "fs-mode-remote", intent: m === "remote" ? "primary" : "gray-subtle", size: "sm" }),
                 ],
                 gap: 2,
+                style: { alignItems: "center" },
             }))
             rows.push(divider())
             rows.push(tray.flex({
