@@ -1,7 +1,7 @@
 [
   {
     "id": "anikoto",
-    "name": "Anikoto [BETA]",
+    "name": "Anikoto",
     "description": "Only anikoto compatibility layer you'll ever need",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
