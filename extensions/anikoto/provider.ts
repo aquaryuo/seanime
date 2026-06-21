@@ -495,11 +495,29 @@ class Provider {
         if (!target.ok) throw "anikoto: that server is not available for this audio track"
 
         const $ = await this.serverListDoc(dataIds)
-        const picked = this.collectServers($, [target.group]).filter((c) => c.name === target.name)[0]
+        const sameType = this.collectServers($, [target.group])
+        const picked = sameType.filter((c) => c.name === target.name)[0]
         if (!picked) throw "anikoto: that server is not available for this episode"
-        const resolved = await this.resolveServer(picked.linkId, target.label, ctx, audio)
-        await this.ensurePlayable(resolved)
-        return resolved
+        const ordered = [picked].concat(sameType.filter((c) => c !== picked))
+
+        let firstResolved: EpisodeServer | undefined
+        for (const c of ordered) {
+            let resolved: EpisodeServer | undefined
+            try {
+                resolved = await this.resolveServer(c.linkId, target.label, ctx, audio)
+            } catch (_e) {
+                resolved = undefined
+            }
+            if (!resolved) continue
+            if (!firstResolved) firstResolved = resolved
+            if (await this.isPlayable(resolved, c === picked)) return resolved
+        }
+        if (firstResolved) {
+            const cl = this.cachedClearance(this.hostOf(firstResolved.videoSources[0].url))
+            if (cl) firstResolved.headers = this.withClearance(firstResolved.headers, cl)
+            return firstResolved
+        }
+        throw "anikoto: that server is not available for this episode"
     }
 
     private parseServerLabel(server: string, audio: string): { group: string; name: string; label: string; ok: boolean } {
@@ -692,19 +710,6 @@ class Provider {
         if (!cl || !cl.ua) return undefined
         if (host) this.writeCache(`anikoto:cf:${host}`, cl)
         return cl
-    }
-
-    private async ensurePlayable(server: EpisodeServer): Promise<void> {
-        const src = server.videoSources[0]
-        if (!src || !src.url) return
-        if (!this.solverEnabled()) return
-        const origHeaders = server.headers
-        const pre = this.cachedClearance(this.hostOf(src.url))
-        if (pre) server.headers = this.withClearance(origHeaders, pre)
-        const body = await this.fetchPlaylist(src.url, server.headers)
-        if (body !== undefined) return
-        const cl = await this.clearanceForHost(src.url, !!pre)
-        if (cl) server.headers = this.withClearance(origHeaders, cl)
     }
 
     private variantLevelUrls(master: string, masterUrl: string): string[] {
