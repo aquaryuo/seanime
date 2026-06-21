@@ -1828,6 +1828,10 @@ function init() {
                     minHeight: PANEL_H,
                     padding: "18px 16px",
                     background: "linear-gradient(180deg, rgba(18,19,24,0.40), rgba(10,11,15,0.52))",
+                    backdropFilter: "blur(30px) saturate(115%)",
+                    WebkitBackdropFilter: "blur(30px) saturate(115%)",
+                    borderRadius: "16px",
+                    boxShadow: "0 24px 60px -12px rgba(0,0,0,0.7)",
                 },
             })
         })
