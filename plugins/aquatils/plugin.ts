@@ -257,9 +257,9 @@ function init() {
         // fixed wrapper gaps below (4.5rem top + 4.5rem bottom = 9rem).
         const PANEL_H = "calc(100dvh - 9rem)"
         // Accent gradient matched to the plugin icon (warm orange -> gold sunburst).
-        const ACCENT_GRAD = "linear-gradient(135deg, #C7772A, #D3A436)"
+        const ACCENT_GRAD = "linear-gradient(135deg, rgba(242,145,47,0.9), rgba(255,200,64,0.9))"
         const ACCENT_STYLE: Record<string, string> = { background: ACCENT_GRAD, border: "none", color: "#1c1407", fontWeight: "600" }
-        const ACCENT_SUBTLE: Record<string, string> = { background: "linear-gradient(135deg, rgba(199,119,42,0.15), rgba(211,164,54,0.15))", border: "1px solid rgba(211,164,54,0.28)", color: "#DBAE55", fontWeight: "500" }
+        const ACCENT_SUBTLE: Record<string, string> = { background: "linear-gradient(135deg, rgba(242,145,47,0.20), rgba(255,200,64,0.20))", border: "1px solid rgba(255,200,64,0.35)", color: "#FFC840", fontWeight: "500" }
         const ICON_FS = "16px"
         const tray = ctx.newTray({
             iconUrl: "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/icon.png",
@@ -1529,14 +1529,14 @@ function init() {
         function settingsRows(): any[] {
             const rows: any[] = []
             rows.push(tray.button({
-                label: (fsAutoStart.get() ? "▣" : "▢") + " Auto-Start Server on Launch",
+                label: (fsAutoStart.get() ? "✓" : "□") + " Auto-Start Server on Launch",
                 onClick: "fs-autostart-toggle",
                 intent: fsAutoStart.get() ? "success-subtle" : "gray-subtle",
                 size: "sm",
             }))
             rows.push(divider())
             rows.push(tray.button({
-                label: (fsAutoUpdate.get() ? "▣" : "▢") + " Auto-update solver & Chromium",
+                label: (fsAutoUpdate.get() ? "✓" : "□") + " Auto-update solver & Chromium",
                 onClick: "fs-autoupdate-toggle",
                 intent: fsAutoUpdate.get() ? "success-subtle" : "gray-subtle",
                 size: "sm",
@@ -1559,7 +1559,7 @@ function init() {
             }))
             rows.push(divider())
             rows.push(tray.button({
-                label: (notify.get() ? "▣" : "▢") + " Error notifications",
+                label: (notify.get() ? "✓" : "□") + " Error notifications",
                 onClick: "seh-notify-toggle",
                 intent: notify.get() ? "success-subtle" : "gray-subtle",
                 size: "sm",
@@ -1629,7 +1629,7 @@ function init() {
             rows.push(tray.flex({
                 items: [
                     tray.button({ label: "⧉", onClick: "fs-logs-copy", intent: "gray-subtle", size: "sm", style: { fontSize: ICON_FS } }),
-                    tray.button({ label: (fsLogFilter.get() ? "▣" : "▢") + " Hide polling lines", onClick: "fs-logs-filter", intent: "gray-subtle", size: "sm", style: fsLogFilter.get() ? ACCENT_SUBTLE : {} }),
+                    tray.button({ label: (fsLogFilter.get() ? "✓" : "□") + " Hide polling lines", onClick: "fs-logs-filter", intent: "gray-subtle", size: "sm", style: fsLogFilter.get() ? ACCENT_SUBTLE : {} }),
                     tray.button({ label: "Clear", onClick: "fs-logs-clear", intent: "alert-subtle", size: "sm", style: { marginLeft: "auto" } }),
                 ],
                 gap: 2,
@@ -1699,14 +1699,14 @@ function init() {
                     rows.push(dim("aquatils-solver runs locally to get blocked sources (Cloudflare / DDoS-Guard) loading. It's downloaded from GitHub and only contacts the sites you stream."))
                     rows.push(dim("Hard JS challenges (interactive Turnstile) need a Chromium browser. If you have Chrome or Edge, leave the box below off. If you don't, tick it to also fetch a minimal Chromium (~80 MB) into the plugin's cache."))
                     rows.push(tray.button({
-                        label: (fsWantChromium.get() ? "▣" : "▢") + " I have no Chrome/Edge — fetch a minimal Chromium",
+                        label: (fsWantChromium.get() ? "✓" : "□") + " I have no Chrome/Edge — fetch a minimal Chromium",
                         onClick: "fs-chromium-toggle",
                         intent: "gray-subtle",
                         size: "sm",
                         style: fsWantChromium.get() ? ACCENT_SUBTLE : {},
                     }))
                     rows.push(tray.button({
-                        label: (fsConsent.get() ? "▣" : "▢") + " I understand — tap to confirm",
+                        label: (fsConsent.get() ? "✓" : "□") + " I understand — tap to confirm",
                         onClick: "fs-consent-toggle",
                         intent: fsConsent.get() ? "success-subtle" : "gray-subtle",
                         size: "sm",
@@ -1733,7 +1733,7 @@ function init() {
                 appendLogs(rows)
                 return rows
             }
-            rows.push(tray.button({ label: "‹ Back to Simple", onClick: "ui-mode-toggle", intent: "gray-subtle", size: "sm" }))
+            rows.push(tray.button({ label: "← Back to Simple", onClick: "ui-mode-toggle", intent: "gray-subtle", size: "sm" }))
             const m = fsMode.get()
 
             rows.push(divider())
@@ -1741,7 +1741,7 @@ function init() {
             rows.push(tray.flex({
                 items: [
                     tray.button({ label: "Bundled Solver", onClick: "fs-mode-binary", intent: m !== "remote" ? "primary" : "gray-subtle", size: "sm", style: m !== "remote" ? ACCENT_STYLE : {} }),
-                    tray.text("Default", { style: { color: "#5f8fd0", fontSize: "12px", marginLeft: "2px" } }),
+                    tray.text("Default", { style: { color: "#6aa1ff", fontSize: "12px", marginLeft: "2px" } }),
                     tray.button({ label: "Remote", onClick: "fs-mode-remote", intent: m === "remote" ? "primary" : "gray-subtle", size: "sm", style: m === "remote" ? ACCENT_STYLE : {} }),
                 ],
                 gap: 2,
