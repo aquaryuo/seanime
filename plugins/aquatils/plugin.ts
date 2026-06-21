@@ -260,6 +260,7 @@ function init() {
         const ACCENT_GRAD = "linear-gradient(135deg, #C7772A, #D3A436)"
         const ACCENT_STYLE: Record<string, string> = { background: ACCENT_GRAD, border: "none", color: "#1c1407", fontWeight: "600" }
         const ACCENT_SUBTLE: Record<string, string> = { background: "linear-gradient(135deg, rgba(199,119,42,0.15), rgba(211,164,54,0.15))", border: "1px solid rgba(211,164,54,0.28)", color: "#DBAE55", fontWeight: "500" }
+        const ICON_FS = "16px"
         const tray = ctx.newTray({
             iconUrl: "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/icon.png",
             withContent: true,
@@ -1514,7 +1515,7 @@ function init() {
             const items = sehGroups.map((g, i) => tray.flex({
                 items: [
                     tray.text(g.label + (g.count > 1 ? "  ×" + g.count : ""), { style: lineStyle }),
-                    tray.button({ label: "⧉", onClick: "seh-copy-" + i, intent: "gray-subtle", size: "sm", style: { marginLeft: "6px" } }),
+                    tray.button({ label: "⧉", onClick: "seh-copy-" + i, intent: "gray-subtle", size: "sm", style: { marginLeft: "6px", fontSize: ICON_FS } }),
                 ],
                 gap: 1,
             }))
@@ -1615,7 +1616,7 @@ function init() {
                 if (fsMode.get() !== "remote" && !chromiumDownloadedHere() && !fsWantChromium.get()) {
                     acts.push(tray.button({ label: "Enable Chromium", onClick: "fs-enable-chromium", intent: "gray-subtle", size: "sm" }))
                 }
-                acts.push(tray.button({ label: "⧉", onClick: "fs-copy-diag", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto" } }))
+                acts.push(tray.button({ label: "⧉", onClick: "fs-copy-diag", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto", fontSize: ICON_FS } }))
                 rows.push(tray.flex({ items: acts, gap: 2 }))
             }
             return rows
@@ -1627,7 +1628,7 @@ function init() {
             rows.push(heading("Logs"))
             rows.push(tray.flex({
                 items: [
-                    tray.button({ label: "Copy logs", onClick: "fs-logs-copy", intent: "gray-subtle", size: "sm" }),
+                    tray.button({ label: "⧉", onClick: "fs-logs-copy", intent: "gray-subtle", size: "sm", style: { fontSize: ICON_FS } }),
                     tray.button({ label: (fsLogFilter.get() ? "▣" : "▢") + " Hide polling lines", onClick: "fs-logs-filter", intent: "gray-subtle", size: "sm", style: fsLogFilter.get() ? ACCENT_SUBTLE : {} }),
                     tray.button({ label: "Clear", onClick: "fs-logs-clear", intent: "alert-subtle", size: "sm", style: { marginLeft: "auto" } }),
                 ],
@@ -1774,7 +1775,7 @@ function init() {
                 items: [
                     tray.button({ label: "Test", onClick: "fs-test", intent: "gray-subtle", size: "sm" }),
                     tray.button({ label: "Doctor", onClick: "fs-doctor", intent: "gray-subtle", size: "sm" }),
-                    tray.button({ label: "⧉", onClick: "fs-copy-diag", intent: "gray-subtle", size: "sm" }),
+                    tray.button({ label: "⧉", onClick: "fs-copy-diag", intent: "gray-subtle", size: "sm", style: { fontSize: ICON_FS } }),
                 ],
                 gap: 2,
             }))
@@ -1818,7 +1819,7 @@ function init() {
                 items: [
                     tray.button({ label: "Solver", onClick: "view-cf", intent: view.get() === "cf" ? "primary" : "gray-subtle", size: "sm", style: view.get() === "cf" ? ACCENT_STYLE : {} }),
                     tray.button({ label: errCount ? "Errors (" + errCount + ")" : "Errors", onClick: "view-errors", intent: view.get() === "errors" ? "primary" : "gray-subtle", size: "sm", style: view.get() === "errors" ? ACCENT_STYLE : {} }),
-                    tray.button({ label: "⚙", onClick: "view-settings", intent: view.get() === "settings" ? "primary" : "gray-subtle", size: "sm", style: view.get() === "settings" ? { ...ACCENT_STYLE, marginLeft: "auto" } : { marginLeft: "auto" } }),
+                    tray.button({ label: "⚙", onClick: "view-settings", intent: view.get() === "settings" ? "primary" : "gray-subtle", size: "sm", style: view.get() === "settings" ? { ...ACCENT_STYLE, marginLeft: "auto", fontSize: ICON_FS } : { marginLeft: "auto", fontSize: ICON_FS } }),
                 ],
                 gap: 2,
             }))
