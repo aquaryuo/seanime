@@ -260,7 +260,7 @@ function init() {
         const ACCENT_GRAD = "linear-gradient(135deg, rgba(242,145,47,0.9), rgba(255,200,64,0.9))"
         const ACCENT_STYLE: Record<string, string> = { background: ACCENT_GRAD, border: "none", color: "#1c1407", fontWeight: "600" }
         const ACCENT_SUBTLE: Record<string, string> = { background: "linear-gradient(135deg, rgba(242,145,47,0.20), rgba(255,200,64,0.20))", border: "1px solid rgba(255,200,64,0.35)", color: "#FFC840", fontWeight: "500" }
-        const ICON_FS = "16px"
+        const ICON_FS = "18px"
         const tray = ctx.newTray({
             iconUrl: "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/icon.png",
             withContent: true,
@@ -1428,6 +1428,16 @@ function init() {
         function divider(): any {
             return tray.div({ items: [], style: { borderTop: "1px solid rgba(255,255,255,0.08)", marginTop: "4px", marginBottom: "4px" } })
         }
+        function toggleRow(on: boolean, click: string, label: string): any {
+            return tray.flex({
+                items: [
+                    tray.button({ label: on ? "✓" : "✕", onClick: click, intent: "gray-subtle", size: "sm", style: on ? { ...ACCENT_SUBTLE, fontSize: ICON_FS } : { fontSize: ICON_FS } }),
+                    tray.text(label, { style: { fontSize: "13px", color: "rgba(255,255,255,0.85)", overflowWrap: "anywhere", wordBreak: "break-word" } }),
+                ],
+                gap: 2,
+                style: { alignItems: "center" },
+            })
+        }
         function filterLog(text: string): string {
             if (!fsLogFilter.get()) return text
             const lines = text.split("\n")
@@ -1461,10 +1471,11 @@ function init() {
         function statusBadge(): any {
             const st = fsStatus.get()
             const s = { borderRadius: "2px" }
-            if (st === "up") return tray.badge({ text: "▶ Running", intent: "success", size: "md", style: s })
-            if (st === "starting") return tray.badge({ text: "◐ Starting", intent: "warning", size: "md", style: s })
-            if (st === "down") return tray.badge({ text: "⏻ Off", intent: "gray", size: "md", style: s })
-            return tray.badge({ text: "◌ Checking", intent: "gray", size: "md", style: s })
+            const g = (glyph: string, color: string) => tray.text(glyph, { style: { fontSize: ICON_FS, color: color, lineHeight: "1" } })
+            if (st === "up") return tray.flex({ items: [g("▶", "#5fd38a"), tray.badge({ text: "Running", intent: "success", size: "md", style: s })], gap: 2, style: { alignItems: "center" } })
+            if (st === "starting") return tray.flex({ items: [g("◐", "#f2c14e"), tray.badge({ text: "Starting", intent: "warning", size: "md", style: s })], gap: 2, style: { alignItems: "center" } })
+            if (st === "down") return tray.flex({ items: [g("⏻", "rgba(255,255,255,0.55)"), tray.badge({ text: "Off", intent: "gray", size: "md", style: s })], gap: 2, style: { alignItems: "center" } })
+            return tray.flex({ items: [g("◌", "rgba(255,255,255,0.6)"), tray.badge({ text: "Checking", intent: "gray", size: "md", style: s })], gap: 2, style: { alignItems: "center" } })
         }
         function uptimeStr(): string {
             const t = nowMs()
@@ -1528,19 +1539,9 @@ function init() {
 
         function settingsRows(): any[] {
             const rows: any[] = []
-            rows.push(tray.button({
-                label: (fsAutoStart.get() ? "✓" : "□") + " Auto-Start Server on Launch",
-                onClick: "fs-autostart-toggle",
-                intent: fsAutoStart.get() ? "success-subtle" : "gray-subtle",
-                size: "sm",
-            }))
+            rows.push(toggleRow(fsAutoStart.get(), "fs-autostart-toggle", "Auto-Start Server on Launch"))
             rows.push(divider())
-            rows.push(tray.button({
-                label: (fsAutoUpdate.get() ? "✓" : "□") + " Auto-update solver & Chromium",
-                onClick: "fs-autoupdate-toggle",
-                intent: fsAutoUpdate.get() ? "success-subtle" : "gray-subtle",
-                size: "sm",
-            }))
+            rows.push(toggleRow(fsAutoUpdate.get(), "fs-autoupdate-toggle", "Auto-update solver & Chromium"))
             rows.push(divider())
             rows.push(tray.button({
                 label: "Browser tier: " + (fsBrowserMode.get() === "offscreen" ? "Off-screen (max stealth)" : "Invisible (headless)"),
@@ -1558,12 +1559,7 @@ function init() {
                 size: "sm",
             }))
             rows.push(divider())
-            rows.push(tray.button({
-                label: (notify.get() ? "✓" : "□") + " Error notifications",
-                onClick: "seh-notify-toggle",
-                intent: notify.get() ? "success-subtle" : "gray-subtle",
-                size: "sm",
-            }))
+            rows.push(toggleRow(notify.get(), "seh-notify-toggle", "Error notifications"))
             rows.push(divider())
             rows.push(dim("Seanime server URL"))
             rows.push(tray.input({ fieldRef: appRef, placeholder: SEH_DEFAULT_APP }))
@@ -1581,6 +1577,7 @@ function init() {
             rows.push(tray.flex({
                 items: [statusBadge(), tray.text(detail, { style: { color: "rgba(255,255,255,0.6)", fontSize: "13px", overflowWrap: "anywhere", wordBreak: "break-word" } })],
                 gap: 2,
+                style: { alignItems: "center" },
             }))
             const note = fsNote.get()
             if (note && !fsErr.get() && fsStatus.get() !== "up") {
@@ -1629,7 +1626,7 @@ function init() {
             rows.push(tray.flex({
                 items: [
                     tray.button({ label: "⧉", onClick: "fs-logs-copy", intent: "gray-subtle", size: "sm", style: { fontSize: ICON_FS } }),
-                    tray.button({ label: (fsLogFilter.get() ? "✓" : "□") + " Hide polling lines", onClick: "fs-logs-filter", intent: "gray-subtle", size: "sm", style: fsLogFilter.get() ? ACCENT_SUBTLE : {} }),
+                    tray.button({ label: "Hide polling", onClick: "fs-logs-filter", intent: "gray-subtle", size: "sm", style: fsLogFilter.get() ? ACCENT_SUBTLE : {} }),
                     tray.button({ label: "Clear", onClick: "fs-logs-clear", intent: "alert-subtle", size: "sm", style: { marginLeft: "auto" } }),
                 ],
                 gap: 2,
@@ -1698,19 +1695,8 @@ function init() {
                 } else if (needsDownload) {
                     rows.push(dim("aquatils-solver runs locally to get blocked sources (Cloudflare / DDoS-Guard) loading. It's downloaded from GitHub and only contacts the sites you stream."))
                     rows.push(dim("Hard JS challenges (interactive Turnstile) need a Chromium browser. If you have Chrome or Edge, leave the box below off. If you don't, tick it to also fetch a minimal Chromium (~80 MB) into the plugin's cache."))
-                    rows.push(tray.button({
-                        label: (fsWantChromium.get() ? "✓" : "□") + " I have no Chrome/Edge — fetch a minimal Chromium",
-                        onClick: "fs-chromium-toggle",
-                        intent: "gray-subtle",
-                        size: "sm",
-                        style: fsWantChromium.get() ? ACCENT_SUBTLE : {},
-                    }))
-                    rows.push(tray.button({
-                        label: (fsConsent.get() ? "✓" : "□") + " I understand — tap to confirm",
-                        onClick: "fs-consent-toggle",
-                        intent: fsConsent.get() ? "success-subtle" : "gray-subtle",
-                        size: "sm",
-                    }))
+                    rows.push(toggleRow(fsWantChromium.get(), "fs-chromium-toggle", "I have no Chrome/Edge — fetch a minimal Chromium"))
+                    rows.push(toggleRow(fsConsent.get(), "fs-consent-toggle", "I understand — tap to confirm"))
                     rows.push(tray.flex({
                         items: [
                             tray.button({ label: "Download & start", onClick: "fs-simple-start", intent: "success", size: "sm", style: ACCENT_STYLE, disabled: !fsConsent.get() }),
@@ -1733,7 +1719,14 @@ function init() {
                 appendLogs(rows)
                 return rows
             }
-            rows.push(tray.button({ label: "← Back to Simple", onClick: "ui-mode-toggle", intent: "gray-subtle", size: "sm" }))
+            rows.push(tray.flex({
+                items: [
+                    tray.button({ label: "←", onClick: "ui-mode-toggle", intent: "gray-subtle", size: "sm", style: { fontSize: ICON_FS } }),
+                    tray.text("Back to Simple", { style: { fontSize: "13px", color: "rgba(255,255,255,0.7)" } }),
+                ],
+                gap: 2,
+                style: { alignItems: "center" },
+            }))
             const m = fsMode.get()
 
             rows.push(divider())
@@ -1848,9 +1841,9 @@ function init() {
             if (!animeBtn) return
             try {
                 const st = fsStatus.get()
-                if (st === "up") { animeBtn.setLabel("Solver ● on"); animeBtn.setIntent("success-subtle"); animeBtn.setTooltipText("Aqua's Utils solver running at " + fsBase()) }
+                if (st === "up") { animeBtn.setLabel("Solver ▶ on"); animeBtn.setIntent("success-subtle"); animeBtn.setTooltipText("Aqua's Utils solver running at " + fsBase()) }
                 else if (st === "starting") { animeBtn.setLabel("Solver ◐ starting"); animeBtn.setIntent("warning-subtle"); animeBtn.setTooltipText("Solver is starting…") }
-                else { animeBtn.setLabel("Solver ○ off"); animeBtn.setIntent("alert-subtle"); animeBtn.setTooltipText(fsMode.get() === "remote" ? "Remote solver not reachable — start it on its host" : "Tap to start the Aqua's Utils solver") }
+                else { animeBtn.setLabel("Solver ⏻ off"); animeBtn.setIntent("alert-subtle"); animeBtn.setTooltipText(fsMode.get() === "remote" ? "Remote solver not reachable — start it on its host" : "Tap to start the Aqua's Utils solver") }
             } catch (_e) {}
         }
         try {
