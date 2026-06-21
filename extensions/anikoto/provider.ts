@@ -1,10 +1,14 @@
 class Provider {
     private baseUrl = "{{baseUrl}}"
     private loadSubtitles = "{{loadSubtitles}}"
+    private useCustomSolver = "{{useCustomSolver}}"
+    private solverUrl = "{{solverUrl}}"
+    private solverDown = false
     private mirrors = ["https://anikototv.to", "https://anikoto.cz", "https://anikoto.me", "https://anikoto.net", "https://anikototv.se"]
     private cacheTtl = 900000
     private serverCacheTtl = 300000
     private tokenTtl = 18000000
+    private clearanceTtl = 1200000
     private subEndpoint = "https://sub.ryuo.to"
 
     private normBase(u: string): string {
@@ -472,7 +476,7 @@ class Provider {
                 if (!resolved) continue
                 if (label) resolved.server = label
                 if (!firstResolved) firstResolved = resolved
-                if (await this.isPlayable(resolved)) {
+                if (await this.isPlayable(resolved, !playableNoSubs)) {
                     const vs = resolved.videoSources[0]
                     if (!wantSubs || (vs && vs.subtitles && vs.subtitles.length > 0)) return resolved
                     if (!playableNoSubs) playableNoSubs = resolved
@@ -480,6 +484,8 @@ class Provider {
             }
             if (playableNoSubs) return playableNoSubs
             if (firstResolved) {
+                const cl = this.cachedClearance(this.hostOf(firstResolved.videoSources[0].url))
+                if (cl) firstResolved.headers = this.withClearance(firstResolved.headers, cl)
                 return firstResolved
             }
             throw "anikoto: no playable server found for this episode"
@@ -491,7 +497,10 @@ class Provider {
         const $ = await this.serverListDoc(dataIds)
         const picked = this.collectServers($, [target.group]).filter((c) => c.name === target.name)[0]
         if (!picked) throw "anikoto: that server is not available for this episode"
-        return await this.resolveServer(picked.linkId, target.label, ctx, audio)
+        const resolved = await this.resolveServer(picked.linkId, target.label, ctx, audio)
+        const cl = this.cachedClearance(this.hostOf(resolved.videoSources[0].url))
+        if (cl) resolved.headers = this.withClearance(resolved.headers, cl)
+        return resolved
     }
 
     private parseServerLabel(server: string, audio: string): { group: string; name: string; label: string; ok: boolean } {
@@ -571,23 +580,119 @@ class Provider {
         }
     }
 
-    private async isPlayable(server: EpisodeServer): Promise<boolean> {
+    private async isPlayable(server: EpisodeServer, allowSolver: boolean = true): Promise<boolean> {
         const src = server.videoSources[0]
         if (!src || !src.url) return false
         try {
-            const res = await fetch(src.url, { headers: server.headers, timeout: 4 })
-            if (!res.ok) return false
-            const body = res.text()
-            if (body.indexOf("#EXTM3U") === -1) return false
+            const origHeaders = server.headers
+            const pre = this.cachedClearance(this.hostOf(src.url))
+            if (pre) server.headers = this.withClearance(origHeaders, pre)
+            let body = await this.fetchPlaylist(src.url, server.headers)
+            if (body === undefined && allowSolver && this.solverEnabled()) {
+                const cl = await this.clearanceForHost(src.url, !!pre)
+                if (cl) {
+                    server.headers = this.withClearance(origHeaders, cl)
+                    body = await this.fetchPlaylist(src.url, server.headers)
+                }
+            }
+            if (body === undefined) return false
             const variants = this.variantLevelUrls(body, src.url)
             if (variants.length === 0) return true
             const checks = await Promise.all(
                 variants.map((v) => fetch(v, { headers: server.headers, timeout: 4 }).then((r) => r.ok).catch(() => false))
             )
-            return checks.every((ok) => ok)
+            return checks.some((ok) => ok)
         } catch (_e) {
             return false
         }
+    }
+
+    private async fetchPlaylist(url: string, headers: { [k: string]: string }): Promise<string | undefined> {
+        try {
+            const res = await fetch(url, { headers: headers, timeout: 4 })
+            if (!res.ok) return undefined
+            const body = res.text()
+            return body.indexOf("#EXTM3U") !== -1 ? body : undefined
+        } catch (_e) {
+            return undefined
+        }
+    }
+
+    private solverEnabled(): boolean {
+        return (this.useCustomSolver || "").toLowerCase() === "on" && this.solverEndpoint() !== "" && !this.solverDown
+    }
+
+    private solverEndpoint(): string {
+        const u = (this.solverUrl || "").trim()
+        if (u.indexOf("http") !== 0) return ""
+        const base = u.replace(/\/+$/, "")
+        return /\/v1$/.test(base) ? base : `${base}/v1`
+    }
+
+    private async solverClearance(url: string): Promise<{ cookie: string; ua: string } | undefined> {
+        const ep = this.solverEndpoint()
+        if (!ep) return undefined
+        try {
+            const res = await fetch(ep, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ cmd: "request.get", url: url, maxTimeout: 32000 }),
+                timeout: 35,
+            })
+            if (!res.ok) {
+                this.solverDown = res.status === 0
+                return undefined
+            }
+            const data = res.json<{ solution?: { userAgent?: string; cookies?: { name: string; value: string }[] } }>()
+            const sol = data && data.solution ? data.solution : undefined
+            if (!sol || !Array.isArray(sol.cookies)) return undefined
+            const parts: string[] = []
+            for (const c of sol.cookies) {
+                if (c && c.name && /cf_clearance|^__cf|^cf_/i.test(c.name)) parts.push(`${c.name}=${c.value}`)
+            }
+            if (parts.length === 0) return undefined
+            return { cookie: parts.join("; "), ua: sol.userAgent || "" }
+        } catch (_e) {
+            this.solverDown = true
+            return undefined
+        }
+    }
+
+    private withClearance(headers: { [k: string]: string }, cl: { cookie: string; ua: string }): { [k: string]: string } {
+        const out: { [k: string]: string } = {}
+        for (const k in headers) out[k] = headers[k]
+        const kept: string[] = []
+        for (const part of (out.Cookie || "").split(";")) {
+            const p = part.trim()
+            if (p && !/^(cf_clearance|__cf|cf_)/i.test(p)) kept.push(p)
+        }
+        kept.push(cl.cookie)
+        out.Cookie = kept.join("; ")
+        if (cl.ua) out["User-Agent"] = cl.ua
+        return out
+    }
+
+    private hostOf(u: string): string {
+        const m = u.match(/^https?:\/\/([^/]+)/i)
+        return m ? m[1].toLowerCase() : ""
+    }
+
+    private cachedClearance(host: string): { cookie: string; ua: string } | undefined {
+        if (!host) return undefined
+        return this.readCache<{ cookie: string; ua: string }>(`anikoto:cf:${host}`, this.clearanceTtl)
+    }
+
+    private async clearanceForHost(url: string, force: boolean): Promise<{ cookie: string; ua: string } | undefined> {
+        const host = this.hostOf(url)
+        if (!force) {
+            const cached = this.cachedClearance(host)
+            if (cached) return cached
+        }
+        if (!this.solverEnabled()) return undefined
+        const cl = await this.solverClearance(url)
+        if (!cl || !cl.ua) return undefined
+        if (host) this.writeCache(`anikoto:cf:${host}`, cl)
+        return cl
     }
 
     private variantLevelUrls(master: string, masterUrl: string): string[] {
@@ -674,6 +779,22 @@ class Provider {
         return e === "ass" || e === "srt" ? e : "vtt"
     }
 
+    private async ensureServeToken(anilistId: number): Promise<string | undefined> {
+        const key = `anikoto:tok:${anilistId}`
+        const cached = this.readCache<string>(key, this.tokenTtl)
+        if (cached) return cached
+        try {
+            const res = await fetch(`${this.subEndpoint}/resolve/${anilistId}`, { timeout: 8 })
+            if (!res.ok) return undefined
+            const data = res.json<{ token?: string }>()
+            if (data && typeof data.token === "string" && data.token) {
+                this.writeCache(key, data.token)
+                return data.token
+            }
+        } catch (_e) {}
+        return undefined
+    }
+
     private async buildSubtitles(
         tracks: { file: string; label?: string; kind?: string; default?: boolean }[] | undefined,
         ctx: { anilistId: number; episode: number },
@@ -682,14 +803,17 @@ class Provider {
         const collected: VideoSubtitle[] = []
         if (this.loadSubtitles === "disabled") return collected
         if (!tracks || tracks.length === 0) return collected
+
         if (ctx.anilistId <= 0) return collected
 
         const anime = String(ctx.anilistId)
         const ep = String(ctx.episode)
-        const tok = ctx.anilistId > 0 ? this.readCache<string>(`anikoto:tok:${ctx.anilistId}`, this.tokenTtl) : undefined
-        const tokParam = tok ? `&t=${encodeURIComponent(tok)}` : ""
         const refParam = embedOrigin ? `&ref=${encodeURIComponent(embedOrigin)}` : ""
         const valid = tracks.filter((t) => t && typeof t.file === "string" && /^https?:\/\//i.test(t.file) && (!t.kind || t.kind === "captions" || t.kind === "subtitles"))
+        if (valid.length === 0) return collected
+        let tok = this.readCache<string>(`anikoto:tok:${ctx.anilistId}`, this.tokenTtl)
+        if (!tok) tok = await this.ensureServeToken(ctx.anilistId)
+        const tokParam = tok ? `&t=${encodeURIComponent(tok)}` : ""
         const codes = await this.langCodes(valid.map((t) => t.label || "English"))
         const seenLang: { [key: string]: boolean } = {}
         let englishIdx = -1
@@ -744,6 +868,7 @@ class Provider {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ labels: missing.map((m) => m.label) }),
+                    timeout: 6,
                 })
                 if (res.ok) {
                     const j = res.json<{ codes: string[] }>()
