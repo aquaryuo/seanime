@@ -46,13 +46,12 @@ function init() {
         }
 
         const cfg = sget<any>(CFG_KEY, {})
-        const enabled = ctx.state<boolean>(cfg.enabled !== false)
         const persistSubs = ctx.state<boolean>(cfg.subs !== false)
         const status = ctx.state<string>("")
         const logsOpen = ctx.state<boolean>(false)
 
         function saveCfg(): void {
-            sset(CFG_KEY, { enabled: enabled.get(), subs: persistSubs.get() })
+            sset(CFG_KEY, { subs: persistSubs.get() })
         }
 
         const tray = ctx.newTray({
@@ -151,7 +150,7 @@ function init() {
 
         function enforceKind(kind: string, current: number, myGen: number): Promise<string> {
             if (myGen !== gen) return Promise.resolve("stale")
-            if (!enabled.get() || !persistSubs.get()) return Promise.resolve("off")
+            if (!persistSubs.get()) return Promise.resolve("off")
             if (stopEnforce[kind]) return Promise.resolve("stopped")
             if (pickPending[kind] || nowMs() - pendingClick[kind] <= CLICK_SUPPRESS) return Promise.resolve("user")
             const sv = savedFor(kind)
@@ -186,7 +185,7 @@ function init() {
         }
 
         function pollLoad(myGen: number, attempt: number): void {
-            if (myGen !== gen || !enabled.get()) return
+            if (myGen !== gen) return
             Promise.all([
                 enforceKind("sub", curTrack.sub, myGen),
                 enforceKind("cap", curTrack.cap, myGen),
@@ -277,21 +276,19 @@ function init() {
                 })
             } catch (_e) {}
 
-            VC.addEventListener("video-loaded", (e) => { if (enabled.get()) arm((e && e.playbackId) || "", true) })
-            VC.addEventListener("video-loaded-metadata", (e) => { if (enabled.get()) arm((e && e.playbackId) || "", true) })
+            VC.addEventListener("video-loaded", (e) => arm((e && e.playbackId) || "", true))
+            VC.addEventListener("video-loaded-metadata", (e) => arm((e && e.playbackId) || "", true))
 
             VC.addEventListener("video-subtitle-track", (e) => {
                 arm((e && e.playbackId) || "", false)
                 const v = (typeof e.trackNumber === "number" && e.trackNumber >= 0) ? e.trackNumber : -1
                 curTrack.sub = v
-                if (!enabled.get()) return
                 scheduleEnforce("sub")
             })
             VC.addEventListener("video-media-caption-track", (e) => {
                 arm((e && e.playbackId) || "", false)
                 const v = (typeof e.trackIndex === "number" && e.trackIndex >= 0) ? e.trackIndex : -1
                 curTrack.cap = v
-                if (!enabled.get()) return
                 scheduleEnforce("cap")
             })
         }
@@ -329,7 +326,6 @@ function init() {
             })
         }
 
-        ctx.registerEventHandler("ap-toggle", () => { enabled.set(!enabled.get()); saveCfg(); tray.update() })
         ctx.registerEventHandler("ap-subs", () => { persistSubs.set(!persistSubs.get()); saveCfg(); tray.update() })
         ctx.registerEventHandler("ap-reset", () => resetPrefs())
         ctx.registerEventHandler("ap-log-copy", () => { try { ctx.dom.clipboard.write(logs.join("\n")) } catch (_e) {} ctx.toast.success("Logs copied to clipboard") })
@@ -338,13 +334,7 @@ function init() {
 
         function renderTray(): any {
             const rows: any[] = []
-            rows.push(tray.flex({
-                items: [
-                    tray.text("Aqua's Prefs", { style: { fontWeight: "600", fontSize: "15px" } }),
-                    tray.button({ label: enabled.get() ? "On" : "Off", onClick: "ap-toggle", intent: enabled.get() ? "success-subtle" : "gray-subtle", size: "xs", style: { marginLeft: "auto" } }),
-                ],
-                gap: 2,
-            }))
+            rows.push(tray.text("Aqua's Prefs", { style: { fontWeight: "600", fontSize: "15px" } }))
             if (!hasVC) {
                 rows.push(dim("Needs the Playback permission — re-enable the plugin's permissions or update Seanime."))
                 return tray.stack({ items: rows, gap: 3 })
