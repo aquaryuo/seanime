@@ -259,6 +259,7 @@ function init() {
         // Accent gradient matched to the plugin icon (warm orange -> gold sunburst).
         const ACCENT_GRAD = "linear-gradient(135deg, #F2912F, #FFC840)"
         const ACCENT_STYLE: Record<string, string> = { background: ACCENT_GRAD, border: "none", color: "#1c1407", fontWeight: "600" }
+        const ACCENT_SUBTLE: Record<string, string> = { background: "linear-gradient(135deg, rgba(242,145,47,0.20), rgba(255,200,64,0.20))", border: "1px solid rgba(255,200,64,0.35)", color: "#FFC840", fontWeight: "500" }
         const tray = ctx.newTray({
             iconUrl: "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/icon.png",
             withContent: true,
@@ -1543,8 +1544,9 @@ function init() {
             rows.push(tray.button({
                 label: "Browser tier: " + (fsBrowserMode.get() === "offscreen" ? "Off-screen (max stealth)" : "Invisible (headless)"),
                 onClick: "fs-browsermode-toggle",
-                intent: "primary-subtle",
+                intent: "gray-subtle",
                 size: "sm",
+                style: ACCENT_SUBTLE,
             }))
             rows.push(divider())
             const dnsLabel = fsDns.get() === "cloudflare" ? "Cloudflare" : fsDns.get() === "google" ? "Google" : fsDns.get() === "quad9" ? "Quad9" : "Off (use system DNS)"
@@ -1564,7 +1566,7 @@ function init() {
             rows.push(divider())
             rows.push(dim("Seanime server URL"))
             rows.push(tray.input({ fieldRef: appRef, placeholder: SEH_DEFAULT_APP }))
-            rows.push(tray.button({ label: "Save", onClick: "seh-save", intent: "primary", size: "sm" }))
+            rows.push(tray.button({ label: "Save", onClick: "seh-save", intent: "primary", size: "sm", style: ACCENT_STYLE }))
             return rows
         }
 
@@ -1607,9 +1609,9 @@ function init() {
                 }
                 const acts: any[] = []
                 if (fsAvBlocked || solverQuarantined()) {
-                    acts.push(tray.button({ label: "Copy folder to exclude", onClick: "fs-copy-cache-path", intent: "primary-subtle", size: "sm" }))
+                    acts.push(tray.button({ label: "Copy folder to exclude", onClick: "fs-copy-cache-path", intent: "gray-subtle", size: "sm", style: ACCENT_SUBTLE }))
                 }
-                acts.push(tray.button({ label: "Retry", onClick: "fs-start", intent: "primary-subtle", size: "sm" }))
+                acts.push(tray.button({ label: "Retry", onClick: "fs-start", intent: "gray-subtle", size: "sm", style: ACCENT_SUBTLE }))
                 if (fsMode.get() !== "remote" && !chromiumDownloadedHere() && !fsWantChromium.get()) {
                     acts.push(tray.button({ label: "Enable Chromium", onClick: "fs-enable-chromium", intent: "gray-subtle", size: "sm" }))
                 }
@@ -1626,7 +1628,7 @@ function init() {
             rows.push(tray.flex({
                 items: [
                     tray.button({ label: "Copy logs", onClick: "fs-logs-copy", intent: "gray-subtle", size: "sm" }),
-                    tray.button({ label: (fsLogFilter.get() ? "☑" : "☐") + " Hide polling lines", onClick: "fs-logs-filter", intent: fsLogFilter.get() ? "primary-subtle" : "gray-subtle", size: "sm" }),
+                    tray.button({ label: (fsLogFilter.get() ? "☑" : "☐") + " Hide polling lines", onClick: "fs-logs-filter", intent: "gray-subtle", size: "sm", style: fsLogFilter.get() ? ACCENT_SUBTLE : {} }),
                     tray.button({ label: "Clear", onClick: "fs-logs-clear", intent: "alert-subtle", size: "sm", style: { marginLeft: "auto" } }),
                 ],
                 gap: 2,
@@ -1669,7 +1671,7 @@ function init() {
                         rows.push(dim("Your antivirus removed the solver after it started — Windows Defender flags the unsigned binary as suspicious. Add a Windows Security exclusion for the folder below, then Start (it re-downloads into the excluded folder)."))
                         rows.push(tray.flex({
                             items: [
-                                tray.button({ label: "Copy folder to exclude", onClick: "fs-copy-cache-path", intent: "primary-subtle", size: "sm" }),
+                                tray.button({ label: "Copy folder to exclude", onClick: "fs-copy-cache-path", intent: "gray-subtle", size: "sm", style: ACCENT_SUBTLE }),
                                 tray.button({ label: "Start", onClick: "fs-simple-start", intent: "success", size: "sm", style: ACCENT_STYLE }),
                                 tray.button({ label: "Advanced", onClick: "ui-mode-toggle", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto" } }),
                             ],
@@ -1698,8 +1700,9 @@ function init() {
                     rows.push(tray.button({
                         label: (fsWantChromium.get() ? "☑" : "☐") + " I have no Chrome/Edge — fetch a minimal Chromium",
                         onClick: "fs-chromium-toggle",
-                        intent: fsWantChromium.get() ? "primary-subtle" : "gray-subtle",
+                        intent: "gray-subtle",
                         size: "sm",
+                        style: fsWantChromium.get() ? ACCENT_SUBTLE : {},
                     }))
                     rows.push(tray.button({
                         label: (fsConsent.get() ? "☑" : "☐") + " I understand — tap to confirm",
@@ -1736,9 +1739,9 @@ function init() {
             rows.push(heading("Launch mode"))
             rows.push(tray.flex({
                 items: [
-                    tray.button({ label: "Bundled Solver", onClick: "fs-mode-binary", intent: m !== "remote" ? "primary" : "gray-subtle", size: "sm" }),
+                    tray.button({ label: "Bundled Solver", onClick: "fs-mode-binary", intent: m !== "remote" ? "primary" : "gray-subtle", size: "sm", style: m !== "remote" ? ACCENT_STYLE : {} }),
                     tray.text("Default", { style: { color: "#6aa1ff", fontSize: "12px", marginLeft: "2px" } }),
-                    tray.button({ label: "Remote", onClick: "fs-mode-remote", intent: m === "remote" ? "primary" : "gray-subtle", size: "sm" }),
+                    tray.button({ label: "Remote", onClick: "fs-mode-remote", intent: m === "remote" ? "primary" : "gray-subtle", size: "sm", style: m === "remote" ? ACCENT_STYLE : {} }),
                 ],
                 gap: 2,
                 style: { alignItems: "center" },
@@ -1763,7 +1766,7 @@ function init() {
             }
             rows.push(dim("Session name"))
             rows.push(tray.input({ fieldRef: fsSessionRef, placeholder: FS_DEFAULT_SESSION }))
-            rows.push(tray.button({ label: "Save", onClick: "fs-save", intent: "primary", size: "sm" }))
+            rows.push(tray.button({ label: "Save", onClick: "fs-save", intent: "primary", size: "sm", style: ACCENT_STYLE }))
 
             rows.push(divider())
             rows.push(heading("Diagnostics"))
