@@ -10,7 +10,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.38"
+        const SOLVER_VERSION = "0.1.39"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -490,7 +490,11 @@ function init() {
                         plog("auto-updating solver to v" + SOLVER_VERSION + " (was v" + (fsVersion.get() || "?") + ")")
                         fsStart()
                     } else if (!fsAutoUpdate.get()) {
-                        notifyOnce("upd", "Aqua's Utils: a newer solver (v" + SOLVER_VERSION + ") is ready — open the tray and tap Restart to update.")
+                        if (solverAdoptedStale()) {
+                            notifyOnce("orphan", "Aqua's Utils: a leftover solver from a previous install is still running — open the tray to Restart or Stop it.")
+                        } else {
+                            notifyOnce("upd", "Aqua's Utils: a newer solver (v" + SOLVER_VERSION + ") is ready — open the tray and tap Restart to update.")
+                        }
                     }
                 }
                 if (fsAutoUpdate.get() && fsMode.get() !== "remote") maybeAutoUpdateChromium()
@@ -858,6 +862,7 @@ function init() {
                 const dnsVal = fsDns.get() === "custom" ? (fsDnsCustom.get() || "").trim() : fsDns.get()
                 if (dnsVal && dnsVal !== "off") env.push("SOLVER_DNS=" + dnsVal)
                 if (fsPacing.get()) env.push("SOLVER_PACING=1")
+                env.push("SOLVER_IDLE_EXIT=600")
                 c.env = env
             } catch (_e) {}
             fsBinary = c
@@ -962,11 +967,24 @@ function init() {
                 try {
                     $osExtra.asyncCmd("cmd", "/c", "taskkill", "/F", "/T", "/IM", "solver.exe").run((_d, _e, code) => {
                         if (code === undefined) return
-                        if (done) done()
+                        reapOurChrome(done)
                     })
                     return
                 } catch (_e) {}
             }
+            if (done) done()
+        }
+
+        function reapOurChrome(done?: () => void): void {
+            if (typeof $os === "undefined" || $os.platform !== "windows" || typeof $osExtra === "undefined") { if (done) done(); return }
+            const ps = "$ErrorActionPreference='SilentlyContinue';foreach($p in Get-CimInstance Win32_Process){if($p.Name -eq 'chrome.exe' -and $p.CommandLine -like '*aquatils\\chromium\\*'){Stop-Process -Id $p.ProcessId -Force}}"
+            try {
+                $osExtra.asyncCmd("cmd", "/c", "powershell", "-NoProfile", "-NonInteractive", "-Command", ps).run((_d, _e, code) => {
+                    if (code === undefined) return
+                    if (done) done()
+                })
+                return
+            } catch (_e) {}
             if (done) done()
         }
 
@@ -1026,9 +1044,13 @@ function init() {
             binaryStop(() => {
                 setStatus("down")
                 try { $os.removeAll($filepath.join(aquatilsDir(), "chromium")) } catch (_e) {}
-                try { $storage.set("fs.chromiumVer", "") } catch (_e) {}
-                chromiumOverride = ""
-                setNote(present ? "Removed the downloaded Chromium." : "No Chromium download was present.")
+                if (chromiumDirExists()) {
+                    setNote("Couldn't fully remove Chromium - a file may still be locked. Make sure the solver is stopped, then try again.")
+                } else {
+                    try { $storage.set("fs.chromiumVer", "") } catch (_e) {}
+                    chromiumOverride = ""
+                    setNote(present ? "Removed the downloaded Chromium." : "No Chromium download was present.")
+                }
                 tray.update()
             })
         }
@@ -1225,6 +1247,10 @@ function init() {
             const rv = (fsVersion.get() || "").trim()
             if (!rv) return false
             return verNewer(SOLVER_VERSION, rv)
+        }
+
+        function solverAdoptedStale(): boolean {
+            return fsStatus.get() === "up" && fsMode.get() !== "remote" && !binaryDownloaded() && solverUpdatePending()
         }
 
         function simpleSetup(): void {
@@ -1635,7 +1661,20 @@ function init() {
             if (note && !fsErr.get() && fsStatus.get() !== "up") {
                 rows.push(tray.text(note, { style: { fontSize: "12px", color: "rgba(255,255,255,0.6)", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5" } }))
             }
-            if (solverUpdatePending()) {
+            if (solverAdoptedStale()) {
+                rows.push(tray.alert({
+                    intent: "warning",
+                    title: "Leftover solver still running",
+                    description: "A solver from a previous install (v" + fsVersion.get() + ") is still running. Restart to install the bundled v" + SOLVER_VERSION + ", or Stop it to start fresh.",
+                }))
+                rows.push(tray.flex({
+                    items: [
+                        tray.button({ label: "Restart to update", onClick: "fs-restart-update", intent: "primary", size: "sm", style: ACCENT_STYLE }),
+                        tray.button({ label: "Stop", onClick: "fs-stop", intent: "alert", size: "sm", disabled: fsRestarting }),
+                    ],
+                    gap: 2,
+                }))
+            } else if (solverUpdatePending()) {
                 rows.push(tray.alert({
                     intent: "warning",
                     title: "Solver update ready",
