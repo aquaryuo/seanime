@@ -50,7 +50,7 @@
   {
     "id": "aquatils",
     "name": "Aqua's Utils",
-    "description": "A toolbox plugin: surfaces extension errors as toasts/tray, and launches & manages a self-contained aquatils-solver (or a remote one you run) for Cloudflare/DDoS-Guard sites.",
+    "description": "Toolbox plugin: surfaces compatible extension errors, launches a self-contained solver (or connects to a remote one you run) to reach guarded sites, and more.",
     "author": "aquaryuo",
     "type": "plugin",
     "language": "typescript",
