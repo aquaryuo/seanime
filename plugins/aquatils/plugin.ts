@@ -10,7 +10,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.37"
+        const SOLVER_VERSION = "0.1.38"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -1355,9 +1355,14 @@ function init() {
             applySolverEnvChange("Browser tier: " + fsBrowserMode.get())
         })
         ctx.registerEventHandler("fs-hidedesktop-toggle", () => {
-            fsHideDesktop.set(!fsHideDesktop.get())
+            const turningOn = !fsHideDesktop.get()
+            fsHideDesktop.set(turningOn)
             fsPersist()
-            applySolverEnvChange(fsHideDesktop.get() ? "Hidden-desktop mode on (experimental)" : "Hidden-desktop mode off")
+            if (turningOn) {
+                const warn = "Caution: hidden desktop can trip Windows Defender, which may quarantine the solver. Add a Defender exclusion for the solver folder first. Turn this off if the solver disappears or streams stop."
+                try { ctx.toast.warning(warn) } catch (_e) { ctx.toast.info(warn) }
+            }
+            applySolverEnvChange(turningOn ? "Hidden desktop on (experimental)" : "Hidden desktop off")
         })
         ;["off", "auto", "cloudflare", "google", "quad9", "custom"].forEach((d) => {
             ctx.registerEventHandler("fs-dns-set-" + d, () => {
@@ -1377,7 +1382,7 @@ function init() {
             applySolverEnvChange(fsPacing.get() ? "Rate-limit pacing on" : "Rate-limit pacing off")
         })
         ctx.registerEventHandler("fs-help-pacing", () => ctx.toast.info("Serializes same-site requests and backs off on HTTP 429 to dodge Cloudflare rate-limit bursts. A bit slower, but more reliable when a source rate-limits."))
-        ctx.registerEventHandler("fs-help-hidedesktop", () => ctx.toast.info("Runs the browser on a private Windows desktop so it has no taskbar button. Experimental: it may fall back to software rendering and fail to clear protection — if streams stop working, switch it back off."))
+        ctx.registerEventHandler("fs-help-hidedesktop", () => ctx.toast.info("Experimental and risky: runs the browser on a private Windows desktop so it has no taskbar button — but this trips Windows Defender, which may quarantine the solver. Only enable it after adding a Defender exclusion for the solver folder. If the solver vanishes or streams stop, turn it back off."))
         ctx.registerEventHandler("fs-autostart-toggle", () => {
             fsAutoStart.set(!fsAutoStart.get())
             fsPersist()
@@ -1869,7 +1874,8 @@ function init() {
             if (m !== "remote" && typeof $os !== "undefined" && $os.platform === "windows") {
                 rows.push(divider())
                 rows.push(heading("Experimental"))
-                rows.push(toggleRow(fsHideDesktop.get(), "fs-hidedesktop-toggle", "Hide on a private desktop", "fs-help-hidedesktop"))
+                rows.push(dim("Caution - hidden desktop can trigger Windows Defender; add a solver-folder exclusion first."))
+                rows.push(toggleRow(fsHideDesktop.get(), "fs-hidedesktop-toggle", "Hide on a private desktop (may trip antivirus)", "fs-help-hidedesktop"))
             }
             return rows
         }
