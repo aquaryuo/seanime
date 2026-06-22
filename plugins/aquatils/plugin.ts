@@ -10,7 +10,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.36"
+        const SOLVER_VERSION = "0.1.37"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -44,6 +44,7 @@ function init() {
         const fsDns = ctx.state<string>(sget<string>("fs.dns", "off"))
         const fsDnsCustom = ctx.state<string>(sget<string>("fs.dnsCustom", ""))
         const fsPacing = ctx.state<boolean>(sget<boolean>("fs.pacing", false))
+        const fsMetrics = ctx.state<any>(null)
         const fsStatus = ctx.state<string>("unknown")
         const fsSessions = ctx.state<string[]>([])
         const fsNote = ctx.state<string>("")
@@ -473,6 +474,10 @@ function init() {
                 if (p.version) fsVersion.set(p.version)
                 setStatus("up")
                 fsDownStreak = 0
+                if (uiMode.get() === "advanced" && view.get() === "cf" && fsMode.get() !== "remote") {
+                    const mr = await fsApi("metrics", {}, 8)
+                    if (mr && mr.metrics) fsMetrics.set(mr.metrics)
+                }
                 if (p.sessions) {
                     fsSessions.set(p.sessions)
                     if (fsSession.get() && p.sessions.indexOf(fsSession.get()) < 0) await fsEnsureSession()
@@ -1817,6 +1822,22 @@ function init() {
                     items: [tray.text(fsTest.get(), { style: { fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5", color: "rgba(255,255,255,0.75)" } })],
                     style: { background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "6px", padding: "8px" },
                 }))
+            }
+
+            const mx = fsMetrics.get()
+            if (mx && (mx.total || 0) > 0) {
+                rows.push(divider())
+                rows.push(heading("Metrics"))
+                const sec = (ms: number) => (Math.round((ms || 0) / 100) / 10) + "s"
+                rows.push(dim((mx.cleared || 0) + " / " + (mx.total || 0) + " cleared (" + (mx.clearedPct || 0) + "%)  ·  last " + sec(mx.lastMs) + "  ·  avg " + sec(mx.avgMs) + "  ·  max " + sec(mx.maxMs)))
+                if (mx.lastClearAgoSec != null) {
+                    const a = mx.lastClearAgoSec
+                    const ago = a < 90 ? a + "s" : a < 5400 ? Math.round(a / 60) + "m" : Math.round(a / 3600) + "h"
+                    rows.push(dim("Last cleared " + ago + " ago"))
+                }
+                const reasons = mx.reasons || {}
+                const rk = Object.keys(reasons)
+                if (rk.length) rows.push(dim("Recent failures — " + rk.map((k) => k + ": " + reasons[k]).join("  ·  ")))
             }
 
             rows.push(divider())
