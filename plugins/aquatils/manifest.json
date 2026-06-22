@@ -1,7 +1,7 @@
 {
   "id": "aquatils",
   "name": "Aqua's Utils",
-  "version": "0.7.90",
+  "version": "0.7.91",
   "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/manifest.json",
   "language": "typescript",
   "type": "plugin",
@@ -24,8 +24,8 @@
           { "command": "sh", "description": "Launch the downloaded aquatils-solver binary on Linux/macOS (Binary mode); strips macOS quarantine and chmods before exec.", "args": [{ "value": "-c" }, { "validator": "$ARGS" }] },
           { "command": "cmd", "description": "Launch the downloaded aquatils-solver binary on Windows (Binary mode), and stop processes via taskkill.", "args": [{ "value": "/c" }, { "validator": "$ARGS" }] }
         ],
-        "readPaths": ["$CACHE", "$CACHE/aquatils", "$CACHE/aquatils/*", "$CACHE/aquatils/**"],
-        "writePaths": ["$CACHE/aquatils", "$CACHE/aquatils/*", "$CACHE/aquatils/**"]
+        "readPaths": ["$CACHE", "$CACHE/aquatils/**"],
+        "writePaths": ["$CACHE/aquatils", "$CACHE/aquatils/**"]
       }
     }
   }
