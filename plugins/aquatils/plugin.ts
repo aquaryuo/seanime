@@ -10,7 +10,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.34"
+        const SOLVER_VERSION = "0.1.35"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -40,6 +40,7 @@ function init() {
         const fsWantChromium = ctx.state<boolean>(sget<boolean>("fs.wantChromium", false))
         const fsAutoUpdate = ctx.state<boolean>(sget<boolean>("fs.autoUpdate", false))
         const fsBrowserMode = ctx.state<string>(sget<string>("fs.browserMode", "headless"))
+        const fsHideDesktop = ctx.state<boolean>(sget<boolean>("fs.hideDesktop", false))
         const fsDns = ctx.state<string>(sget<string>("fs.dns", "off"))
         const fsStatus = ctx.state<string>("unknown")
         const fsSessions = ctx.state<string[]>([])
@@ -413,6 +414,7 @@ function init() {
                 $storage.set("fs.wantChromium", fsWantChromium.get())
                 $storage.set("fs.autoUpdate", fsAutoUpdate.get())
                 $storage.set("fs.browserMode", fsBrowserMode.get())
+                $storage.set("fs.hideDesktop", fsHideDesktop.get())
                 $storage.set("fs.dns", fsDns.get())
                 $storage.set("fs.consent", fsConsent.get())
             } catch (_e) {}
@@ -842,6 +844,7 @@ function init() {
                 if (logPath) env.push("LOG_FILE=" + logPath)
                 if (chromiumOverride) env.push("SOLVER_CHROME=" + chromiumOverride)
                 env.push("SOLVER_BROWSER_MODE=" + (fsBrowserMode.get() || "headless"))
+                if (fsHideDesktop.get()) env.push("SOLVER_HIDE=desktop")
                 if (fsDns.get() && fsDns.get() !== "off") env.push("SOLVER_DNS=" + fsDns.get())
                 c.env = env
             } catch (_e) {}
@@ -1339,6 +1342,11 @@ function init() {
             fsPersist()
             applySolverEnvChange("Browser tier: " + fsBrowserMode.get())
         })
+        ctx.registerEventHandler("fs-hidedesktop-toggle", () => {
+            fsHideDesktop.set(!fsHideDesktop.get())
+            fsPersist()
+            applySolverEnvChange(fsHideDesktop.get() ? "Hidden-desktop mode on (experimental)" : "Hidden-desktop mode off")
+        })
         ctx.registerEventHandler("fs-dns-toggle", () => {
             const order = ["off", "cloudflare", "google", "quad9"]
             const i = order.indexOf(fsDns.get())
@@ -1799,6 +1807,13 @@ function init() {
                     ],
                     gap: 2,
                 }))
+            }
+
+            if (m !== "remote" && typeof $os !== "undefined" && $os.platform === "windows") {
+                rows.push(divider())
+                rows.push(heading("Experimental"))
+                rows.push(dim("Hide the browser completely by running it on a private Windows desktop — no taskbar button. It may fall back to software rendering and fail to clear protection; if streams stop working, switch it back off."))
+                rows.push(toggleRow(fsHideDesktop.get(), "fs-hidedesktop-toggle", "Hide on a private desktop"))
             }
 
             appendLogs(rows)
