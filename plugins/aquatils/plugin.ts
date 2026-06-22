@@ -1436,12 +1436,16 @@ function init() {
         function divider(): any {
             return tray.div({ items: [], style: { borderTop: "1px solid rgba(255,255,255,0.08)", marginTop: "4px", marginBottom: "4px" } })
         }
-        function toggleRow(on: boolean, click: string, label: string): any {
+        function toggleRow(on: boolean, click: string, label: string, help?: string): any {
+            const items: any[] = [
+                tray.button({ label: on ? "✓" : "✕", onClick: click, intent: "gray-subtle", size: "sm", style: on ? { ...ACCENT_SUBTLE, fontSize: ICON_FS } : { fontSize: ICON_FS } }),
+                tray.text(label, { style: { fontSize: "13px", color: "rgba(255,255,255,0.85)", overflowWrap: "anywhere", wordBreak: "break-word" } }),
+            ]
+            if (help) {
+                items.push(tray.tooltip({ text: help, item: tray.text("?", { style: { color: "#FFC840", fontWeight: "700", marginLeft: "4px", cursor: "help" } }) }))
+            }
             return tray.flex({
-                items: [
-                    tray.button({ label: on ? "✓" : "✕", onClick: click, intent: "gray-subtle", size: "sm", style: on ? { ...ACCENT_SUBTLE, fontSize: ICON_FS } : { fontSize: ICON_FS } }),
-                    tray.text(label, { style: { fontSize: "13px", color: "rgba(255,255,255,0.85)", overflowWrap: "anywhere", wordBreak: "break-word" } }),
-                ],
+                items: items,
                 gap: 2,
                 style: { alignItems: "center" },
             })
@@ -1656,7 +1660,7 @@ function init() {
             }
             rows.push(tray.div({
                 items: logItems,
-                style: { background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "6px", padding: "8px", flexGrow: "1", minHeight: "160px", overflowY: "auto" },
+                style: { background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "6px", padding: "8px", flexGrow: "1", minHeight: "160px", maxHeight: "300px", overflowY: "auto" },
             }))
             return rows
         }
@@ -1809,14 +1813,13 @@ function init() {
                 }))
             }
 
+            appendLogs(rows)
+
             if (m !== "remote" && typeof $os !== "undefined" && $os.platform === "windows") {
                 rows.push(divider())
                 rows.push(heading("Experimental"))
-                rows.push(dim("Hide the browser completely by running it on a private Windows desktop — no taskbar button. It may fall back to software rendering and fail to clear protection; if streams stop working, switch it back off."))
-                rows.push(toggleRow(fsHideDesktop.get(), "fs-hidedesktop-toggle", "Hide on a private desktop"))
+                rows.push(toggleRow(fsHideDesktop.get(), "fs-hidedesktop-toggle", "Hide on a private desktop", "Runs the browser on a private Windows desktop so it has no taskbar button. Experimental: it may fall back to software rendering and fail to clear protection — if streams stop working, switch it back off."))
             }
-
-            appendLogs(rows)
             return rows
         }
 
