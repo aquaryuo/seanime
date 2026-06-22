@@ -168,7 +168,7 @@ class Provider {
 
     private buildSubs(html: string): VideoSubtitle[] {
         const out: VideoSubtitle[] = []
-        const re = /https?:\/\/[^"'\s]+\/subtitles\/[0-9]+_([a-z-]+)\.ass/g
+        const re = /https?:\/\/[^"'\s]+\/subtitles\/[0-9]+_([a-z-]+)\.(?:ass|srt)/g
         const seen: { [key: string]: boolean } = {}
         let englishIdx = -1
         let m: RegExpExecArray | null
