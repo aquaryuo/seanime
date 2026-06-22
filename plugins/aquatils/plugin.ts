@@ -10,7 +10,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.35"
+        const SOLVER_VERSION = "0.1.36"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -42,12 +42,15 @@ function init() {
         const fsBrowserMode = ctx.state<string>(sget<string>("fs.browserMode", "headless"))
         const fsHideDesktop = ctx.state<boolean>(sget<boolean>("fs.hideDesktop", false))
         const fsDns = ctx.state<string>(sget<string>("fs.dns", "off"))
+        const fsDnsCustom = ctx.state<string>(sget<string>("fs.dnsCustom", ""))
+        const fsPacing = ctx.state<boolean>(sget<boolean>("fs.pacing", false))
         const fsStatus = ctx.state<string>("unknown")
         const fsSessions = ctx.state<string[]>([])
         const fsNote = ctx.state<string>("")
         const fsHostRef = ctx.fieldRef<string>(fsHost.get())
         const fsPortRef = ctx.fieldRef<string>(fsPort.get())
         const fsSessionRef = ctx.fieldRef<string>(fsSession.get())
+        const fsDnsCustomRef = ctx.fieldRef<string>(fsDnsCustom.get())
         let fsBusy = false
         let fsBinary: $os.Cmd | null = null
         let fsStartTicks = 0
@@ -416,6 +419,8 @@ function init() {
                 $storage.set("fs.browserMode", fsBrowserMode.get())
                 $storage.set("fs.hideDesktop", fsHideDesktop.get())
                 $storage.set("fs.dns", fsDns.get())
+                $storage.set("fs.dnsCustom", fsDnsCustom.get())
+                $storage.set("fs.pacing", fsPacing.get())
                 $storage.set("fs.consent", fsConsent.get())
             } catch (_e) {}
         }
@@ -533,7 +538,7 @@ function init() {
                 setStatus("up")
                 fsDownStreak = 0
                 tray.update()
-                const extra: { [k: string]: any } = { url: "https://www.google.com", maxTimeout: 45000 }
+                const extra: { [k: string]: any } = { url: "https://nowsecure.nl", maxTimeout: 32000 }
                 if (ping.sessions) {
                     const sess = (fsSession.get() || FS_DEFAULT_SESSION).trim()
                     if (sess) {
@@ -545,11 +550,11 @@ function init() {
                 const r = await fsApi("request.get", extra, 55)
                 const dt = t0 ? Math.round((nowMs() - t0) / 1000) : 0
                 if (r && r.status === "ok") {
-                    setTest("Test OK" + (fsVersion.get() ? " · v" + fsVersion.get() : "") + (dt ? " · " + dt + "s" : ""))
+                    setTest("Cloudflare test passed" + (fsVersion.get() ? " · v" + fsVersion.get() : "") + (dt ? " · " + dt + "s" : ""))
                 } else if (r && r.message) {
-                    setTest("Reachable, but the solve failed: " + String(r.message))
+                    setTest("Reachable, but couldn't clear Cloudflare: " + String(r.message))
                 } else {
-                    setTest("Reachable (v" + (fsVersion.get() || "?") + ") but the test timed out — the browser may still be warming up. Try again in a moment.")
+                    setTest("Reachable (v" + (fsVersion.get() || "?") + ") but the Cloudflare test timed out — the browser may still be warming up. Try again in a moment.")
                 }
                 tray.update()
             } finally {
@@ -845,7 +850,9 @@ function init() {
                 if (chromiumOverride) env.push("SOLVER_CHROME=" + chromiumOverride)
                 env.push("SOLVER_BROWSER_MODE=" + (fsBrowserMode.get() || "headless"))
                 if (fsHideDesktop.get()) env.push("SOLVER_HIDE=desktop")
-                if (fsDns.get() && fsDns.get() !== "off") env.push("SOLVER_DNS=" + fsDns.get())
+                const dnsVal = fsDns.get() === "custom" ? (fsDnsCustom.get() || "").trim() : fsDns.get()
+                if (dnsVal && dnsVal !== "off") env.push("SOLVER_DNS=" + dnsVal)
+                if (fsPacing.get()) env.push("SOLVER_PACING=1")
                 c.env = env
             } catch (_e) {}
             fsBinary = c
@@ -1347,12 +1354,22 @@ function init() {
             fsPersist()
             applySolverEnvChange(fsHideDesktop.get() ? "Hidden-desktop mode on (experimental)" : "Hidden-desktop mode off")
         })
-        ctx.registerEventHandler("fs-dns-toggle", () => {
-            const order = ["off", "cloudflare", "google", "quad9"]
-            const i = order.indexOf(fsDns.get())
-            fsDns.set(order[(i + 1) % order.length])
+        ;["off", "auto", "cloudflare", "google", "quad9", "custom"].forEach((d) => {
+            ctx.registerEventHandler("fs-dns-set-" + d, () => {
+                fsDns.set(d)
+                fsPersist()
+                applySolverEnvChange("Encrypted DNS: " + d)
+            })
+        })
+        ctx.registerEventHandler("fs-dns-custom-save", () => {
+            fsDnsCustom.set((fsDnsCustomRef.current || "").trim())
             fsPersist()
-            applySolverEnvChange("Encrypted DNS: " + fsDns.get())
+            applySolverEnvChange("Custom DoH saved")
+        })
+        ctx.registerEventHandler("fs-pacing-toggle", () => {
+            fsPacing.set(!fsPacing.get())
+            fsPersist()
+            applySolverEnvChange(fsPacing.get() ? "Rate-limit pacing on" : "Rate-limit pacing off")
         })
         ctx.registerEventHandler("fs-autostart-toggle", () => {
             fsAutoStart.set(!fsAutoStart.get())
@@ -1563,15 +1580,26 @@ function init() {
                 style: ACCENT_SUBTLE,
             }))
             rows.push(divider())
-            const dnsLabel = fsDns.get() === "cloudflare" ? "Cloudflare" : fsDns.get() === "google" ? "Google" : fsDns.get() === "quad9" ? "Quad9" : "Off (use system DNS)"
-            rows.push(tray.button({
-                label: "Encrypted DNS: " + dnsLabel,
-                onClick: "fs-dns-toggle",
-                intent: fsDns.get() !== "off" ? "success-subtle" : "gray-subtle",
-                size: "sm",
+            rows.push(dim("Encrypted DNS (DoH) — bypasses ISP DNS blocks. Auto enables it only when a block is detected; Custom takes a DoH URL."))
+            const dnsOpts: [string, string][] = [["off", "Off"], ["auto", "Auto"], ["cloudflare", "Cloudflare"], ["google", "Google"], ["quad9", "Quad9"], ["custom", "Custom"]]
+            rows.push(tray.flex({
+                items: dnsOpts.map((o) => tray.button({ label: o[1], onClick: "fs-dns-set-" + o[0], intent: "gray-subtle", size: "sm", style: fsDns.get() === o[0] ? ACCENT_SUBTLE : {} })),
+                gap: 2,
+                style: { flexWrap: "wrap" },
             }))
+            if (fsDns.get() === "custom") {
+                rows.push(tray.flex({
+                    items: [
+                        tray.input({ fieldRef: fsDnsCustomRef, placeholder: "https://your-resolver/dns-query" }),
+                        tray.button({ label: "Save", onClick: "fs-dns-custom-save", intent: "primary", size: "sm", style: ACCENT_STYLE }),
+                    ],
+                    gap: 2,
+                }))
+            }
             rows.push(divider())
             rows.push(toggleRow(notify.get(), "seh-notify-toggle", "Error notifications"))
+            rows.push(divider())
+            rows.push(toggleRow(fsPacing.get(), "fs-pacing-toggle", "Adaptive rate-limit pacing", "Serializes same-site requests and backs off on HTTP 429 to dodge Cloudflare rate-limit bursts. A bit slower, but more reliable when a source rate-limits."))
             rows.push(divider())
             rows.push(dim("Seanime server URL"))
             rows.push(tray.input({ fieldRef: appRef, placeholder: SEH_DEFAULT_APP }))
