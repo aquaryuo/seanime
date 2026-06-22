@@ -631,6 +631,10 @@ function init() {
             try { return $storage.get<string>("fs.solverReady") === FS_VERSION } catch (_e) { return false }
         }
 
+        function solverPrevInstalled(): boolean {
+            try { const v = ($storage.get<string>("fs.solverReady") || "").trim(); return v !== "" && v !== FS_VERSION } catch (_e) { return false }
+        }
+
         // The current version was downloaded + verified (marker set) but the binary
         // file is now gone — i.e. antivirus quarantined it, not a missing/old install.
         function solverQuarantined(): boolean {
@@ -1775,10 +1779,13 @@ function init() {
                         }))
                     }
                 } else if (needsDownload && fsConsent.get()) {
-                    rows.push(dim("A newer solver (v" + SOLVER_VERSION + ") is ready to install — it replaces the previous version (old files are removed automatically)."))
+                    const prev = solverPrevInstalled()
+                    rows.push(dim(prev
+                        ? "A newer solver (v" + SOLVER_VERSION + ") is ready to install — it replaces the previous version (old files are removed automatically)."
+                        : "The solver isn't installed. Download v" + SOLVER_VERSION + " to get blocked sources loading again."))
                     rows.push(tray.flex({
                         items: [
-                            tray.button({ label: "Update & start", onClick: "fs-simple-start", intent: "success", size: "sm", style: ACCENT_STYLE }),
+                            tray.button({ label: prev ? "Update & start" : "Download & start", onClick: "fs-simple-start", intent: "success", size: "sm", style: ACCENT_STYLE }),
                             tray.button({ label: "Advanced", onClick: "ui-mode-toggle", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto" } }),
                         ],
                         gap: 2,
