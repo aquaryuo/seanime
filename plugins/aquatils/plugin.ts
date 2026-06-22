@@ -1376,6 +1376,8 @@ function init() {
             fsPersist()
             applySolverEnvChange(fsPacing.get() ? "Rate-limit pacing on" : "Rate-limit pacing off")
         })
+        ctx.registerEventHandler("fs-help-pacing", () => ctx.toast.info("Serializes same-site requests and backs off on HTTP 429 to dodge Cloudflare rate-limit bursts. A bit slower, but more reliable when a source rate-limits."))
+        ctx.registerEventHandler("fs-help-hidedesktop", () => ctx.toast.info("Runs the browser on a private Windows desktop so it has no taskbar button. Experimental: it may fall back to software rendering and fail to clear protection — if streams stop working, switch it back off."))
         ctx.registerEventHandler("fs-autostart-toggle", () => {
             fsAutoStart.set(!fsAutoStart.get())
             fsPersist()
@@ -1458,13 +1460,13 @@ function init() {
         function divider(): any {
             return tray.div({ items: [], style: { borderTop: "1px solid rgba(255,255,255,0.08)", marginTop: "4px", marginBottom: "4px" } })
         }
-        function toggleRow(on: boolean, click: string, label: string, help?: string): any {
+        function toggleRow(on: boolean, click: string, label: string, helpClick?: string): any {
             const items: any[] = [
                 tray.button({ label: on ? "✓" : "✕", onClick: click, intent: "gray-subtle", size: "sm", style: on ? { ...ACCENT_SUBTLE, fontSize: ICON_FS } : { fontSize: ICON_FS } }),
                 tray.text(label, { style: { fontSize: "13px", color: "rgba(255,255,255,0.85)", overflowWrap: "anywhere", wordBreak: "break-word" } }),
             ]
-            if (help) {
-                items.push(tray.tooltip({ text: help, item: tray.text("?", { style: { color: "#FFC840", fontWeight: "700", marginLeft: "4px", cursor: "help" } }) }))
+            if (helpClick) {
+                items.push(tray.button({ label: "?", onClick: helpClick, intent: "gray-subtle", size: "sm", style: { color: "#FFC840", fontWeight: "700", marginLeft: "2px" } }))
             }
             return tray.flex({
                 items: items,
@@ -1604,7 +1606,7 @@ function init() {
             rows.push(divider())
             rows.push(toggleRow(notify.get(), "seh-notify-toggle", "Error notifications"))
             rows.push(divider())
-            rows.push(toggleRow(fsPacing.get(), "fs-pacing-toggle", "Adaptive rate-limit pacing", "Serializes same-site requests and backs off on HTTP 429 to dodge Cloudflare rate-limit bursts. A bit slower, but more reliable when a source rate-limits."))
+            rows.push(toggleRow(fsPacing.get(), "fs-pacing-toggle", "Adaptive rate-limit pacing", "fs-help-pacing"))
             rows.push(divider())
             rows.push(dim("Seanime server URL"))
             rows.push(tray.input({ fieldRef: appRef, placeholder: SEH_DEFAULT_APP }))
@@ -1867,7 +1869,7 @@ function init() {
             if (m !== "remote" && typeof $os !== "undefined" && $os.platform === "windows") {
                 rows.push(divider())
                 rows.push(heading("Experimental"))
-                rows.push(toggleRow(fsHideDesktop.get(), "fs-hidedesktop-toggle", "Hide on a private desktop", "Runs the browser on a private Windows desktop so it has no taskbar button. Experimental: it may fall back to software rendering and fail to clear protection — if streams stop working, switch it back off."))
+                rows.push(toggleRow(fsHideDesktop.get(), "fs-hidedesktop-toggle", "Hide on a private desktop", "fs-help-hidedesktop"))
             }
             return rows
         }
