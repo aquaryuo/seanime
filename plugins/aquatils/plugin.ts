@@ -10,7 +10,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.39"
+        const SOLVER_VERSION = "0.1.41"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -40,6 +40,7 @@ function init() {
         const fsWantChromium = ctx.state<boolean>(sget<boolean>("fs.wantChromium", false))
         const fsAutoUpdate = ctx.state<boolean>(sget<boolean>("fs.autoUpdate", false))
         const fsBrowserMode = ctx.state<string>(sget<string>("fs.browserMode", "headless"))
+        const fsEngine = ctx.state<string>(sget<string>("fs.engine", "chrome"))
         const fsHideDesktop = ctx.state<boolean>(sget<boolean>("fs.hideDesktop", false))
         const fsDns = ctx.state<string>(sget<string>("fs.dns", "off"))
         const fsDnsCustom = ctx.state<string>(sget<string>("fs.dnsCustom", ""))
@@ -418,6 +419,7 @@ function init() {
                 $storage.set("fs.wantChromium", fsWantChromium.get())
                 $storage.set("fs.autoUpdate", fsAutoUpdate.get())
                 $storage.set("fs.browserMode", fsBrowserMode.get())
+                $storage.set("fs.engine", fsEngine.get())
                 $storage.set("fs.hideDesktop", fsHideDesktop.get())
                 $storage.set("fs.dns", fsDns.get())
                 $storage.set("fs.dnsCustom", fsDnsCustom.get())
@@ -862,6 +864,7 @@ function init() {
                 if (logPath) env.push("LOG_FILE=" + logPath)
                 if (chromiumOverride) env.push("SOLVER_CHROME=" + chromiumOverride)
                 env.push("SOLVER_BROWSER_MODE=" + (fsBrowserMode.get() || "headless"))
+                if (fsEngine.get() && fsEngine.get() !== "chrome") env.push("SOLVER_BROWSER_ENGINE=" + fsEngine.get())
                 if (fsHideDesktop.get()) env.push("SOLVER_HIDE=desktop")
                 const dnsVal = fsDns.get() === "custom" ? (fsDnsCustom.get() || "").trim() : fsDns.get()
                 if (dnsVal && dnsVal !== "off") env.push("SOLVER_DNS=" + dnsVal)
@@ -1384,6 +1387,15 @@ function init() {
             fsPersist()
             applySolverEnvChange("Browser tier: " + fsBrowserMode.get())
         })
+        ;["chrome", "edge", "webview2"].forEach((e) => {
+            ctx.registerEventHandler("fs-engine-set-" + e, () => {
+                fsEngine.set(e)
+                fsPersist()
+                const label = e === "webview2" ? "WebView2" : (e === "edge" ? "Edge" : "Chrome")
+                applySolverEnvChange("Browser engine: " + label)
+            })
+        })
+        ctx.registerEventHandler("fs-help-engine", () => ctx.toast.info("Stage B browser engine. Chrome (default) and Edge drive your installed browser. WebView2 is experimental: it runs a hidden, off-screen Edge WebView2 window with no taskbar button, reusing the Edge WebView2 Runtime present on virtually all Windows 11 machines. Switch to Chrome or Edge if a solve fails on WebView2."))
         ctx.registerEventHandler("fs-hidedesktop-toggle", () => {
             const turningOn = !fsHideDesktop.get()
             fsHideDesktop.set(turningOn)
@@ -1920,6 +1932,21 @@ function init() {
             if (m !== "remote" && typeof $os !== "undefined" && $os.platform === "windows") {
                 rows.push(divider())
                 rows.push(heading("Experimental"))
+                rows.push(tray.flex({
+                    items: [
+                        dim("Browser engine"),
+                        tray.button({ label: "?", onClick: "fs-help-engine", intent: "gray-subtle", size: "sm", style: { color: "#FFC840", fontWeight: "700", marginLeft: "2px" } }),
+                    ],
+                    gap: 2,
+                    style: { alignItems: "center" },
+                }))
+                const engineOpts: [string, string][] = [["chrome", "Chrome"], ["edge", "Edge"], ["webview2", "WebView2 (exp)"]]
+                rows.push(tray.flex({
+                    items: engineOpts.map((o) => tray.button({ label: o[1], onClick: "fs-engine-set-" + o[0], intent: "gray-subtle", size: "sm", style: fsEngine.get() === o[0] ? ACCENT_SUBTLE : {} })),
+                    gap: 2,
+                    style: { flexWrap: "wrap" },
+                }))
+                rows.push(divider())
                 rows.push(dim("Caution - hidden desktop can trigger Windows Defender; add a solver-folder exclusion first."))
                 rows.push(toggleRow(fsHideDesktop.get(), "fs-hidedesktop-toggle", "Hide on a private desktop (may trip antivirus)", "fs-help-hidedesktop"))
             }
