@@ -10,7 +10,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.45"
+        const SOLVER_VERSION = "0.1.46"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -44,6 +44,7 @@ function init() {
         const fsHideDesktop = ctx.state<boolean>(sget<boolean>("fs.hideDesktop", false))
         const fsWv2Warm = ctx.state<boolean>(sget<boolean>("fs.wv2warm", true))
         const fsWv2Refresh = ctx.state<boolean>(sget<boolean>("fs.wv2refresh", false))
+        const fsWv2Utls = ctx.state<boolean>(sget<boolean>("fs.wv2utls", false))
         const fsDns = ctx.state<string>(sget<string>("fs.dns", "off"))
         const fsDnsCustom = ctx.state<string>(sget<string>("fs.dnsCustom", ""))
         const fsPacing = ctx.state<boolean>(sget<boolean>("fs.pacing", false))
@@ -423,6 +424,7 @@ function init() {
                 $storage.set("fs.hideDesktop", fsHideDesktop.get())
                 $storage.set("fs.wv2warm", fsWv2Warm.get())
                 $storage.set("fs.wv2refresh", fsWv2Refresh.get())
+                $storage.set("fs.wv2utls", fsWv2Utls.get())
                 $storage.set("fs.dns", fsDns.get())
                 $storage.set("fs.dnsCustom", fsDnsCustom.get())
                 $storage.set("fs.pacing", fsPacing.get())
@@ -870,6 +872,7 @@ function init() {
                 if (fsHideDesktop.get()) env.push("SOLVER_HIDE=desktop")
                 if (!fsWv2Warm.get()) env.push("SOLVER_WV2_WARM=0")
                 if (fsWv2Refresh.get()) env.push("SOLVER_WV2_REFRESH=1")
+                if (fsWv2Utls.get()) env.push("SOLVER_WV2_UTLS=1")
                 const dnsVal = fsDns.get() === "custom" ? (fsDnsCustom.get() || "").trim() : fsDns.get()
                 if (dnsVal && dnsVal !== "off") env.push("SOLVER_DNS=" + dnsVal)
                 if (fsPacing.get()) env.push("SOLVER_PACING=1")
@@ -1422,6 +1425,12 @@ function init() {
             applySolverEnvChange(fsWv2Refresh.get() ? "Proactive clearance refresh on" : "Proactive clearance refresh off")
         })
         ctx.registerEventHandler("fs-help-wv2refresh", () => ctx.toast.info("While watching, refresh the clearance before it expires so you never hit a mid-binge stall. Off by default; makes a periodic background request only while you're actively watching."))
+        ctx.registerEventHandler("fs-wv2utls-toggle", () => {
+            fsWv2Utls.set(!fsWv2Utls.get())
+            fsPersist()
+            applySolverEnvChange(fsWv2Utls.get() ? "uTLS fast path on" : "uTLS fast path off")
+        })
+        ctx.registerEventHandler("fs-help-wv2utls", () => ctx.toast.info("Experimental: after the first clear, serve requests through the fast uTLS path using the browser cleared cookie - lighter (lets the hidden browser idle). Watch the logs to confirm; off by default."))
         ;["off", "auto", "cloudflare", "google", "quad9", "custom"].forEach((d) => {
             ctx.registerEventHandler("fs-dns-set-" + d, () => {
                 fsDns.set(d)
@@ -1965,6 +1974,7 @@ function init() {
                 if (fsEngine.get() === "webview2") {
                     rows.push(toggleRow(fsWv2Warm.get(), "fs-wv2warm-toggle", "Warm-origin fast path (WebView2)", "fs-help-wv2warm"))
                     rows.push(toggleRow(fsWv2Refresh.get(), "fs-wv2refresh-toggle", "Proactive clearance refresh (WebView2)", "fs-help-wv2refresh"))
+                    rows.push(toggleRow(fsWv2Utls.get(), "fs-wv2utls-toggle", "uTLS fast path (WebView2)", "fs-help-wv2utls"))
                 }
                 rows.push(divider())
                 rows.push(dim("Caution - hidden desktop can trigger Windows Defender; add a solver-folder exclusion first."))
