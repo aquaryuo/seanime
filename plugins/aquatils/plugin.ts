@@ -10,7 +10,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.47"
+        const SOLVER_VERSION = "0.1.48"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -47,6 +47,7 @@ function init() {
         const fsDns = ctx.state<string>(sget<string>("fs.dns", "off"))
         const fsDnsCustom = ctx.state<string>(sget<string>("fs.dnsCustom", ""))
         const fsPacing = ctx.state<boolean>(sget<boolean>("fs.pacing", false))
+        const fsVerbose = ctx.state<boolean>(sget<boolean>("fs.verbose", false))
         const fsMetrics = ctx.state<any>(null)
         const fsStatus = ctx.state<string>("unknown")
         const fsSessions = ctx.state<string[]>([])
@@ -426,6 +427,7 @@ function init() {
                 $storage.set("fs.dns", fsDns.get())
                 $storage.set("fs.dnsCustom", fsDnsCustom.get())
                 $storage.set("fs.pacing", fsPacing.get())
+                $storage.set("fs.verbose", fsVerbose.get())
                 $storage.set("fs.consent", fsConsent.get())
             } catch (_e) {}
         }
@@ -862,7 +864,7 @@ function init() {
                 const env = c.environ()
                 env.push("HOST=127.0.0.1")
                 env.push("PORT=" + port)
-                env.push("LOG_LEVEL=info")
+                env.push("LOG_LEVEL=" + (fsVerbose.get() ? "debug" : "info"))
                 if (logPath) env.push("LOG_FILE=" + logPath)
                 if (chromiumOverride) env.push("SOLVER_CHROME=" + chromiumOverride)
                 env.push("SOLVER_BROWSER_MODE=" + (fsBrowserMode.get() || "headless"))
@@ -1436,6 +1438,12 @@ function init() {
             applySolverEnvChange(fsPacing.get() ? "Rate-limit pacing on" : "Rate-limit pacing off")
         })
         ctx.registerEventHandler("fs-help-pacing", () => ctx.toast.info("Serializes same-site requests and backs off on HTTP 429 to dodge Cloudflare rate-limit bursts. A bit slower, but more reliable when a source rate-limits."))
+        ctx.registerEventHandler("fs-verbose-toggle", () => {
+            fsVerbose.set(!fsVerbose.get())
+            fsPersist()
+            applySolverEnvChange(fsVerbose.get() ? "Verbose logging on" : "Verbose logging off")
+        })
+        ctx.registerEventHandler("fs-help-verbose", () => ctx.toast.info("Off by default - the log shows one line per request. Turn on to add detailed per-solve diagnostics (stage, timings, warm hits, cookie checks) for troubleshooting; restart the solver to apply."))
         ctx.registerEventHandler("fs-autostart-toggle", () => {
             fsAutoStart.set(!fsAutoStart.get())
             fsPersist()
@@ -1665,6 +1673,7 @@ function init() {
             rows.push(toggleRow(notify.get(), "seh-notify-toggle", "Error notifications"))
             rows.push(divider())
             rows.push(toggleRow(fsPacing.get(), "fs-pacing-toggle", "Adaptive rate-limit pacing", "fs-help-pacing"))
+            rows.push(toggleRow(fsVerbose.get(), "fs-verbose-toggle", "Verbose solver logs", "fs-help-verbose"))
             rows.push(divider())
             rows.push(dim("Seanime server URL"))
             rows.push(tray.input({ fieldRef: appRef, placeholder: SEH_DEFAULT_APP }))
