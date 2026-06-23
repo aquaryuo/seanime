@@ -40,7 +40,7 @@ function init() {
         const fsWantChromium = ctx.state<boolean>(sget<boolean>("fs.wantChromium", false))
         const fsAutoUpdate = ctx.state<boolean>(sget<boolean>("fs.autoUpdate", false))
         const fsBrowserMode = ctx.state<string>(sget<string>("fs.browserMode", "headless"))
-        const fsEngine = ctx.state<string>(sget<string>("fs.engine", "chrome"))
+        const fsEngine = ctx.state<string>(sget<string>("fs.engine", "webview2"))
         const fsHideDesktop = ctx.state<boolean>(sget<boolean>("fs.hideDesktop", false))
         const fsWv2Warm = ctx.state<boolean>(sget<boolean>("fs.wv2warm", true))
         const fsWv2Refresh = ctx.state<boolean>(sget<boolean>("fs.wv2refresh", false))
@@ -1965,16 +1965,16 @@ function init() {
                     gap: 2,
                     style: { alignItems: "center" },
                 }))
-                const engineOpts: [string, string][] = [["chrome", "Chrome"], ["edge", "Edge"], ["webview2", "WebView2 (exp)"]]
+                const engineOpts: [string, string][] = [["webview2", "WebView2"], ["chrome", "Chrome"], ["edge", "Edge"]]
                 rows.push(tray.flex({
                     items: engineOpts.map((o) => tray.button({ label: o[1], onClick: "fs-engine-set-" + o[0], intent: "gray-subtle", size: "sm", style: fsEngine.get() === o[0] ? ACCENT_SUBTLE : {} })),
                     gap: 2,
                     style: { flexWrap: "wrap" },
                 }))
                 if (fsEngine.get() === "webview2") {
-                    rows.push(toggleRow(fsWv2Warm.get(), "fs-wv2warm-toggle", "Warm-origin fast path (WebView2)", "fs-help-wv2warm"))
-                    rows.push(toggleRow(fsWv2Refresh.get(), "fs-wv2refresh-toggle", "Proactive clearance refresh (WebView2)", "fs-help-wv2refresh"))
-                    rows.push(toggleRow(fsWv2Utls.get(), "fs-wv2utls-toggle", "uTLS fast path (WebView2)", "fs-help-wv2utls"))
+                    rows.push(toggleRow(fsWv2Warm.get(), "fs-wv2warm-toggle", "Warm-origin fast path", "fs-help-wv2warm"))
+                    rows.push(toggleRow(fsWv2Refresh.get(), "fs-wv2refresh-toggle", "Proactive clearance refresh", "fs-help-wv2refresh"))
+                    rows.push(toggleRow(fsWv2Utls.get(), "fs-wv2utls-toggle", "uTLS fast path", "fs-help-wv2utls"))
                 }
                 rows.push(divider())
                 rows.push(dim("Caution - hidden desktop can trigger Windows Defender; add a solver-folder exclusion first."))
