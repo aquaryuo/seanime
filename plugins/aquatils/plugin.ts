@@ -10,7 +10,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.46"
+        const SOLVER_VERSION = "0.1.47"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -41,7 +41,6 @@ function init() {
         const fsAutoUpdate = ctx.state<boolean>(sget<boolean>("fs.autoUpdate", false))
         const fsBrowserMode = ctx.state<string>(sget<string>("fs.browserMode", "headless"))
         const fsEngine = ctx.state<string>(sget<string>("fs.engine", "webview2"))
-        const fsHideDesktop = ctx.state<boolean>(sget<boolean>("fs.hideDesktop", false))
         const fsWv2Warm = ctx.state<boolean>(sget<boolean>("fs.wv2warm", true))
         const fsWv2Refresh = ctx.state<boolean>(sget<boolean>("fs.wv2refresh", false))
         const fsWv2Utls = ctx.state<boolean>(sget<boolean>("fs.wv2utls", false))
@@ -421,7 +420,6 @@ function init() {
                 $storage.set("fs.autoUpdate", fsAutoUpdate.get())
                 $storage.set("fs.browserMode", fsBrowserMode.get())
                 $storage.set("fs.engine", fsEngine.get())
-                $storage.set("fs.hideDesktop", fsHideDesktop.get())
                 $storage.set("fs.wv2warm", fsWv2Warm.get())
                 $storage.set("fs.wv2refresh", fsWv2Refresh.get())
                 $storage.set("fs.wv2utls", fsWv2Utls.get())
@@ -869,7 +867,6 @@ function init() {
                 if (chromiumOverride) env.push("SOLVER_CHROME=" + chromiumOverride)
                 env.push("SOLVER_BROWSER_MODE=" + (fsBrowserMode.get() || "headless"))
                 if (fsEngine.get() && fsEngine.get() !== "chrome") env.push("SOLVER_BROWSER_ENGINE=" + fsEngine.get())
-                if (fsHideDesktop.get()) env.push("SOLVER_HIDE=desktop")
                 if (!fsWv2Warm.get()) env.push("SOLVER_WV2_WARM=0")
                 if (fsWv2Refresh.get()) env.push("SOLVER_WV2_REFRESH=1")
                 if (fsWv2Utls.get()) env.push("SOLVER_WV2_UTLS=1")
@@ -1403,16 +1400,6 @@ function init() {
             })
         })
         ctx.registerEventHandler("fs-help-engine", () => ctx.toast.info("Stage B browser engine. Chrome (default) and Edge drive your installed browser. WebView2 is experimental: it runs a hidden, off-screen Edge WebView2 window with no taskbar button, reusing the Edge WebView2 Runtime present on virtually all Windows 11 machines. Switch to Chrome or Edge if a solve fails on WebView2."))
-        ctx.registerEventHandler("fs-hidedesktop-toggle", () => {
-            const turningOn = !fsHideDesktop.get()
-            fsHideDesktop.set(turningOn)
-            fsPersist()
-            if (turningOn) {
-                const warn = "Caution: hidden desktop can trip Windows Defender, which may quarantine the solver. Add a Defender exclusion for the solver folder first. Turn this off if the solver disappears or streams stop."
-                try { ctx.toast.warning(warn) } catch (_e) { ctx.toast.info(warn) }
-            }
-            applySolverEnvChange(turningOn ? "Hidden desktop on (experimental)" : "Hidden desktop off")
-        })
         ctx.registerEventHandler("fs-wv2warm-toggle", () => {
             fsWv2Warm.set(!fsWv2Warm.get())
             fsPersist()
@@ -1449,7 +1436,6 @@ function init() {
             applySolverEnvChange(fsPacing.get() ? "Rate-limit pacing on" : "Rate-limit pacing off")
         })
         ctx.registerEventHandler("fs-help-pacing", () => ctx.toast.info("Serializes same-site requests and backs off on HTTP 429 to dodge Cloudflare rate-limit bursts. A bit slower, but more reliable when a source rate-limits."))
-        ctx.registerEventHandler("fs-help-hidedesktop", () => ctx.toast.info("Experimental and risky: runs the browser on a private Windows desktop so it has no taskbar button — but this trips Windows Defender, which may quarantine the solver. Only enable it after adding a Defender exclusion for the solver folder. If the solver vanishes or streams stop, turn it back off."))
         ctx.registerEventHandler("fs-autostart-toggle", () => {
             fsAutoStart.set(!fsAutoStart.get())
             fsPersist()
@@ -1976,9 +1962,6 @@ function init() {
                     rows.push(toggleRow(fsWv2Refresh.get(), "fs-wv2refresh-toggle", "Proactive clearance refresh", "fs-help-wv2refresh"))
                     rows.push(toggleRow(fsWv2Utls.get(), "fs-wv2utls-toggle", "uTLS fast path", "fs-help-wv2utls"))
                 }
-                rows.push(divider())
-                rows.push(dim("Caution - hidden desktop can trigger Windows Defender; add a solver-folder exclusion first."))
-                rows.push(toggleRow(fsHideDesktop.get(), "fs-hidedesktop-toggle", "Hide on a private desktop (may trip antivirus)", "fs-help-hidedesktop"))
             }
             return rows
         }
