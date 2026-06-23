@@ -10,7 +10,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.41"
+        const SOLVER_VERSION = "0.1.42"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -70,7 +70,6 @@ function init() {
         let fsTestUntil = 0
         let fsLastLiveUpdate = 0
         let fsManualStop = sget<boolean>("fs.manualStop", false)
-        let fsAutoTested = false
         let fsAutoUpgradeTried = false
         let fsChromiumAutoChecked = false
         const fsNotified: { [k: string]: boolean } = {}
@@ -204,7 +203,6 @@ function init() {
                 fsNotified["down"] = false
                 fsNotified["crash"] = false
                 if (!solverUpdatePending()) { fsAutoUpgradeTried = false; fsNotified["upd"] = false; fsNotified["upg"] = false }
-                if (!fsAutoTested && fsMode.get() !== "remote") { fsAutoTested = true; void runTest() }
             } else if (next === "starting") {
                 setErr("")
                 fsUpSince = 0
