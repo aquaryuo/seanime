@@ -10,7 +10,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.44"
+        const SOLVER_VERSION = "0.1.45"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -42,6 +42,8 @@ function init() {
         const fsBrowserMode = ctx.state<string>(sget<string>("fs.browserMode", "headless"))
         const fsEngine = ctx.state<string>(sget<string>("fs.engine", "chrome"))
         const fsHideDesktop = ctx.state<boolean>(sget<boolean>("fs.hideDesktop", false))
+        const fsWv2Warm = ctx.state<boolean>(sget<boolean>("fs.wv2warm", true))
+        const fsWv2Refresh = ctx.state<boolean>(sget<boolean>("fs.wv2refresh", false))
         const fsDns = ctx.state<string>(sget<string>("fs.dns", "off"))
         const fsDnsCustom = ctx.state<string>(sget<string>("fs.dnsCustom", ""))
         const fsPacing = ctx.state<boolean>(sget<boolean>("fs.pacing", false))
@@ -419,6 +421,8 @@ function init() {
                 $storage.set("fs.browserMode", fsBrowserMode.get())
                 $storage.set("fs.engine", fsEngine.get())
                 $storage.set("fs.hideDesktop", fsHideDesktop.get())
+                $storage.set("fs.wv2warm", fsWv2Warm.get())
+                $storage.set("fs.wv2refresh", fsWv2Refresh.get())
                 $storage.set("fs.dns", fsDns.get())
                 $storage.set("fs.dnsCustom", fsDnsCustom.get())
                 $storage.set("fs.pacing", fsPacing.get())
@@ -864,6 +868,8 @@ function init() {
                 env.push("SOLVER_BROWSER_MODE=" + (fsBrowserMode.get() || "headless"))
                 if (fsEngine.get() && fsEngine.get() !== "chrome") env.push("SOLVER_BROWSER_ENGINE=" + fsEngine.get())
                 if (fsHideDesktop.get()) env.push("SOLVER_HIDE=desktop")
+                if (!fsWv2Warm.get()) env.push("SOLVER_WV2_WARM=0")
+                if (fsWv2Refresh.get()) env.push("SOLVER_WV2_REFRESH=1")
                 const dnsVal = fsDns.get() === "custom" ? (fsDnsCustom.get() || "").trim() : fsDns.get()
                 if (dnsVal && dnsVal !== "off") env.push("SOLVER_DNS=" + dnsVal)
                 if (fsPacing.get()) env.push("SOLVER_PACING=1")
@@ -1404,6 +1410,18 @@ function init() {
             }
             applySolverEnvChange(turningOn ? "Hidden desktop on (experimental)" : "Hidden desktop off")
         })
+        ctx.registerEventHandler("fs-wv2warm-toggle", () => {
+            fsWv2Warm.set(!fsWv2Warm.get())
+            fsPersist()
+            applySolverEnvChange(fsWv2Warm.get() ? "Warm-origin fast path on" : "Warm-origin fast path off")
+        })
+        ctx.registerEventHandler("fs-help-wv2warm", () => ctx.toast.info("Reuse an already-cleared site instead of re-checking every request - much faster, on by default."))
+        ctx.registerEventHandler("fs-wv2refresh-toggle", () => {
+            fsWv2Refresh.set(!fsWv2Refresh.get())
+            fsPersist()
+            applySolverEnvChange(fsWv2Refresh.get() ? "Proactive clearance refresh on" : "Proactive clearance refresh off")
+        })
+        ctx.registerEventHandler("fs-help-wv2refresh", () => ctx.toast.info("While watching, refresh the clearance before it expires so you never hit a mid-binge stall. Off by default; makes a periodic background request only while you're actively watching."))
         ;["off", "auto", "cloudflare", "google", "quad9", "custom"].forEach((d) => {
             ctx.registerEventHandler("fs-dns-set-" + d, () => {
                 fsDns.set(d)
@@ -1944,6 +1962,10 @@ function init() {
                     gap: 2,
                     style: { flexWrap: "wrap" },
                 }))
+                if (fsEngine.get() === "webview2") {
+                    rows.push(toggleRow(fsWv2Warm.get(), "fs-wv2warm-toggle", "Warm-origin fast path (WebView2)", "fs-help-wv2warm"))
+                    rows.push(toggleRow(fsWv2Refresh.get(), "fs-wv2refresh-toggle", "Proactive clearance refresh (WebView2)", "fs-help-wv2refresh"))
+                }
                 rows.push(divider())
                 rows.push(dim("Caution - hidden desktop can trigger Windows Defender; add a solver-folder exclusion first."))
                 rows.push(toggleRow(fsHideDesktop.get(), "fs-hidedesktop-toggle", "Hide on a private desktop (may trip antivirus)", "fs-help-hidedesktop"))
