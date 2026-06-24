@@ -10,7 +10,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.50"
+        const SOLVER_VERSION = "0.1.51"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -48,6 +48,7 @@ function init() {
         const fsDnsCustom = ctx.state<string>(sget<string>("fs.dnsCustom", ""))
         const fsPacing = ctx.state<boolean>(sget<boolean>("fs.pacing", false))
         const fsVerbose = ctx.state<boolean>(sget<boolean>("fs.verbose", false))
+        const fsCustomTls = ctx.state<boolean>(sget<boolean>("fs.customTls", false))
         const fsMetrics = ctx.state<any>(null)
         const fsStatus = ctx.state<string>("unknown")
         const fsSessions = ctx.state<string[]>([])
@@ -428,6 +429,7 @@ function init() {
                 $storage.set("fs.dnsCustom", fsDnsCustom.get())
                 $storage.set("fs.pacing", fsPacing.get())
                 $storage.set("fs.verbose", fsVerbose.get())
+                $storage.set("fs.customTls", fsCustomTls.get())
                 $storage.set("fs.consent", fsConsent.get())
             } catch (_e) {}
         }
@@ -901,6 +903,7 @@ function init() {
                 const dnsVal = fsDns.get() === "custom" ? (fsDnsCustom.get() || "").trim() : fsDns.get()
                 if (dnsVal && dnsVal !== "off") env.push("SOLVER_DNS=" + dnsVal)
                 if (fsPacing.get()) env.push("SOLVER_PACING=1")
+                if (fsCustomTls.get()) env.push("SOLVER_TLS=custom")
                 env.push("SOLVER_IDLE_EXIT=600")
                 c.env = env
             } catch (_e) {}
@@ -1472,6 +1475,12 @@ function init() {
             applySolverEnvChange(fsVerbose.get() ? "Verbose logging on" : "Verbose logging off")
         })
         ctx.registerEventHandler("fs-help-verbose", () => ctx.toast.info("Off by default - the log shows one line per request. Turn on to add detailed per-solve diagnostics (stage, timings, warm hits, cookie checks) for troubleshooting; restart the solver to apply."))
+        ctx.registerEventHandler("fs-customtls-toggle", () => {
+            fsCustomTls.set(!fsCustomTls.get())
+            fsPersist()
+            applySolverEnvChange(fsCustomTls.get() ? "Custom TLS fingerprint on" : "Custom TLS fingerprint off")
+        })
+        ctx.registerEventHandler("fs-help-customtls", () => ctx.toast.info("Off by default. Uses our own Chrome TLS/HTTP2 fingerprint instead of the bundled library's, so we can keep it current independently. Identical to the library today; run the Stealth check after enabling to confirm. Restart the solver to apply."))
         ctx.registerEventHandler("fs-autostart-toggle", () => {
             fsAutoStart.set(!fsAutoStart.get())
             fsPersist()
@@ -1702,6 +1711,7 @@ function init() {
             rows.push(divider())
             rows.push(toggleRow(fsPacing.get(), "fs-pacing-toggle", "Adaptive rate-limit pacing", "fs-help-pacing"))
             rows.push(toggleRow(fsVerbose.get(), "fs-verbose-toggle", "Verbose solver logs", "fs-help-verbose"))
+            rows.push(toggleRow(fsCustomTls.get(), "fs-customtls-toggle", "Custom TLS fingerprint", "fs-help-customtls"))
             rows.push(divider())
             rows.push(dim("Seanime server URL"))
             rows.push(tray.input({ fieldRef: appRef, placeholder: SEH_DEFAULT_APP }))
