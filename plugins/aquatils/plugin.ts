@@ -1339,9 +1339,8 @@ function init() {
         ctx.registerEventHandler("fs-restart", () => {
             plog("restart requested")
             fsBusy = false
-            fsStop()
-            fsBusy = false
             fsRestarting = true
+            setNote("Restarting…")
             tray.update()
             fsStart()
         })
