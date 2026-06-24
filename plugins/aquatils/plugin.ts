@@ -10,7 +10,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.49"
+        const SOLVER_VERSION = "0.1.50"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -603,6 +603,32 @@ function init() {
                 lines.push("• binary: filesystem unavailable (strict mode?)")
             }
             setTest(lines.join("  ·  "))
+            tray.update()
+        }
+
+        async function runStealthCheck(): Promise<void> {
+            setTest("Running stealth check…")
+            tray.update()
+            const r = await fsApi("selftest", {}, 30)
+            if (!r) {
+                setTest("Solver not reachable — start it, then try again.")
+                tray.update()
+                return
+            }
+            const st = r.selfTest
+            if (!st) {
+                setTest("Stealth check failed" + (r.message ? ": " + String(r.message) : "") + ".")
+                tray.update()
+                return
+            }
+            const lines: string[] = []
+            lines.push((st.ok ? "✓ Looks like Chrome" : "✗ Fingerprint mismatch"))
+            const checks = Array.isArray(st.checks) ? st.checks : []
+            checks.forEach((c: any) => lines.push((c.pass ? "✓ " : "✗ ") + String(c.name) + (c.pass ? "" : "  (" + String(c.got || "") + ")")))
+            if (st.ja4) lines.push("JA4  " + String(st.ja4))
+            if (st.akamai) lines.push("HTTP2  " + String(st.akamai))
+            if (st.note) lines.push(String(st.note))
+            setTest(lines.join("\n"))
             tray.update()
         }
 
@@ -1350,6 +1376,9 @@ function init() {
         ctx.registerEventHandler("fs-doctor", () => {
             void runDoctor()
         })
+        ctx.registerEventHandler("fs-stealth", () => {
+            void runStealthCheck()
+        })
         for (let gi = 0; gi < 30; gi++) {
             ;(function (idx) {
                 ctx.registerEventHandler("seh-copy-" + idx, () => {
@@ -1898,6 +1927,7 @@ function init() {
                 items: [
                     tray.button({ label: "Test", onClick: "fs-test", intent: "gray-subtle", size: "sm" }),
                     tray.button({ label: "Doctor", onClick: "fs-doctor", intent: "gray-subtle", size: "sm" }),
+                    tray.button({ label: "Stealth", onClick: "fs-stealth", intent: "gray-subtle", size: "sm" }),
                     tray.button({ label: "⧉", onClick: "fs-copy-diag", intent: "gray-subtle", size: "sm", style: { fontSize: ICON_FS } }),
                 ],
                 gap: 2,
