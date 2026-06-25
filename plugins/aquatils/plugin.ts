@@ -268,7 +268,7 @@ function init() {
         // Accent gradient matched to the plugin icon (warm orange -> gold sunburst).
         const ACCENT_GRAD = "linear-gradient(135deg, rgba(242,145,47,0.9), rgba(255,200,64,0.9))"
         const ACCENT_STYLE: Record<string, string> = { background: ACCENT_GRAD, border: "none", color: "#1c1407", fontWeight: "600" }
-        const ACCENT_SUBTLE: Record<string, string> = { background: "linear-gradient(135deg, rgba(242,145,47,0.20), rgba(255,200,64,0.20))", border: "1px solid rgba(255,200,64,0.35)", color: "#FFC840", fontWeight: "500" }
+        const ACCENT_SUBTLE: Record<string, string> = { background: "rgba(255,200,64,0.16)", border: "none", color: "#FFD27A", fontWeight: "500" }
         const ICON_FS = "18px"
         const tray = ctx.newTray({
             iconUrl: "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/icon.png",
@@ -1563,7 +1563,7 @@ function init() {
             return tray.text(t, { style: { fontSize: "11px", fontWeight: "600", letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.4)", marginTop: "2px" } })
         }
         function divider(): any {
-            return tray.div({ items: [], style: { borderTop: "1px solid rgba(255,255,255,0.08)", marginTop: "4px", marginBottom: "4px" } })
+            return tray.div({ items: [], style: { marginTop: "5px", marginBottom: "5px" } })
         }
         function toggleRow(on: boolean, click: string, label: string, helpClick?: string): any {
             const items: any[] = [
@@ -1673,7 +1673,7 @@ function init() {
             }))
             rows.push(tray.div({
                 items: items,
-                style: { background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "6px", padding: "8px", flexGrow: "1", minHeight: "160px", overflowY: "auto" },
+                style: { background: "rgba(0,0,0,0.28)", borderRadius: "10px", padding: "10px 12px", flexGrow: "1", minHeight: "160px", overflowY: "auto" },
             }))
             return rows
         }
@@ -1765,12 +1765,12 @@ function init() {
             if (fsErr.get()) {
                 rows.push(tray.div({
                     items: [tray.text(fsErr.get(), { style: { fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5", color: "rgba(255,255,255,0.85)" } })],
-                    style: { background: "rgba(255,90,90,0.08)", border: "1px solid rgba(255,90,90,0.25)", borderRadius: "6px", padding: "8px", maxHeight: "160px", overflowY: "auto" },
+                    style: { background: "rgba(255,90,90,0.09)", borderLeft: "2px solid rgba(255,90,90,0.6)", borderRadius: "8px", padding: "10px 12px", maxHeight: "160px", overflowY: "auto" },
                 }))
                 if (fsHint.get()) {
                     rows.push(tray.div({
                         items: [tray.text(fsHint.get(), { style: { fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5", color: "rgba(255,255,255,0.85)" } })],
-                        style: { background: "rgba(90,150,255,0.08)", border: "1px solid rgba(90,150,255,0.3)", borderRadius: "6px", padding: "8px" },
+                        style: { background: "rgba(90,150,255,0.09)", borderLeft: "2px solid rgba(90,150,255,0.6)", borderRadius: "8px", padding: "10px 12px" },
                     }))
                 }
                 const acts: any[] = []
@@ -1816,7 +1816,7 @@ function init() {
             }
             rows.push(tray.div({
                 items: logItems,
-                style: { background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "6px", padding: "8px", flexGrow: "1", minHeight: "160px", maxHeight: "300px", overflowY: "auto" },
+                style: { background: "rgba(0,0,0,0.28)", borderRadius: "10px", padding: "10px 12px", flexGrow: "1", minHeight: "160px", maxHeight: "300px", overflowY: "auto" },
             }))
             return rows
         }
@@ -1907,7 +1907,7 @@ function init() {
             rows.push(tray.flex({
                 items: [
                     tray.button({ label: "Bundled Solver", onClick: "fs-mode-binary", intent: m !== "remote" ? "primary" : "gray-subtle", size: "sm", style: m !== "remote" ? ACCENT_STYLE : {} }),
-                    tray.text("Default", { style: { color: "#6aa1ff", fontSize: "12px", marginLeft: "2px" } }),
+                    tray.text("Default", { style: { color: "rgba(255,255,255,0.5)", fontSize: "12px", marginLeft: "2px" } }),
                     tray.button({ label: "Remote", onClick: "fs-mode-remote", intent: m === "remote" ? "primary" : "gray-subtle", size: "sm", style: m === "remote" ? ACCENT_STYLE : {} }),
                 ],
                 gap: 2,
@@ -1949,7 +1949,7 @@ function init() {
             if (fsTest.get()) {
                 rows.push(tray.div({
                     items: [tray.text(fsTest.get(), { style: { fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5", color: "rgba(255,255,255,0.75)" } })],
-                    style: { background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "6px", padding: "8px" },
+                    style: { background: "rgba(0,0,0,0.28)", borderRadius: "10px", padding: "10px 12px" },
                 }))
             }
 
