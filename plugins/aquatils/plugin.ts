@@ -240,7 +240,7 @@ function init() {
             try {
                 if (fsStatus.get() === "down" && !fsManualStop && fsMode.get() !== "remote") { tray.updateBadge({ number: 1, intent: "error" }); return }
                 if (solverUpdatePending()) { tray.updateBadge({ number: 1, intent: "info" }); return }
-                tray.updateBadge({ number: errors.get().length, intent: "warning" })
+                tray.updateBadge({ number: errorGroups().length, intent: "warning" })
             } catch (_e) {}
         }
 
@@ -264,7 +264,8 @@ function init() {
         // Tall-but-detached floating modal: leaves a gap above and below so it reads as
         // a floating panel on the side rather than a flush full-height drawer. Matches the
         // fixed wrapper gaps below (4.5rem top + 4.5rem bottom = 9rem).
-        const PANEL_H = "min(510px, calc(100dvh - 9rem))"
+        const PANEL_FULL = "calc(100dvh - 9rem)"
+        const PANEL_SIMPLE = "min(510px, calc(100dvh - 9rem))"
         // Accent gradient matched to the plugin icon (warm orange -> gold sunburst).
         const ACCENT_GRAD = "linear-gradient(135deg, rgba(242,145,47,0.9), rgba(255,200,64,0.9))"
         const ACCENT_STYLE: Record<string, string> = { background: ACCENT_GRAD, border: "none", color: "#1c1407", fontWeight: "600" }
@@ -274,7 +275,7 @@ function init() {
             iconUrl: "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/icon.png",
             withContent: true,
             width: "480px",
-            minHeight: PANEL_H,
+            minHeight: PANEL_SIMPLE,
         })
 
         // Seanime wraps plugin tray content in a div capped at max-h-[35rem] (560px) with
@@ -296,7 +297,7 @@ function init() {
         try {
             if (ctx.dom && ctx.dom.observe) {
                 ctx.dom.observe('[data-plugin-tray-popover-content="aq-aquatils-beta"] [class*="max-h-[35rem]"]', (els) => {
-                    styleEls(els, [["max-height", PANEL_H], ["maxHeight", PANEL_H], ["padding", "0px"]])
+                    styleEls(els, [["max-height", PANEL_FULL], ["maxHeight", PANEL_FULL], ["padding", "0px"]])
                 })
                 ctx.dom.observe('[data-plugin-tray-popover-content="aq-aquatils-beta"]', (els) => {
                     // bg-gray-950 here is opaque — it becomes the panel's backdrop, so the
@@ -311,8 +312,10 @@ function init() {
                                     if (!wrapper) return
                                     styleEls([wrapper], [
                                         ["transform", "none"], ["position", "fixed"],
-                                        ["top", PANEL_TOP], ["height", PANEL_H], ["max-height", PANEL_H], ["maxHeight", PANEL_H],
+                                        ["top", PANEL_TOP], ["bottom", PANEL_BOTTOM],
                                         ["left", PANEL_LEFT], ["right", "auto"], ["margin", "0"],
+                                        ["display", "flex"], ["flex-direction", "column"], ["flexDirection", "column"],
+                                        ["justify-content", "safe center"], ["justifyContent", "safe center"],
                                         ["border", "none"], ["border-width", "0"], ["borderWidth", "0"], ["outline", "none"],
                                     ])
                                 }).catch(() => {})
@@ -2021,7 +2024,7 @@ function init() {
 
         tray.render(() => {
             const rows: any[] = []
-            const errCount = errors.get().length
+            const errCount = errorGroups().length
             rows.push(tray.flex({
                 items: [
                     tray.button({ label: "Solver", onClick: "view-cf", intent: view.get() === "cf" ? "primary" : "gray-subtle", size: "sm", style: view.get() === "cf" ? ACCENT_STYLE : {} }),
@@ -2033,13 +2036,14 @@ function init() {
             rows.push(divider())
             const section = view.get() === "cf" ? cfRows() : view.get() === "settings" ? settingsRows() : errorRows()
             for (let i = 0; i < section.length; i++) rows.push(section[i])
+            const panelMin = (view.get() === "cf" && uiMode.get() !== "advanced") ? PANEL_SIMPLE : PANEL_FULL
             return tray.stack({
                 items: rows,
                 gap: 3,
                 style: {
                     display: "flex",
                     flexDirection: "column",
-                    minHeight: PANEL_H,
+                    minHeight: panelMin,
                     padding: "18px 16px",
                     background: "linear-gradient(180deg, rgba(18,19,24,0.40), rgba(10,11,15,0.52))",
                     backdropFilter: "blur(30px) saturate(115%)",
