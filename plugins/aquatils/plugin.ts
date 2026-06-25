@@ -274,7 +274,7 @@ function init() {
             iconUrl: "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/icon.png",
             withContent: true,
             width: "480px",
-            minHeight: PANEL_H,
+            minHeight: "0",
         })
 
         // Seanime wraps plugin tray content in a div capped at max-h-[35rem] (560px) with
@@ -311,7 +311,7 @@ function init() {
                                     if (!wrapper) return
                                     styleEls([wrapper], [
                                         ["transform", "none"], ["position", "fixed"],
-                                        ["top", PANEL_TOP], ["bottom", PANEL_BOTTOM],
+                                        ["top", PANEL_TOP], ["height", "auto"], ["max-height", PANEL_H], ["maxHeight", PANEL_H],
                                         ["left", PANEL_LEFT], ["right", "auto"], ["margin", "0"],
                                         ["border", "none"], ["border-width", "0"], ["borderWidth", "0"], ["outline", "none"],
                                     ])
@@ -1677,7 +1677,7 @@ function init() {
             }))
             rows.push(tray.div({
                 items: items,
-                style: { background: "rgba(0,0,0,0.28)", borderRadius: "10px", padding: "10px 12px", flexGrow: "1", minHeight: "160px", overflowY: "auto" },
+                style: { background: "rgba(0,0,0,0.28)", borderRadius: "10px", padding: "10px 12px", height: "220px", overflowY: "auto" },
             }))
             return rows
         }
@@ -1823,7 +1823,7 @@ function init() {
             }
             rows.push(tray.div({
                 items: logItems,
-                style: { background: "rgba(0,0,0,0.28)", borderRadius: "10px", padding: "10px 12px", flexGrow: "1", minHeight: "160px", overflowY: "auto" },
+                style: { background: "rgba(0,0,0,0.28)", borderRadius: "10px", padding: "10px 12px", height: "220px", overflowY: "auto" },
             }))
             return rows
         }
@@ -2046,7 +2046,7 @@ function init() {
                 style: {
                     display: "flex",
                     flexDirection: "column",
-                    minHeight: PANEL_H,
+                    minHeight: "0",
                     padding: "18px 16px",
                     background: "linear-gradient(180deg, rgba(18,19,24,0.40), rgba(10,11,15,0.52))",
                     backdropFilter: "blur(30px) saturate(115%)",
