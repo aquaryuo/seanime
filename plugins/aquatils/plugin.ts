@@ -274,7 +274,7 @@ function init() {
             iconUrl: "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/icon.png",
             withContent: true,
             width: "480px",
-            minHeight: PANEL_H,
+            minHeight: "0",
         })
 
         // Seanime wraps plugin tray content in a div capped at max-h-[35rem] (560px) with
@@ -311,7 +311,7 @@ function init() {
                                     if (!wrapper) return
                                     styleEls([wrapper], [
                                         ["transform", "none"], ["position", "fixed"],
-                                        ["top", PANEL_TOP], ["bottom", PANEL_BOTTOM],
+                                        ["top", PANEL_TOP], ["height", "auto"], ["max-height", PANEL_H], ["maxHeight", PANEL_H],
                                         ["left", PANEL_LEFT], ["right", "auto"], ["margin", "0"],
                                         ["border", "none"], ["border-width", "0"], ["borderWidth", "0"], ["outline", "none"],
                                     ])
@@ -1614,8 +1614,8 @@ function init() {
             const st = fsStatus.get()
             const g = (glyph: string, color: string) => tray.text(glyph, { style: { fontSize: "24px", color: color, lineHeight: "1" } })
             const pill = (word: string, bg: string, fg: string) => tray.div({
-                items: [tray.text(word, { style: { fontSize: "12px", fontWeight: "600", color: fg, lineHeight: "1" } })],
-                style: { background: bg, borderRadius: "6px", padding: "3px 9px", display: "inline-flex", alignItems: "center" },
+                items: [tray.text(word, { style: { fontSize: "12px", fontWeight: "600", color: fg, lineHeight: "1", whiteSpace: "nowrap" } })],
+                style: { background: bg, borderRadius: "6px", padding: "3px 9px", display: "inline-flex", alignItems: "center", whiteSpace: "nowrap", flexShrink: "0", width: "fit-content" },
             })
             if (st === "up") return tray.flex({ items: [g("▶", "#5fd38a"), pill("Running", "rgba(95,211,138,0.18)", "#7ee0a6")], gap: 2, style: { alignItems: "center" } })
             if (st === "starting") return tray.flex({ items: [g("◐", "#f2c14e"), pill("Starting", "rgba(242,193,78,0.18)", "#f2cf6e")], gap: 2, style: { alignItems: "center" } })
@@ -2046,7 +2046,7 @@ function init() {
                 style: {
                     display: "flex",
                     flexDirection: "column",
-                    minHeight: PANEL_H,
+                    minHeight: "0",
                     padding: "18px 16px",
                     background: "linear-gradient(180deg, rgba(18,19,24,0.40), rgba(10,11,15,0.52))",
                     backdropFilter: "blur(30px) saturate(115%)",
