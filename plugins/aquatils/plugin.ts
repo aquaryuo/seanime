@@ -270,7 +270,6 @@ function init() {
         const ACCENT_STYLE: Record<string, string> = { background: ACCENT_GRAD, border: "none", color: "#1c1407", fontWeight: "600" }
         const ACCENT_SUBTLE: Record<string, string> = { background: "rgba(255,200,64,0.16)", border: "none", color: "#FFD27A", fontWeight: "500" }
         const ICON_FS = "18px"
-        const AQ_CSS = ".aq-panel .rounded-full { border-radius: 6px !important; }"
         const tray = ctx.newTray({
             iconUrl: "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/icon.png",
             withContent: true,
@@ -1612,12 +1611,15 @@ function init() {
         }
         function statusBadge(): any {
             const st = fsStatus.get()
-            const s = { borderRadius: "2px" }
             const g = (glyph: string, color: string) => tray.text(glyph, { style: { fontSize: "24px", color: color, lineHeight: "1" } })
-            if (st === "up") return tray.flex({ items: [g("▶", "#5fd38a"), tray.badge({ text: "Running", intent: "success", size: "md", style: s })], gap: 2, style: { alignItems: "center" } })
-            if (st === "starting") return tray.flex({ items: [g("◐", "#f2c14e"), tray.badge({ text: "Starting", intent: "warning", size: "md", style: s })], gap: 2, style: { alignItems: "center" } })
-            if (st === "down") return tray.flex({ items: [g("⏻", "rgba(255,255,255,0.55)"), tray.badge({ text: "Off", intent: "gray", size: "md", style: s })], gap: 2, style: { alignItems: "center" } })
-            return tray.flex({ items: [g("◌", "rgba(255,255,255,0.6)"), tray.badge({ text: "Checking", intent: "gray", size: "md", style: s })], gap: 2, style: { alignItems: "center" } })
+            const pill = (word: string, bg: string, fg: string) => tray.div({
+                items: [tray.text(word, { style: { fontSize: "12px", fontWeight: "600", color: fg, lineHeight: "1" } })],
+                style: { background: bg, borderRadius: "6px", padding: "3px 9px", display: "inline-flex", alignItems: "center" },
+            })
+            if (st === "up") return tray.flex({ items: [g("▶", "#5fd38a"), pill("Running", "rgba(95,211,138,0.18)", "#7ee0a6")], gap: 2, style: { alignItems: "center" } })
+            if (st === "starting") return tray.flex({ items: [g("◐", "#f2c14e"), pill("Starting", "rgba(242,193,78,0.18)", "#f2cf6e")], gap: 2, style: { alignItems: "center" } })
+            if (st === "down") return tray.flex({ items: [g("⏻", "rgba(255,255,255,0.55)"), pill("Off", "rgba(255,255,255,0.10)", "rgba(255,255,255,0.7)")], gap: 2, style: { alignItems: "center" } })
+            return tray.flex({ items: [g("◌", "rgba(255,255,255,0.6)"), pill("Checking", "rgba(255,255,255,0.10)", "rgba(255,255,255,0.7)")], gap: 2, style: { alignItems: "center" } })
         }
         function uptimeStr(): string {
             const t = nowMs()
@@ -2026,7 +2028,6 @@ function init() {
         tray.render(() => {
             const rows: any[] = []
             const errCount = errors.get().length
-            rows.push(tray.css({ css: AQ_CSS }))
             rows.push(tray.flex({
                 items: [
                     tray.button({ label: "Solver", onClick: "view-cf", intent: view.get() === "cf" ? "primary" : "gray-subtle", size: "sm", style: view.get() === "cf" ? ACCENT_STYLE : {} }),
@@ -2041,7 +2042,6 @@ function init() {
             return tray.stack({
                 items: rows,
                 gap: 3,
-                className: "aq-panel",
                 style: {
                     display: "flex",
                     flexDirection: "column",
