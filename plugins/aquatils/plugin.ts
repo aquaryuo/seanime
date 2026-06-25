@@ -1667,7 +1667,7 @@ function init() {
             const items = sehGroups.map((g, i) => tray.flex({
                 items: [
                     tray.text(g.label + (g.count > 1 ? "  ×" + g.count : ""), { style: lineStyle }),
-                    tray.button({ label: "⧉", onClick: "seh-copy-" + i, intent: "gray-subtle", size: "sm", style: { marginLeft: "6px", fontSize: ICON_FS } }),
+                    tray.button({ label: "Copy", onClick: "seh-copy-" + i, intent: "gray-subtle", size: "sm", style: { marginLeft: "6px" } }),
                 ],
                 gap: 1,
             }))
@@ -1680,10 +1680,11 @@ function init() {
 
         function settingsRows(): any[] {
             const rows: any[] = []
+            rows.push(heading("Startup"))
             rows.push(toggleRow(fsAutoStart.get(), "fs-autostart-toggle", "Auto-Start Server on Launch"))
-            rows.push(divider())
             rows.push(toggleRow(fsAutoUpdate.get(), "fs-autoupdate-toggle", "Auto-update solver & Chromium"))
             rows.push(divider())
+            rows.push(heading("Solver"))
             rows.push(dim("Browser solver — the real browser (WebView2/Chrome/Edge) that clears the hard JS & interactive challenges (Cloudflare JS, Turnstile, DDoS-Guard) the fast uTLS path can't. Below: how its window stays hidden."))
             rows.push(tray.button({
                 label: "Browser solver window: " + (fsBrowserMode.get() === "offscreen" ? "Off-screen (max stealth)" : "Invisible (headless)"),
@@ -1692,7 +1693,10 @@ function init() {
                 size: "sm",
                 style: ACCENT_SUBTLE,
             }))
+            rows.push(toggleRow(fsCustomTls.get(), "fs-customtls-toggle", "Custom TLS fingerprint", "fs-help-customtls"))
+            rows.push(toggleRow(fsPacing.get(), "fs-pacing-toggle", "Adaptive rate-limit pacing", "fs-help-pacing"))
             rows.push(divider())
+            rows.push(heading("Network"))
             rows.push(dim("Encrypted DNS (DoH) — bypasses ISP DNS blocks. Auto enables it only when a block is detected; Custom takes a DoH URL."))
             const dnsOpts: [string, string][] = [["off", "Off"], ["auto", "Auto"], ["cloudflare", "Cloudflare"], ["google", "Google"], ["quad9", "Quad9"], ["custom", "Custom"]]
             rows.push(tray.select({
@@ -1710,12 +1714,11 @@ function init() {
                 }))
             }
             rows.push(divider())
+            rows.push(heading("Diagnostics"))
+            rows.push(toggleRow(fsVerbose.get(), "fs-verbose-toggle", "Verbose solver logs", "fs-help-verbose"))
             rows.push(toggleRow(notify.get(), "seh-notify-toggle", "Error notifications"))
             rows.push(divider())
-            rows.push(toggleRow(fsPacing.get(), "fs-pacing-toggle", "Adaptive rate-limit pacing", "fs-help-pacing"))
-            rows.push(toggleRow(fsVerbose.get(), "fs-verbose-toggle", "Verbose solver logs", "fs-help-verbose"))
-            rows.push(toggleRow(fsCustomTls.get(), "fs-customtls-toggle", "Custom TLS fingerprint", "fs-help-customtls"))
-            rows.push(divider())
+            rows.push(heading("Connection"))
             rows.push(dim("Seanime server URL"))
             rows.push(tray.input({ fieldRef: appRef, placeholder: SEH_DEFAULT_APP }))
             rows.push(tray.button({ label: "Save", onClick: "seh-save", intent: "primary", size: "sm", style: ACCENT_STYLE }))
@@ -1781,7 +1784,7 @@ function init() {
                 if (fsMode.get() !== "remote" && !chromiumDownloadedHere() && !fsWantChromium.get()) {
                     acts.push(tray.button({ label: "Enable Chromium", onClick: "fs-enable-chromium", intent: "gray-subtle", size: "sm" }))
                 }
-                acts.push(tray.button({ label: "⧉", onClick: "fs-copy-diag", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto", fontSize: ICON_FS } }))
+                acts.push(tray.button({ label: "Copy diag", onClick: "fs-copy-diag", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto" } }))
                 rows.push(tray.flex({ items: acts, gap: 2 }))
             }
             return rows
@@ -1793,7 +1796,7 @@ function init() {
             rows.push(heading("Logs"))
             rows.push(tray.flex({
                 items: [
-                    tray.button({ label: "⧉", onClick: "fs-logs-copy", intent: "gray-subtle", size: "sm", style: { fontSize: ICON_FS } }),
+                    tray.button({ label: "Copy logs", onClick: "fs-logs-copy", intent: "gray-subtle", size: "sm" }),
                     tray.button({ label: "Hide polling", onClick: "fs-logs-filter", intent: "gray-subtle", size: "sm", style: fsLogFilter.get() ? ACCENT_SUBTLE : {} }),
                     tray.button({ label: "Clear", onClick: "fs-logs-clear", intent: "alert-subtle", size: "sm", style: { marginLeft: "auto" } }),
                 ],
@@ -2044,6 +2047,8 @@ function init() {
                     background: "linear-gradient(180deg, rgba(18,19,24,0.40), rgba(10,11,15,0.52))",
                     backdropFilter: "blur(30px) saturate(115%)",
                     WebkitBackdropFilter: "blur(30px) saturate(115%)",
+                    border: "none",
+                    outline: "none",
                     borderRadius: "16px",
                     boxShadow: "0 24px 60px -12px rgba(0,0,0,0.7)",
                 },
