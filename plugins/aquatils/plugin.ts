@@ -270,6 +270,11 @@ function init() {
         const ACCENT_STYLE: Record<string, string> = { background: ACCENT_GRAD, border: "none", color: "#1c1407", fontWeight: "600" }
         const ACCENT_SUBTLE: Record<string, string> = { background: "linear-gradient(135deg, rgba(242,145,47,0.20), rgba(255,200,64,0.20))", border: "1px solid rgba(255,200,64,0.35)", color: "#FFC840", fontWeight: "500" }
         const ICON_FS = "18px"
+        const AQ_CSS = [
+            ".aq-proof { background: linear-gradient(135deg, rgba(242,145,47,0.22), rgba(255,200,64,0.16)); border-radius: 12px; padding: 11px 13px; margin-bottom: 4px; }",
+            ".aq-proof-title { color: #FFC840; font-weight: 700; font-size: 12px; letter-spacing: 0.02em; }",
+            ".aq-proof-sub { color: rgba(255,255,255,0.72); font-size: 11px; margin-top: 3px; line-height: 1.5; }",
+        ].join("\n")
         const tray = ctx.newTray({
             iconUrl: "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/icon.png",
             withContent: true,
@@ -2022,6 +2027,14 @@ function init() {
         tray.render(() => {
             const rows: any[] = []
             const errCount = errors.get().length
+            rows.push(tray.css({ css: AQ_CSS }))
+            rows.push(tray.div({
+                items: [
+                    tray.text("CSS injection proof", { className: "aq-proof-title" }),
+                    tray.text("If this row is a gold rounded card with this styled text, tray.css + className work. If the rest of Seanime still looks normal, scoping is clean. Tell me both, and I'll build the full redesign in CSS.", { className: "aq-proof-sub", style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word" } }),
+                ],
+                className: "aq-proof",
+            }))
             rows.push(tray.flex({
                 items: [
                     tray.button({ label: "Solver", onClick: "view-cf", intent: view.get() === "cf" ? "primary" : "gray-subtle", size: "sm", style: view.get() === "cf" ? ACCENT_STYLE : {} }),
