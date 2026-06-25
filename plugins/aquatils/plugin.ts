@@ -268,22 +268,8 @@ function init() {
         // Accent gradient matched to the plugin icon (warm orange -> gold sunburst).
         const ACCENT_GRAD = "linear-gradient(135deg, rgba(242,145,47,0.9), rgba(255,200,64,0.9))"
         const ACCENT_STYLE: Record<string, string> = { background: ACCENT_GRAD, border: "none", color: "#1c1407", fontWeight: "600" }
-        const ACCENT_SUBTLE: Record<string, string> = { background: "rgba(255,200,64,0.16)", border: "none", color: "#FFD27A", fontWeight: "500" }
+        const ACCENT_SUBTLE: Record<string, string> = { background: "linear-gradient(135deg, rgba(242,145,47,0.20), rgba(255,200,64,0.20))", border: "1px solid rgba(255,200,64,0.35)", color: "#FFC840", fontWeight: "500" }
         const ICON_FS = "18px"
-        const ACCENT_HEX = "#FFC840"
-        const RADIUS = { sm: "8px", md: "10px", lg: "16px" }
-        const TXT: Record<string, Record<string, string>> = {
-            title: { fontSize: "13px", fontWeight: "600", color: "rgba(255,255,255,0.92)" },
-            body: { fontSize: "12px", color: "rgba(255,255,255,0.78)" },
-            muted: { fontSize: "12px", color: "rgba(255,255,255,0.5)" },
-            mono: { fontSize: "11px", fontFamily: "ui-monospace, monospace", lineHeight: "1.55", color: "rgba(255,255,255,0.78)" },
-        }
-        const SURFACE: Record<string, string> = { background: "rgba(255,255,255,0.045)", borderRadius: RADIUS.md, padding: "12px 14px" }
-        const SURFACE_INSET: Record<string, string> = { background: "rgba(0,0,0,0.28)", borderRadius: RADIUS.md, padding: "12px" }
-        function edge(rgb: string): Record<string, string> {
-            return { background: "rgba(" + rgb + ",0.09)", borderLeft: "2px solid rgba(" + rgb + ",0.6)", borderRadius: RADIUS.sm, padding: "10px 14px" }
-        }
-        const EDGE: Record<string, Record<string, string>> = { error: edge("255,99,99"), info: edge("120,160,255"), success: edge("90,210,150"), accent: edge("255,200,64") }
         const tray = ctx.newTray({
             iconUrl: "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/icon.png",
             withContent: true,
@@ -1571,30 +1557,21 @@ function init() {
         })
 
         function dim(t: string): any {
-            return tray.text(t, { style: { ...TXT.muted, whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5" } })
+            return tray.text(t, { style: { color: "rgba(255,255,255,0.5)", fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word" } })
         }
         function heading(t: string): any {
-            return tray.text(t, { style: { fontSize: "11px", fontWeight: "600", letterSpacing: "0.07em", textTransform: "uppercase", color: "rgba(255,255,255,0.42)", marginTop: "4px", marginBottom: "2px" } })
+            return tray.text(t, { style: { fontSize: "11px", fontWeight: "600", letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.4)", marginTop: "2px" } })
         }
         function divider(): any {
-            return tray.div({ items: [], style: { height: "6px" } })
-        }
-        function notice(title: string, desc: string, variant: string): any {
-            return tray.div({
-                items: [
-                    tray.text(title, { style: { ...TXT.title } }),
-                    tray.text(desc, { style: { ...TXT.body, marginTop: "3px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5" } }),
-                ],
-                style: EDGE[variant] || EDGE.accent,
-            })
+            return tray.div({ items: [], style: { borderTop: "1px solid rgba(255,255,255,0.08)", marginTop: "4px", marginBottom: "4px" } })
         }
         function toggleRow(on: boolean, click: string, label: string, helpClick?: string): any {
             const items: any[] = [
                 tray.button({ label: on ? "✓" : "✕", onClick: click, intent: "gray-subtle", size: "sm", style: on ? { ...ACCENT_SUBTLE, fontSize: ICON_FS } : { fontSize: ICON_FS } }),
-                tray.text(label, { style: { fontSize: "13px", color: "rgba(255,255,255,0.88)", overflowWrap: "anywhere", wordBreak: "break-word" } }),
+                tray.text(label, { style: { fontSize: "13px", color: "rgba(255,255,255,0.85)", overflowWrap: "anywhere", wordBreak: "break-word" } }),
             ]
             if (helpClick) {
-                items.push(tray.button({ label: "?", onClick: helpClick, intent: "gray-subtle", size: "sm", style: { color: ACCENT_HEX, fontWeight: "700", marginLeft: "2px" } }))
+                items.push(tray.button({ label: "?", onClick: helpClick, intent: "gray-subtle", size: "sm", style: { color: "#FFC840", fontWeight: "700", marginLeft: "2px" } }))
             }
             return tray.flex({
                 items: items,
@@ -1634,12 +1611,12 @@ function init() {
         }
         function statusBadge(): any {
             const st = fsStatus.get()
-            const dot = (color: string) => tray.text("●", { style: { fontSize: "10px", color: color, lineHeight: "1" } })
-            const word = (t: string) => tray.text(t, { style: { ...TXT.title } })
-            if (st === "up") return tray.flex({ items: [dot("#5fd38a"), word("Running")], gap: 2, style: { alignItems: "center" } })
-            if (st === "starting") return tray.flex({ items: [dot("#f2c14e"), word("Starting")], gap: 2, style: { alignItems: "center" } })
-            if (st === "down") return tray.flex({ items: [dot("rgba(255,255,255,0.4)"), word("Off")], gap: 2, style: { alignItems: "center" } })
-            return tray.flex({ items: [dot("rgba(255,255,255,0.5)"), word("Checking")], gap: 2, style: { alignItems: "center" } })
+            const s = { borderRadius: "2px" }
+            const g = (glyph: string, color: string) => tray.text(glyph, { style: { fontSize: ICON_FS, color: color, lineHeight: "1" } })
+            if (st === "up") return tray.flex({ items: [g("▶", "#5fd38a"), tray.badge({ text: "Running", intent: "success", size: "md", style: s })], gap: 2, style: { alignItems: "center" } })
+            if (st === "starting") return tray.flex({ items: [g("◐", "#f2c14e"), tray.badge({ text: "Starting", intent: "warning", size: "md", style: s })], gap: 2, style: { alignItems: "center" } })
+            if (st === "down") return tray.flex({ items: [g("⏻", "rgba(255,255,255,0.55)"), tray.badge({ text: "Off", intent: "gray", size: "md", style: s })], gap: 2, style: { alignItems: "center" } })
+            return tray.flex({ items: [g("◌", "rgba(255,255,255,0.6)"), tray.badge({ text: "Checking", intent: "gray", size: "md", style: s })], gap: 2, style: { alignItems: "center" } })
         }
         function uptimeStr(): string {
             const t = nowMs()
@@ -1696,7 +1673,7 @@ function init() {
             }))
             rows.push(tray.div({
                 items: items,
-                style: { ...SURFACE_INSET, flexGrow: "1", minHeight: "160px", overflowY: "auto" },
+                style: { background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "6px", padding: "8px", flexGrow: "1", minHeight: "160px", overflowY: "auto" },
             }))
             return rows
         }
@@ -1752,14 +1729,21 @@ function init() {
             if (st === "up") {
                 detail = fsBase() + (fsVersion.get() ? " · v" + fsVersion.get() : "") + (uptimeStr() ? " · up " + uptimeStr() : "")
             }
-            rows.push(statusBadge())
-            rows.push(tray.text(detail, { style: { ...TXT.muted, marginTop: "1px", overflowWrap: "anywhere", wordBreak: "break-word" } }))
+            rows.push(tray.flex({
+                items: [statusBadge(), tray.text(detail, { style: { color: "rgba(255,255,255,0.6)", fontSize: "13px", overflowWrap: "anywhere", wordBreak: "break-word" } })],
+                gap: 2,
+                style: { alignItems: "center" },
+            }))
             const note = fsNote.get()
             if (note && !fsErr.get() && fsStatus.get() !== "up") {
-                rows.push(tray.text(note, { style: { ...TXT.body, whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5" } }))
+                rows.push(tray.text(note, { style: { fontSize: "12px", color: "rgba(255,255,255,0.6)", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5" } }))
             }
             if (solverAdoptedStale()) {
-                rows.push(notice("Leftover solver still running", "A solver from a previous install (v" + fsVersion.get() + ") is still running. Restart to install the bundled v" + SOLVER_VERSION + ", or Stop it to start fresh.", "accent"))
+                rows.push(tray.alert({
+                    intent: "warning",
+                    title: "Leftover solver still running",
+                    description: "A solver from a previous install (v" + fsVersion.get() + ") is still running. Restart to install the bundled v" + SOLVER_VERSION + ", or Stop it to start fresh.",
+                }))
                 rows.push(tray.flex({
                     items: [
                         tray.button({ label: "Restart to update", onClick: "fs-restart-update", intent: "primary", size: "sm", style: ACCENT_STYLE }),
@@ -1768,7 +1752,11 @@ function init() {
                     gap: 2,
                 }))
             } else if (solverUpdatePending()) {
-                rows.push(notice("Solver update ready", "A newer solver (v" + SOLVER_VERSION + ") is bundled; you're running v" + fsVersion.get() + ".", "accent"))
+                rows.push(tray.alert({
+                    intent: "warning",
+                    title: "Solver update ready",
+                    description: "A newer solver (v" + SOLVER_VERSION + ") is bundled; you're running v" + fsVersion.get() + ".",
+                }))
                 rows.push(tray.button({ label: "Restart to update", onClick: "fs-restart-update", intent: "primary", size: "sm", style: ACCENT_STYLE }))
             }
             if (st === "up" && fsMode.get() !== "remote" && !chromiumDownloadedHere()) {
@@ -1776,13 +1764,13 @@ function init() {
             }
             if (fsErr.get()) {
                 rows.push(tray.div({
-                    items: [tray.text(fsErr.get(), { style: { ...TXT.body, color: "rgba(255,255,255,0.9)", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5" } })],
-                    style: { ...EDGE.error, maxHeight: "160px", overflowY: "auto" },
+                    items: [tray.text(fsErr.get(), { style: { fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5", color: "rgba(255,255,255,0.85)" } })],
+                    style: { background: "rgba(255,90,90,0.08)", border: "1px solid rgba(255,90,90,0.25)", borderRadius: "6px", padding: "8px", maxHeight: "160px", overflowY: "auto" },
                 }))
                 if (fsHint.get()) {
                     rows.push(tray.div({
-                        items: [tray.text(fsHint.get(), { style: { ...TXT.body, color: "rgba(255,255,255,0.9)", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5" } })],
-                        style: { ...EDGE.info },
+                        items: [tray.text(fsHint.get(), { style: { fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5", color: "rgba(255,255,255,0.85)" } })],
+                        style: { background: "rgba(90,150,255,0.08)", border: "1px solid rgba(90,150,255,0.3)", borderRadius: "6px", padding: "8px" },
                     }))
                 }
                 const acts: any[] = []
@@ -1828,7 +1816,7 @@ function init() {
             }
             rows.push(tray.div({
                 items: logItems,
-                style: { ...SURFACE_INSET, flexGrow: "1", minHeight: "160px", maxHeight: "300px", overflowY: "auto" },
+                style: { background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "6px", padding: "8px", flexGrow: "1", minHeight: "160px", maxHeight: "300px", overflowY: "auto" },
             }))
             return rows
         }
@@ -1919,7 +1907,7 @@ function init() {
             rows.push(tray.flex({
                 items: [
                     tray.button({ label: "Bundled Solver", onClick: "fs-mode-binary", intent: m !== "remote" ? "primary" : "gray-subtle", size: "sm", style: m !== "remote" ? ACCENT_STYLE : {} }),
-                    tray.text("Default", { style: { ...TXT.muted, marginLeft: "2px" } }),
+                    tray.text("Default", { style: { color: "#6aa1ff", fontSize: "12px", marginLeft: "2px" } }),
                     tray.button({ label: "Remote", onClick: "fs-mode-remote", intent: m === "remote" ? "primary" : "gray-subtle", size: "sm", style: m === "remote" ? ACCENT_STYLE : {} }),
                 ],
                 gap: 2,
@@ -1961,7 +1949,7 @@ function init() {
             if (fsTest.get()) {
                 rows.push(tray.div({
                     items: [tray.text(fsTest.get(), { style: { fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5", color: "rgba(255,255,255,0.75)" } })],
-                    style: { ...SURFACE_INSET },
+                    style: { background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "6px", padding: "8px" },
                 }))
             }
 
@@ -2047,16 +2035,16 @@ function init() {
             for (let i = 0; i < section.length; i++) rows.push(section[i])
             return tray.stack({
                 items: rows,
-                gap: 4,
+                gap: 3,
                 style: {
                     display: "flex",
                     flexDirection: "column",
                     minHeight: PANEL_H,
-                    padding: "20px 18px",
+                    padding: "18px 16px",
                     background: "linear-gradient(180deg, rgba(18,19,24,0.40), rgba(10,11,15,0.52))",
                     backdropFilter: "blur(30px) saturate(115%)",
                     WebkitBackdropFilter: "blur(30px) saturate(115%)",
-                    borderRadius: RADIUS.lg,
+                    borderRadius: "16px",
                     boxShadow: "0 24px 60px -12px rgba(0,0,0,0.7)",
                 },
             })
