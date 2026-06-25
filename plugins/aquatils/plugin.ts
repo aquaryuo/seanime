@@ -271,7 +271,7 @@ function init() {
         const ACCENT_SUBTLE: Record<string, string> = { background: "linear-gradient(135deg, rgba(242,145,47,0.20), rgba(255,200,64,0.20))", border: "1px solid rgba(255,200,64,0.35)", color: "#FFC840", fontWeight: "500" }
         const ICON_FS = "18px"
         const AQ_CSS = [
-            ".aq-proof { background: linear-gradient(135deg, rgba(242,145,47,0.22), rgba(255,200,64,0.16)); border-radius: 12px; padding: 11px 13px; margin-bottom: 4px; }",
+            ".aq-proof { background: linear-gradient(135deg, rgba(242,145,47,0.22), rgba(255,200,64,0.16)); border: none !important; border-radius: 12px; padding: 11px 13px; margin-bottom: 4px; }",
             ".aq-proof-title { color: #FFC840; font-weight: 700; font-size: 12px; letter-spacing: 0.02em; }",
             ".aq-proof-sub { color: rgba(255,255,255,0.72); font-size: 11px; margin-top: 3px; line-height: 1.5; }",
         ].join("\n")
@@ -2031,7 +2031,7 @@ function init() {
             rows.push(tray.div({
                 items: [
                     tray.text("CSS injection proof", { className: "aq-proof-title" }),
-                    tray.text("If this row is a gold rounded card with this styled text, tray.css + className work. If the rest of Seanime still looks normal, scoping is clean. Tell me both, and I'll build the full redesign in CSS.", { className: "aq-proof-sub", style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word" } }),
+                    tray.text("I just removed THIS card's border via CSS (border:none !important). If this gold card now has NO 1px border, I can kill borders everywhere and the redesign is unblocked. Borders elsewhere are the old UI — the redesign isn't applied yet.", { className: "aq-proof-sub", style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word" } }),
                 ],
                 className: "aq-proof",
             }))
