@@ -1897,7 +1897,7 @@ function init() {
             }
             rows.push(tray.flex({
                 items: [
-                    tray.button({ label: "←", onClick: "ui-mode-toggle", intent: "gray-subtle", size: "sm", style: { fontSize: "26px", lineHeight: "1" } }),
+                    tray.button({ label: "⟵", onClick: "ui-mode-toggle", intent: "gray-subtle", size: "sm", style: { fontSize: "26px", lineHeight: "1" } }),
                     tray.text("Back to Simple", { style: { fontSize: "13px", color: "rgba(255,255,255,0.7)" } }),
                 ],
                 gap: 2,
