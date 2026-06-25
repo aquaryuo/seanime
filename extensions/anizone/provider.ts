@@ -8,26 +8,31 @@ class Provider {
     }
 
     async search(opts: SearchOptions): Promise<SearchResult[]> {
-        const queries = this.searchQueries(opts)
+        const { primary, fallback } = this.searchQueries(opts)
         const results: SearchResult[] = []
         const seen: { [key: string]: boolean } = {}
         let anyOk = false
-        for (const q of queries) {
-            let html = ""
-            try {
-                const res = await fetch(`${this.normBase()}/anime?search=${encodeURIComponent(q)}`, {
-                    headers: this.pageHeaders(),
-                    timeout: 12,
-                })
-                if (res.ok) {
-                    anyOk = true
-                    html = res.text()
+        const run = async (queries: string[]): Promise<void> => {
+            for (const q of queries) {
+                if (!q || results.length >= 6) continue
+                let html = ""
+                try {
+                    const res = await fetch(`${this.normBase()}/anime?search=${encodeURIComponent(q)}`, {
+                        headers: this.pageHeaders(),
+                        timeout: 12,
+                    })
+                    if (res.ok) {
+                        anyOk = true
+                        html = res.text()
+                    }
+                } catch (_e) {
+                    html = ""
                 }
-            } catch (_e) {
-                html = ""
+                if (html) this.parseCards(html, opts, seen, results)
             }
-            if (html) this.parseCards(html, opts, seen, results)
         }
+        await run(primary)
+        if (results.length === 0) await run(fallback)
         if (!anyOk) throw "anizone: search failed (site unreachable)"
         return results
     }
@@ -88,27 +93,42 @@ class Provider {
         }
     }
 
-    private searchQueries(opts: SearchOptions): string[] {
-        const raw: string[] = []
+    private searchQueries(opts: SearchOptions): { primary: string[]; fallback: string[] } {
+        const primary: string[] = []
+        const fallback: string[] = []
         const seen: { [key: string]: boolean } = {}
-        const add = (s: string): void => {
+        const add = (list: string[], s: string): void => {
             const q = (s || "").trim()
             if (!q) return
             const key = q.toLowerCase()
             if (seen[key]) return
             seen[key] = true
-            raw.push(q)
+            list.push(q)
         }
+        const romaji = opts.media.romajiTitle || ""
+        const english = opts.media.englishTitle || ""
         try {
             const seed: string[] = []
-            if (opts.media.romajiTitle) seed.push(opts.media.romajiTitle)
-            if (opts.media.englishTitle) seed.push(opts.media.englishTitle)
+            if (opts.query) seed.push(opts.query)
+            if (romaji) seed.push(romaji)
+            if (english) seed.push(english)
             const smart = $scannerUtils.buildSmartSearchTitles(seed)
-            if (smart && smart.titles) for (const t of smart.titles) add(t)
+            if (smart && smart.titles) for (const t of smart.titles) add(primary, t)
         } catch (_e) {}
-        add(opts.media.romajiTitle || "")
-        add(opts.media.englishTitle || "")
-        return raw.slice(0, 3)
+        add(primary, romaji)
+        add(primary, english)
+        add(fallback, this.firstWords(romaji, 1))
+        add(fallback, this.firstWords(english, 2))
+        add(fallback, this.firstWords(romaji, 2))
+        add(fallback, this.firstWords(english, 1))
+        return { primary: primary.slice(0, 3), fallback: fallback.slice(0, 4) }
+    }
+
+    private firstWords(title: string, n: number): string {
+        const base = (title || "").split(/[:~]/)[0]
+        const cleaned = base.replace(/[\[\]【】「」『』(){}"'“”‘’]/g, " ").replace(/\s+/g, " ").trim()
+        if (!cleaned) return ""
+        return cleaned.split(" ").slice(0, n).join(" ")
     }
 
     private parseCards(html: string, opts: SearchOptions, seen: { [key: string]: boolean }, results: SearchResult[]): void {
