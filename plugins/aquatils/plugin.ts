@@ -44,7 +44,7 @@ function init() {
         const fsWv2Warm = ctx.state<boolean>(sget<boolean>("fs.wv2warm", true))
         const fsWv2Refresh = ctx.state<boolean>(sget<boolean>("fs.wv2refresh", false))
         const fsWv2Utls = ctx.state<boolean>(sget<boolean>("fs.wv2utls", false))
-        const fsDns = ctx.state<string>(sget<string>("fs.dns", "off"))
+        const fsDns = ctx.state<string>(sget<string>("fs.dns", "cloudflare"))
         const fsDnsCustom = ctx.state<string>(sget<string>("fs.dnsCustom", ""))
         const fsPacing = ctx.state<boolean>(sget<boolean>("fs.pacing", false))
         const fsVerbose = ctx.state<boolean>(sget<boolean>("fs.verbose", false))
@@ -1897,7 +1897,7 @@ function init() {
             }
             rows.push(tray.flex({
                 items: [
-                    tray.button({ label: "←", onClick: "ui-mode-toggle", intent: "gray-subtle", size: "sm", style: { fontSize: ICON_FS } }),
+                    tray.button({ label: "←", onClick: "ui-mode-toggle", intent: "gray-subtle", size: "sm", style: { fontSize: "26px", lineHeight: "1" } }),
                     tray.text("Back to Simple", { style: { fontSize: "13px", color: "rgba(255,255,255,0.7)" } }),
                 ],
                 gap: 2,
@@ -2036,7 +2036,7 @@ function init() {
             rows.push(divider())
             const section = view.get() === "cf" ? cfRows() : view.get() === "settings" ? settingsRows() : errorRows()
             for (let i = 0; i < section.length; i++) rows.push(section[i])
-            const panelMin = (view.get() === "cf" && uiMode.get() !== "advanced") ? PANEL_SIMPLE : PANEL_FULL
+            const panelMin = ((view.get() === "cf" && uiMode.get() !== "advanced") || view.get() === "errors") ? PANEL_SIMPLE : PANEL_FULL
             return tray.stack({
                 items: rows,
                 gap: 3,
