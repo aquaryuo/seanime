@@ -1,5 +1,7 @@
 class Provider {
     private baseUrl = "{{baseUrl}}"
+    private subtitleSource = "{{subtitleSource}}"
+    private subEndpoint = "https://sub.ryuo.to"
     private cacheTtl = 900000
     private srcCacheTtl = 300000
 
@@ -138,7 +140,9 @@ class Provider {
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {
         const shortid = this.shortId(id)
         if (!shortid) return []
-        const cacheKey = `anizone:eps:${shortid}`
+        const alId = this.alOf(id)
+        const alTag = alId > 0 ? `$al${alId}` : ""
+        const cacheKey = `anizone:eps:${shortid}${alTag}`
         const cached = this.readCache<EpisodeDetails[]>(cacheKey, this.cacheTtl)
         if (cached && cached.length > 0) return cached
         const res = await fetch(`${this.normBase()}/anime/${shortid}`, { headers: this.pageHeaders(), timeout: 12 })
@@ -155,7 +159,7 @@ class Provider {
         const episodes: EpisodeDetails[] = []
         for (const k in nums) {
             const n = parseInt(k, 10)
-            episodes.push({ id: `${shortid}$${n}`, number: n, url: `${this.normBase()}/anime/${shortid}/${n}` })
+            episodes.push({ id: `${shortid}$${n}${alTag}`, number: n, url: `${this.normBase()}/anime/${shortid}/${n}` })
         }
         episodes.sort((a, b) => a.number - b.number)
         if (episodes.length > 0) this.writeCache(cacheKey, episodes)
@@ -166,6 +170,7 @@ class Provider {
         const parts = episode.id.split("$")
         const shortid = parts[0]
         const n = parts[1] || String(episode.number)
+        const alId = this.alOf(episode.id)
         const cacheKey = `anizone:src:${shortid}:${n}`
         let html = this.readCache<string>(cacheKey, this.srcCacheTtl)
         if (!html) {
@@ -176,7 +181,7 @@ class Provider {
         }
         const m3u8 = this.firstMatch(html, /https?:\/\/[^"'\s]+\/master\.m3u8/)
         if (!m3u8) throw "anizone: no stream found for this episode"
-        const subtitles = this.buildSubs(html)
+        const subtitles = this.buildSubs(html, alId, parseInt(n, 10) || episode.number)
         return {
             server: server === "Auto" || server === "default" || !server ? "Auto" : server,
             headers: { Referer: `${this.normBase()}/` },
@@ -259,8 +264,9 @@ class Provider {
             }
             if (!sid || seen[sid]) continue
             seen[sid] = true
+            const alId = opts.media && opts.media.id > 0 ? opts.media.id : 0
             results.push({
-                id: sid,
+                id: alId > 0 ? `${sid}$al${alId}` : sid,
                 title: this.bestTitle(b.titles, target),
                 url: `${this.normBase()}/anime/${sid}`,
                 subOrDub: "sub",
@@ -308,18 +314,21 @@ class Provider {
         return titles[0]
     }
 
-    private buildSubs(html: string): VideoSubtitle[] {
+    private buildSubs(html: string, anilistId: number, episode: number): VideoSubtitle[] {
         const out: VideoSubtitle[] = []
-        const re = /https?:\/\/[^"'\s]+\/subtitles\/[0-9]+_([a-z-]+)\.(?:ass|srt)/g
+        const re = /https?:\/\/[^"'\s]+\/subtitles\/[0-9]+_([a-z-]+)\.(ass|srt)/g
+        const viaSite = this.subtitleSource === "subryuo" && anilistId > 0 && episode > 0
         const seen: { [key: string]: boolean } = {}
         let englishIdx = -1
         let m: RegExpExecArray | null
         while ((m = re.exec(html)) !== null) {
-            const url = m[0]
+            const origin = m[0]
             const lang = (m[1] || "en").toLowerCase().split("-")[0]
+            const ext = (m[2] || "ass").toLowerCase()
             if (seen[lang]) continue
             seen[lang] = true
             const idx = out.length
+            const url = viaSite ? this.siteSubUrl(anilistId, episode, lang, ext, origin) : origin
             out.push({ id: `${lang}-${idx}`, url, language: this.langName(lang), isDefault: false })
             if (englishIdx === -1 && lang === "en") englishIdx = idx
         }
@@ -327,6 +336,16 @@ class Provider {
         const pick = englishIdx !== -1 ? englishIdx : 0
         out[pick].isDefault = true
         return out.filter((s) => s.isDefault).concat(out.filter((s) => !s.isDefault))
+    }
+
+    private siteSubUrl(anilistId: number, episode: number, lang: string, ext: string, origin: string): string {
+        const ref = encodeURIComponent(`${this.normBase()}/`)
+        return `${this.subEndpoint}/s/${anilistId}/${episode}/${lang}.${ext}?source=anizone&src=${encodeURIComponent(origin)}&ref=${ref}`
+    }
+
+    private alOf(id: string): number {
+        const m = (id || "").match(/\$al(\d+)/)
+        return m ? parseInt(m[1] || "0", 10) : 0
     }
 
     private langName(code: string): string {
