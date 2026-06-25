@@ -1131,7 +1131,7 @@ function init() {
                 tray.update()
                 return
             }
-            const dir = $filepath.join(cacheDir, "aquatils", FS_VERSION)
+            const dir = $filepath.join(cacheDir, "aquatils-beta", FS_VERSION)
             const archive = $filepath.join(dir, pick.asset)
             const binPath = $filepath.join(dir, FS_CONTAINER, pick.bin)
             try {
