@@ -8,13 +8,13 @@ class Provider {
     }
 
     async search(opts: SearchOptions): Promise<SearchResult[]> {
-        const { primary, fallback } = this.searchQueries(opts)
+        const sq = this.searchQueries(opts)
         const results: SearchResult[] = []
         const seen: { [key: string]: boolean } = {}
         let anyOk = false
         const run = async (queries: string[]): Promise<void> => {
             for (const q of queries) {
-                if (!q || results.length >= 6) continue
+                if (!q || results.length >= 12) continue
                 let html = ""
                 try {
                     const res = await fetch(`${this.normBase()}/anime?search=${encodeURIComponent(q)}`, {
@@ -31,10 +31,108 @@ class Provider {
                 if (html) this.parseCards(html, opts, seen, results)
             }
         }
-        await run(primary)
-        if (results.length === 0) await run(fallback)
+        await run(sq.primary)
+        if (results.length === 0) await run(sq.fallback)
         if (!anyOk) throw "anizone: search failed (site unreachable)"
-        return results
+        return this.pickBest(results, opts.media, sq.season, sq.part)
+    }
+
+    private pickBest(results: SearchResult[], media: Media, season: number, part: number): SearchResult[] {
+        if (results.length === 0) return []
+        const targets = this.matchTargets(media)
+        if (targets.length === 0) return results
+        const scored = results.map((r) => ({ r, s: this.scoreTitle(r.title, targets) })).sort((a, b) => b.s - a.s)
+        const plausible = scored.filter((x) => x.s >= 0.5)
+        if (plausible.length === 0) return []
+        const seasoned = this.filterBySeason(plausible, season, part)
+        if (seasoned[0].s >= 0.85 && (seasoned.length === 1 || seasoned[0].s - seasoned[1].s >= 0.12)) {
+            return [seasoned[0].r]
+        }
+        return seasoned.map((x) => x.r)
+    }
+
+    private matchTargets(media: Media): string[] {
+        const out: string[] = []
+        const seen: { [key: string]: boolean } = {}
+        const push = (s: string): void => {
+            const n = this.normTitle(s)
+            if (n.length >= 3 && !seen[n]) {
+                seen[n] = true
+                out.push(n)
+            }
+        }
+        for (const t of [media.romajiTitle, media.englishTitle]) {
+            if (!t) continue
+            push(t)
+            push(t.split(/[:,;~]/)[0])
+            try {
+                const nz = $scannerUtils.normalizeTitle(t)
+                if (nz) {
+                    push(nz.cleanBaseTitle)
+                    push(nz.denoisedTitle)
+                }
+            } catch (_e) {}
+        }
+        if (media.synonyms) for (const s of media.synonyms) push(s)
+        return out
+    }
+
+    private scoreTitle(title: string, targets: string[]): number {
+        const c = this.normTitle(title)
+        if (!c) return 0
+        let best = 0
+        for (const t of targets) {
+            const v = this.simNorm(c, t)
+            if (v > best) best = v
+        }
+        return best
+    }
+
+    private filterBySeason(scored: { r: SearchResult; s: number }[], season: number, part: number): { r: SearchResult; s: number }[] {
+        if (season < 2 && part < 2) return scored
+        const matched = scored.filter((x) => {
+            let rs = -1
+            let rp = -1
+            try {
+                const n = $scannerUtils.normalizeTitle(x.r.title)
+                if (n) {
+                    rs = n.season
+                    rp = n.part
+                }
+            } catch (_e) {}
+            const seasonOk = season < 2 || rs === season
+            const partOk = part < 2 || rp === part
+            return seasonOk && partOk
+        })
+        return matched.length > 0 ? matched : scored
+    }
+
+    private normTitle(s: string): string {
+        return (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "")
+    }
+
+    private simNorm(a: string, b: string): number {
+        const ml = Math.max(a.length, b.length)
+        return ml === 0 ? 0 : 1 - this.lev(a, b) / ml
+    }
+
+    private lev(a: string, b: string): number {
+        const m = a.length
+        const n = b.length
+        if (!m) return n
+        if (!n) return m
+        const d: number[] = new Array(n + 1)
+        for (let j = 0; j <= n; j++) d[j] = j
+        for (let i = 1; i <= m; i++) {
+            let prev = d[0]
+            d[0] = i
+            for (let j = 1; j <= n; j++) {
+                const tmp = d[j]
+                d[j] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, d[j], d[j - 1])
+                prev = tmp
+            }
+        }
+        return d[n]
     }
 
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {
@@ -93,7 +191,7 @@ class Provider {
         }
     }
 
-    private searchQueries(opts: SearchOptions): { primary: string[]; fallback: string[] } {
+    private searchQueries(opts: SearchOptions): { primary: string[]; fallback: string[]; season: number; part: number } {
         const primary: string[] = []
         const fallback: string[] = []
         const seen: { [key: string]: boolean } = {}
@@ -107,21 +205,27 @@ class Provider {
         }
         const romaji = opts.media.romajiTitle || ""
         const english = opts.media.englishTitle || ""
+        let season = 0
+        let part = 0
         try {
             const seed: string[] = []
             if (opts.query) seed.push(opts.query)
             if (romaji) seed.push(romaji)
             if (english) seed.push(english)
             const smart = $scannerUtils.buildSmartSearchTitles(seed)
-            if (smart && smart.titles) for (const t of smart.titles) add(primary, t)
+            if (smart) {
+                season = smart.season || 0
+                part = smart.part || 0
+                if (smart.titles) for (const t of smart.titles) add(primary, t)
+            }
         } catch (_e) {}
         add(primary, romaji)
         add(primary, english)
         add(fallback, this.firstWords(romaji, 1))
         add(fallback, this.firstWords(english, 2))
         add(fallback, this.firstWords(romaji, 2))
-        add(fallback, this.firstWords(english, 1))
-        return { primary: primary.slice(0, 3), fallback: fallback.slice(0, 4) }
+        add(fallback, this.firstWords(english, 3))
+        return { primary: primary.slice(0, 3), fallback: fallback.slice(0, 4), season, part }
     }
 
     private firstWords(title: string, n: number): string {
@@ -165,13 +269,31 @@ class Provider {
     }
 
     private decodeTitles(escaped: string): string[] {
-        const json = escaped.replace(/\\u([0-9a-fA-F]{4})/g, (_m: string, h: string) => String.fromCharCode(parseInt(h, 16)))
+        const json = escaped.replace(/\\(u[0-9a-fA-F]{4}|.)/g, (_m: string, esc: string) => {
+            if (esc.charAt(0) === "u") return String.fromCharCode(parseInt(esc.slice(1), 16))
+            if (esc === "n") return "\n"
+            if (esc === "t") return "\t"
+            return esc
+        })
         const out: string[] = []
-        const re = /"[^"]*":"([^"]*)"/g
-        let m: RegExpExecArray | null
-        while ((m = re.exec(json)) !== null) {
-            const t = (m[1] || "").replace(/\\/g, "").trim()
-            if (t) out.push(t)
+        const seen: { [key: string]: boolean } = {}
+        const add = (t: string): void => {
+            const v = (t || "").trim()
+            if (v && !seen[v]) {
+                seen[v] = true
+                out.push(v)
+            }
+        }
+        try {
+            const obj = JSON.parse(json)
+            if (obj && typeof obj === "object") {
+                for (const k in obj) if (typeof obj[k] === "string") add(obj[k] as string)
+            }
+        } catch (_e) {}
+        if (out.length === 0) {
+            const re = /"(?:\\.|[^"\\])*":"((?:\\.|[^"\\])*)"/g
+            let m: RegExpExecArray | null
+            while ((m = re.exec(json)) !== null) add((m[1] || "").replace(/\\(.)/g, "$1"))
         }
         return out
     }
