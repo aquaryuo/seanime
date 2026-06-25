@@ -270,6 +270,7 @@ function init() {
         const ACCENT_STYLE: Record<string, string> = { background: ACCENT_GRAD, border: "none", color: "#1c1407", fontWeight: "600" }
         const ACCENT_SUBTLE: Record<string, string> = { background: "rgba(255,200,64,0.16)", border: "none", color: "#FFD27A", fontWeight: "500" }
         const ICON_FS = "18px"
+        const AQ_CSS = ".aq-panel .rounded-full { border-radius: 6px !important; }"
         const tray = ctx.newTray({
             iconUrl: "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/icon.png",
             withContent: true,
@@ -1612,7 +1613,7 @@ function init() {
         function statusBadge(): any {
             const st = fsStatus.get()
             const s = { borderRadius: "2px" }
-            const g = (glyph: string, color: string) => tray.text(glyph, { style: { fontSize: ICON_FS, color: color, lineHeight: "1" } })
+            const g = (glyph: string, color: string) => tray.text(glyph, { style: { fontSize: "24px", color: color, lineHeight: "1" } })
             if (st === "up") return tray.flex({ items: [g("▶", "#5fd38a"), tray.badge({ text: "Running", intent: "success", size: "md", style: s })], gap: 2, style: { alignItems: "center" } })
             if (st === "starting") return tray.flex({ items: [g("◐", "#f2c14e"), tray.badge({ text: "Starting", intent: "warning", size: "md", style: s })], gap: 2, style: { alignItems: "center" } })
             if (st === "down") return tray.flex({ items: [g("⏻", "rgba(255,255,255,0.55)"), tray.badge({ text: "Off", intent: "gray", size: "md", style: s })], gap: 2, style: { alignItems: "center" } })
@@ -1667,7 +1668,7 @@ function init() {
             const items = sehGroups.map((g, i) => tray.flex({
                 items: [
                     tray.text(g.label + (g.count > 1 ? "  ×" + g.count : ""), { style: lineStyle }),
-                    tray.button({ label: "Copy", onClick: "seh-copy-" + i, intent: "gray-subtle", size: "sm", style: { marginLeft: "6px" } }),
+                    tray.button({ label: "⎘", onClick: "seh-copy-" + i, intent: "gray-subtle", size: "sm", style: { marginLeft: "6px", fontSize: ICON_FS } }),
                 ],
                 gap: 1,
             }))
@@ -1784,7 +1785,7 @@ function init() {
                 if (fsMode.get() !== "remote" && !chromiumDownloadedHere() && !fsWantChromium.get()) {
                     acts.push(tray.button({ label: "Enable Chromium", onClick: "fs-enable-chromium", intent: "gray-subtle", size: "sm" }))
                 }
-                acts.push(tray.button({ label: "Copy diag", onClick: "fs-copy-diag", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto" } }))
+                acts.push(tray.button({ label: "⎘", onClick: "fs-copy-diag", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto", fontSize: ICON_FS } }))
                 rows.push(tray.flex({ items: acts, gap: 2 }))
             }
             return rows
@@ -1796,7 +1797,7 @@ function init() {
             rows.push(heading("Logs"))
             rows.push(tray.flex({
                 items: [
-                    tray.button({ label: "Copy logs", onClick: "fs-logs-copy", intent: "gray-subtle", size: "sm" }),
+                    tray.button({ label: "⎘", onClick: "fs-logs-copy", intent: "gray-subtle", size: "sm", style: { fontSize: ICON_FS } }),
                     tray.button({ label: "Hide polling", onClick: "fs-logs-filter", intent: "gray-subtle", size: "sm", style: fsLogFilter.get() ? ACCENT_SUBTLE : {} }),
                     tray.button({ label: "Clear", onClick: "fs-logs-clear", intent: "alert-subtle", size: "sm", style: { marginLeft: "auto" } }),
                 ],
@@ -1945,7 +1946,7 @@ function init() {
                     tray.button({ label: "Test", onClick: "fs-test", intent: "gray-subtle", size: "sm" }),
                     tray.button({ label: "Doctor", onClick: "fs-doctor", intent: "gray-subtle", size: "sm" }),
                     tray.button({ label: "Stealth", onClick: "fs-stealth", intent: "gray-subtle", size: "sm" }),
-                    tray.button({ label: "Copy diag", onClick: "fs-copy-diag", intent: "gray-subtle", size: "sm" }),
+                    tray.button({ label: "⎘", onClick: "fs-copy-diag", intent: "gray-subtle", size: "sm", style: { fontSize: ICON_FS } }),
                 ],
                 gap: 2,
             }))
@@ -2025,6 +2026,7 @@ function init() {
         tray.render(() => {
             const rows: any[] = []
             const errCount = errors.get().length
+            rows.push(tray.css({ css: AQ_CSS }))
             rows.push(tray.flex({
                 items: [
                     tray.button({ label: "Solver", onClick: "view-cf", intent: view.get() === "cf" ? "primary" : "gray-subtle", size: "sm", style: view.get() === "cf" ? ACCENT_STYLE : {} }),
@@ -2039,6 +2041,7 @@ function init() {
             return tray.stack({
                 items: rows,
                 gap: 3,
+                className: "aq-panel",
                 style: {
                     display: "flex",
                     flexDirection: "column",
