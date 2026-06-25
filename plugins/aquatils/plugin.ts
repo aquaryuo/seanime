@@ -1741,10 +1741,6 @@ function init() {
                 gap: 2,
                 style: { alignItems: "center" },
             }))
-            const note = fsNote.get()
-            if (note && !fsErr.get() && fsStatus.get() !== "up") {
-                rows.push(tray.text(note, { style: { fontSize: "12px", color: "rgba(255,255,255,0.6)", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5" } }))
-            }
             if (solverAdoptedStale()) {
                 rows.push(tray.alert({
                     intent: "warning",
