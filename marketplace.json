@@ -1,7 +1,7 @@
 [
   {
-    "id": "anikoto",
-    "name": "Anikoto",
+    "id": "aq-anikoto-beta",
+    "name": "Anikoto - BETA",
     "description": "Only anikoto compatibility layer you'll ever need",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
@@ -12,8 +12,8 @@
     "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/anikoto/manifest.json"
   },
   {
-    "id": "animelok",
-    "name": "Animelok",
+    "id": "aq-animelok-beta",
+    "name": "Animelok - BETA",
     "description": "Only animelok compatibility layer you'll ever need",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
@@ -24,8 +24,8 @@
     "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/animelok/manifest.json"
   },
   {
-    "id": "anizone",
-    "name": "AniZone",
+    "id": "aq-anizone-beta",
+    "name": "AniZone - BETA",
     "description": "Only anizone compatibility layer you'll ever need",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
@@ -36,8 +36,8 @@
     "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/anizone/manifest.json"
   },
   {
-    "id": "animepahe",
-    "name": "AnimePahe",
+    "id": "aq-animepahe-beta",
+    "name": "AnimePahe - BETA",
     "description": "Only animepahe compatibility layer you'll ever need",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
@@ -48,8 +48,8 @@
     "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/animepahe/manifest.json"
   },
   {
-    "id": "aquatils",
-    "name": "Aqua's Utils",
+    "id": "aq-aquatils-beta",
+    "name": "Aqua's Utils - BETA",
     "description": "Toolbox plugin: surfaces compatible extension errors, launches a self-contained solver (or connects to a remote one you run) to reach guarded sites, and more.",
     "author": "aquaryuo",
     "type": "plugin",
@@ -60,8 +60,8 @@
     "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/manifest.json"
   },
   {
-    "id": "aquaprefs",
-    "name": "Aqua's Prefs",
+    "id": "aq-aquaprefs-beta",
+    "name": "Aqua's Prefs - BETA",
     "description": "Remembers your player and series options.",
     "author": "aquaryuo",
     "type": "plugin",

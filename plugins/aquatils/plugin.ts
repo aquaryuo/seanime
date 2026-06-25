@@ -295,10 +295,10 @@ function init() {
         const PANEL_TOP = "4.5rem", PANEL_BOTTOM = "4.5rem", PANEL_LEFT = "6rem"
         try {
             if (ctx.dom && ctx.dom.observe) {
-                ctx.dom.observe('[data-plugin-tray-popover-content="aquatils"] [class*="max-h-[35rem]"]', (els) => {
+                ctx.dom.observe('[data-plugin-tray-popover-content="aq-aquatils-beta"] [class*="max-h-[35rem]"]', (els) => {
                     styleEls(els, [["max-height", PANEL_H], ["maxHeight", PANEL_H], ["padding", "0px"]])
                 })
-                ctx.dom.observe('[data-plugin-tray-popover-content="aquatils"]', (els) => {
+                ctx.dom.observe('[data-plugin-tray-popover-content="aq-aquatils-beta"]', (els) => {
                     // bg-gray-950 here is opaque — it becomes the panel's backdrop, so the
                     // blur shows solid gray instead of the app. Make it transparent so the
                     // backdrop-filter actually frosts the page behind the modal.
@@ -594,7 +594,7 @@ function init() {
             try {
                 const pick = binaryAsset()
                 if (pick) {
-                    const bin = $filepath.join($os.cacheDir(), "aquatils", FS_VERSION, FS_CONTAINER, pick.bin)
+                    const bin = $filepath.join($os.cacheDir(), "aquatils-beta", FS_VERSION, FS_CONTAINER, pick.bin)
                     let binOk = false
                     try {
                         binOk = !!$os.stat(bin)
@@ -650,7 +650,7 @@ function init() {
             try {
                 const pick = binaryAsset()
                 if (!pick) return ""
-                return $filepath.join($os.cacheDir(), "aquatils", FS_VERSION, FS_CONTAINER, pick.bin)
+                return $filepath.join($os.cacheDir(), "aquatils-beta", FS_VERSION, FS_CONTAINER, pick.bin)
             } catch (_e) {
                 return ""
             }
@@ -679,7 +679,7 @@ function init() {
 
         function fsLogPath(): string {
             try {
-                return $filepath.join($os.cacheDir(), "aquatils", FS_VERSION, "solver.log")
+                return $filepath.join($os.cacheDir(), "aquatils-beta", FS_VERSION, "solver.log")
             } catch (_e) {
                 return ""
             }
@@ -739,7 +739,7 @@ function init() {
             const rel = chromiumBinRel(plt)
             if (!rel) return ""
             try {
-                const p = $filepath.join($os.cacheDir(), "aquatils", "chromium", rel)
+                const p = $filepath.join($os.cacheDir(), "aquatils-beta", "chromium", rel)
                 if ($os.stat(p)) return p
             } catch (_e) {}
             return ""
@@ -778,7 +778,7 @@ function init() {
         }
 
         function downloadChromium(st: { version: string; url: string }, done: (ok: boolean) => void): void {
-            const dir = $filepath.join($os.cacheDir(), "aquatils", "chromium")
+            const dir = $filepath.join($os.cacheDir(), "aquatils-beta", "chromium")
             try { $os.removeAll(dir) } catch (_e) {}
             try { $os.mkdirAll(dir, 493) } catch (_e) {}
             const zip = $filepath.join(dir, "chrome.zip")
@@ -882,8 +882,8 @@ function init() {
             const gen = fsBinaryGen
             const logPath = fsLogPath()
             const port = fsPort.get() || FS_DEFAULT_PORT
-            const fsDir = $filepath.join($os.cacheDir(), "aquatils", FS_VERSION, FS_CONTAINER)
-            const chrDir = $filepath.join($os.cacheDir(), "aquatils", "chromium")
+            const fsDir = $filepath.join($os.cacheDir(), "aquatils-beta", FS_VERSION, FS_CONTAINER)
+            const chrDir = $filepath.join($os.cacheDir(), "aquatils-beta", "chromium")
             const prep = "xattr -dr com.apple.quarantine '" + fsDir + "' 2>/dev/null; chmod -R 755 '" + fsDir + "'; "
                 + (chromiumOverride ? "xattr -dr com.apple.quarantine '" + chrDir + "' 2>/dev/null; chmod -R 755 '" + chrDir + "'; " : "")
             const ac = $os.platform === "windows"
@@ -961,7 +961,7 @@ function init() {
                                 if (fsBadStarts >= 2) {
                                     plog("removing the solver binary after " + fsBadStarts + " no-output starts — it will re-download")
                                     try { $storage.set("fs.solverReady", "") } catch (_e) {}
-                                    try { $os.removeAll($filepath.join($os.cacheDir(), "aquatils", FS_VERSION, FS_CONTAINER)) } catch (_e) {}
+                                    try { $os.removeAll($filepath.join($os.cacheDir(), "aquatils-beta", FS_VERSION, FS_CONTAINER)) } catch (_e) {}
                                     setErr("The solver produced no output across repeated starts — re-downloading. Press Start.")
                                     setNote("Re-downloading the solver — press Start.")
                                 } else {
@@ -1033,7 +1033,7 @@ function init() {
         }
 
         function aquatilsDir(): string {
-            return $filepath.join($os.cacheDir(), "aquatils")
+            return $filepath.join($os.cacheDir(), "aquatils-beta")
         }
 
         function dirExists(p: string): boolean {
