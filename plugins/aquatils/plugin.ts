@@ -1945,7 +1945,7 @@ function init() {
                     tray.button({ label: "Test", onClick: "fs-test", intent: "gray-subtle", size: "sm" }),
                     tray.button({ label: "Doctor", onClick: "fs-doctor", intent: "gray-subtle", size: "sm" }),
                     tray.button({ label: "Stealth", onClick: "fs-stealth", intent: "gray-subtle", size: "sm" }),
-                    tray.button({ label: "⧉", onClick: "fs-copy-diag", intent: "gray-subtle", size: "sm", style: { fontSize: ICON_FS } }),
+                    tray.button({ label: "Copy diag", onClick: "fs-copy-diag", intent: "gray-subtle", size: "sm" }),
                 ],
                 gap: 2,
             }))
