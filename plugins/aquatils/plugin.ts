@@ -264,7 +264,7 @@ function init() {
         // Tall-but-detached floating modal: leaves a gap above and below so it reads as
         // a floating panel on the side rather than a flush full-height drawer. Matches the
         // fixed wrapper gaps below (4.5rem top + 4.5rem bottom = 9rem).
-        const PANEL_H = "min(580px, calc(100dvh - 9rem))"
+        const PANEL_H = "min(540px, calc(100dvh - 9rem))"
         // Accent gradient matched to the plugin icon (warm orange -> gold sunburst).
         const ACCENT_GRAD = "linear-gradient(135deg, rgba(242,145,47,0.9), rgba(255,200,64,0.9))"
         const ACCENT_STYLE: Record<string, string> = { background: ACCENT_GRAD, border: "none", color: "#1c1407", fontWeight: "600" }
@@ -1765,9 +1765,6 @@ function init() {
                     description: "A newer solver (v" + SOLVER_VERSION + ") is bundled; you're running v" + fsVersion.get() + ".",
                 }))
                 rows.push(tray.button({ label: "Restart to update", onClick: "fs-restart-update", intent: "primary", size: "sm", style: ACCENT_STYLE }))
-            }
-            if (st === "up" && fsMode.get() !== "remote" && !chromiumDownloadedHere()) {
-                rows.push(dim("Browser solver: no fetched Chromium present. uTLS clears most gates; if an interactive Turnstile fails and you have no system Chrome/Edge, enable 'fetch a minimal Chromium' in Advanced."))
             }
             if (fsErr.get()) {
                 rows.push(tray.div({
