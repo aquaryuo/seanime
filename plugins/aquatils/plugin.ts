@@ -264,7 +264,7 @@ function init() {
         // Tall-but-detached floating modal: leaves a gap above and below so it reads as
         // a floating panel on the side rather than a flush full-height drawer. Matches the
         // fixed wrapper gaps below (4.5rem top + 4.5rem bottom = 9rem).
-        const PANEL_H = "calc(100dvh - 9rem)"
+        const PANEL_H = "min(580px, calc(100dvh - 9rem))"
         // Accent gradient matched to the plugin icon (warm orange -> gold sunburst).
         const ACCENT_GRAD = "linear-gradient(135deg, rgba(242,145,47,0.9), rgba(255,200,64,0.9))"
         const ACCENT_STYLE: Record<string, string> = { background: ACCENT_GRAD, border: "none", color: "#1c1407", fontWeight: "600" }
@@ -274,7 +274,7 @@ function init() {
             iconUrl: "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/icon.png",
             withContent: true,
             width: "480px",
-            minHeight: "0",
+            minHeight: PANEL_H,
         })
 
         // Seanime wraps plugin tray content in a div capped at max-h-[35rem] (560px) with
@@ -311,7 +311,7 @@ function init() {
                                     if (!wrapper) return
                                     styleEls([wrapper], [
                                         ["transform", "none"], ["position", "fixed"],
-                                        ["top", PANEL_TOP], ["height", "auto"], ["max-height", PANEL_H], ["maxHeight", PANEL_H],
+                                        ["top", PANEL_TOP], ["height", PANEL_H], ["max-height", PANEL_H], ["maxHeight", PANEL_H],
                                         ["left", PANEL_LEFT], ["right", "auto"], ["margin", "0"],
                                         ["border", "none"], ["border-width", "0"], ["borderWidth", "0"], ["outline", "none"],
                                     ])
@@ -2046,7 +2046,7 @@ function init() {
                 style: {
                     display: "flex",
                     flexDirection: "column",
-                    minHeight: "0",
+                    minHeight: PANEL_H,
                     padding: "18px 16px",
                     background: "linear-gradient(180deg, rgba(18,19,24,0.40), rgba(10,11,15,0.52))",
                     backdropFilter: "blur(30px) saturate(115%)",
