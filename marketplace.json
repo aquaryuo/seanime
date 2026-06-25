@@ -12,6 +12,18 @@
     "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/anikoto/manifest.json"
   },
   {
+    "id": "anizone",
+    "name": "AniZone",
+    "description": "Only anizone compatibility layer you'll ever need",
+    "author": "aquaryuo",
+    "type": "onlinestream-provider",
+    "language": "typescript",
+    "lang": "en",
+    "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/anizone/icon.png",
+    "website": "https://anizone.to",
+    "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/anizone/manifest.json"
+  },
+  {
     "id": "aquaprefs",
     "name": "Aqua's Prefs",
     "description": "Remembers your player and series options.",

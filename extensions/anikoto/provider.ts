@@ -779,6 +779,20 @@ class Provider {
         return e === "ass" || e === "srt" ? e : "vtt"
     }
 
+    private async subUp(): Promise<boolean> {
+        const cached = this.readCache<boolean>("anikoto:subup", 60000)
+        if (cached !== undefined) return cached
+        let up = false
+        try {
+            const res = await fetch(`${this.subEndpoint}/health`, { timeout: 4 })
+            up = !!res && res.ok
+        } catch (_e) {
+            up = false
+        }
+        this.writeCache("anikoto:subup", up)
+        return up
+    }
+
     private async ensureServeToken(anilistId: number): Promise<string | undefined> {
         const key = `anikoto:tok:${anilistId}`
         const cached = this.readCache<string>(key, this.tokenTtl)
@@ -811,9 +825,13 @@ class Provider {
         const refParam = embedOrigin ? `&ref=${encodeURIComponent(embedOrigin)}` : ""
         const valid = tracks.filter((t) => t && typeof t.file === "string" && /^https?:\/\//i.test(t.file) && (!t.kind || t.kind === "captions" || t.kind === "subtitles"))
         if (valid.length === 0) return collected
-        let tok = this.readCache<string>(`anikoto:tok:${ctx.anilistId}`, this.tokenTtl)
-        if (!tok) tok = await this.ensureServeToken(ctx.anilistId)
-        const tokParam = tok ? `&t=${encodeURIComponent(tok)}` : ""
+        const up = await this.subUp()
+        let tokParam = ""
+        if (up) {
+            let tok = this.readCache<string>(`anikoto:tok:${ctx.anilistId}`, this.tokenTtl)
+            if (!tok) tok = await this.ensureServeToken(ctx.anilistId)
+            tokParam = tok ? `&t=${encodeURIComponent(tok)}` : ""
+        }
         const codes = await this.langCodes(valid.map((t) => t.label || "English"))
         const seenLang: { [key: string]: boolean } = {}
         let englishIdx = -1
@@ -826,9 +844,12 @@ class Provider {
             seenLang[lang] = true
             const idx = collected.length
             const fixed = this.fixTrackUrl(t.file)
+            const url = up
+                ? `${this.subEndpoint}/s/${anime}/${ep}/${lang}.${this.extOf(fixed)}?src=${encodeURIComponent(fixed)}${tokParam}${refParam}`
+                : fixed
             collected.push({
                 id: `${lang}-${idx}`,
-                url: `${this.subEndpoint}/s/${anime}/${ep}/${lang}.${this.extOf(fixed)}?src=${encodeURIComponent(fixed)}${tokParam}${refParam}`,
+                url,
                 language: t.label || "English",
                 isDefault: false,
             })
@@ -839,7 +860,7 @@ class Provider {
         if (collected.length === 0) return collected
         const pick = englishIdx !== -1 ? englishIdx : defaultIdx !== -1 ? defaultIdx : 0
         collected[pick].isDefault = true
-        this.cacheAllLanguages(collected, ctx)
+        if (up) this.cacheAllLanguages(collected, ctx)
         return collected.filter((s) => s.isDefault).concat(collected.filter((s) => !s.isDefault))
     }
 

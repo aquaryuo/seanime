@@ -1,0 +1,36 @@
+{
+  "id": "anizone",
+  "name": "AniZone",
+  "version": "1.1.4",
+  "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/anizone/manifest.json",
+  "language": "typescript",
+  "type": "onlinestream-provider",
+  "description": "Only anizone compatibility layer you'll ever need",
+  "author": "aquaryuo",
+  "website": "https://anizone.to",
+  "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/anizone/icon.png",
+  "lang": "en",
+  "payloadURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/anizone/provider.ts",
+  "userConfig": {
+    "version": 1,
+    "requiresConfig": false,
+    "fields": [
+      {
+        "type": "text",
+        "name": "baseUrl",
+        "label": "Site domain",
+        "default": "https://anizone.to"
+      },
+      {
+        "type": "select",
+        "name": "subtitleSource",
+        "label": "Subtitle source (experimental: route through sub.ryuo.to)",
+        "default": "direct",
+        "options": [
+          { "value": "direct", "label": "AniZone (direct)" },
+          { "value": "subryuo", "label": "sub.ryuo.to · anizone source (experimental)" }
+        ]
+      }
+    ]
+  }
+}
