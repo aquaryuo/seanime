@@ -783,7 +783,7 @@ function init() {
             const zip = $filepath.join(dir, "chrome.zip")
             let id = ""
             try { id = dl.download(st.url, zip) } catch (_e) { setErr("Chromium download couldn't start: " + String(_e)); done(false); return }
-            plog("downloading Chromium" + (st.version ? " " + st.version : "") + " (Stage B browser)")
+            plog("downloading Chromium" + (st.version ? " " + st.version : "") + " (browser solver)")
             dlLogAt = 0
             const cancel = dl.watch(id, (p: $downloader.DownloadProgress | undefined) => {
                 if (!p) return
@@ -802,7 +802,7 @@ function init() {
                     } else {
                         try { $os.removeAll(dir) } catch (_e) {}
                         try { $storage.set("fs.chromiumVer", "") } catch (_e) {}
-                        setErr("Chromium download/extract failed — Stage B (hard challenges) will be unavailable.")
+                        setErr("Chromium download/extract failed — the browser solver (hard challenges) will be unavailable.")
                         tray.update()
                     }
                     done(ok)
@@ -823,7 +823,7 @@ function init() {
             setNote("Fetching a minimal Chromium…")
             tray.update()
             void chromiumStable(plt).then((st) => {
-                if (!st.url) { setErr("Couldn't find a Chromium download for this platform (" + plt + ") in the release feed; starting without Stage B."); tray.update(); cb(""); return }
+                if (!st.url) { setErr("Couldn't find a Chromium download for this platform (" + plt + ") in the release feed; starting without the browser solver."); tray.update(); cb(""); return }
                 downloadChromium(st, (ok) => cb(ok ? chromiumCachedPath() : ""))
             })
         }
@@ -1423,7 +1423,7 @@ function init() {
         ctx.registerEventHandler("fs-browsermode-toggle", () => {
             fsBrowserMode.set(fsBrowserMode.get() === "offscreen" ? "headless" : "offscreen")
             fsPersist()
-            applySolverEnvChange("Browser tier: " + fsBrowserMode.get())
+            applySolverEnvChange("Browser solver window: " + fsBrowserMode.get())
         })
         ;["chrome", "edge", "webview2"].forEach((e) => {
             ctx.registerEventHandler("fs-engine-set-" + e, () => {
@@ -1433,7 +1433,7 @@ function init() {
                 applySolverEnvChange("Browser engine: " + label)
             })
         })
-        ctx.registerEventHandler("fs-help-engine", () => ctx.toast.info("Stage B browser engine. Chrome (default) and Edge drive your installed browser. WebView2 is experimental: it runs a hidden, off-screen Edge WebView2 window with no taskbar button, reusing the Edge WebView2 Runtime present on virtually all Windows 11 machines. Switch to Chrome or Edge if a solve fails on WebView2."))
+        ctx.registerEventHandler("fs-help-engine", () => ctx.toast.info("Browser solver engine. Chrome (default) and Edge drive your installed browser. WebView2 is experimental: it runs a hidden, off-screen Edge WebView2 window with no taskbar button, reusing the Edge WebView2 Runtime present on virtually all Windows 11 machines. Switch to Chrome or Edge if a solve fails on WebView2."))
         ctx.registerEventHandler("fs-wv2warm-toggle", () => {
             fsWv2Warm.set(!fsWv2Warm.get())
             fsPersist()
@@ -1452,8 +1452,9 @@ function init() {
             applySolverEnvChange(fsWv2Utls.get() ? "uTLS fast path on" : "uTLS fast path off")
         })
         ctx.registerEventHandler("fs-help-wv2utls", () => ctx.toast.info("Experimental: after the first clear, serve requests through the fast uTLS path using the browser cleared cookie - lighter (lets the hidden browser idle). Watch the logs to confirm; off by default."))
-        ctx.registerEventHandler("fs-dns-change", () => {
-            const val = fsDnsRef.current || "off"
+        fsDnsRef.onValueChange((v) => {
+            const val = v || "off"
+            if (val === fsDns.get()) return
             fsDns.set(val)
             fsPersist()
             applySolverEnvChange("Encrypted DNS: " + val)
@@ -1683,8 +1684,9 @@ function init() {
             rows.push(divider())
             rows.push(toggleRow(fsAutoUpdate.get(), "fs-autoupdate-toggle", "Auto-update solver & Chromium"))
             rows.push(divider())
+            rows.push(dim("Browser solver — the real browser (WebView2/Chrome/Edge) that clears the hard JS & interactive challenges (Cloudflare JS, Turnstile, DDoS-Guard) the fast uTLS path can't. Below: how its window stays hidden."))
             rows.push(tray.button({
-                label: "Browser tier: " + (fsBrowserMode.get() === "offscreen" ? "Off-screen (max stealth)" : "Invisible (headless)"),
+                label: "Browser solver window: " + (fsBrowserMode.get() === "offscreen" ? "Off-screen (max stealth)" : "Invisible (headless)"),
                 onClick: "fs-browsermode-toggle",
                 intent: "gray-subtle",
                 size: "sm",
@@ -1697,7 +1699,6 @@ function init() {
                 label: "Encrypted DNS",
                 fieldRef: fsDnsRef,
                 options: dnsOpts.map((o) => ({ label: o[1], value: o[0] })),
-                onChange: "fs-dns-change",
             }))
             if (fsDns.get() === "custom") {
                 rows.push(tray.flex({
@@ -1759,7 +1760,7 @@ function init() {
                 rows.push(tray.button({ label: "Restart to update", onClick: "fs-restart-update", intent: "primary", size: "sm", style: ACCENT_STYLE }))
             }
             if (st === "up" && fsMode.get() !== "remote" && !chromiumDownloadedHere()) {
-                rows.push(dim("Stage B note: no fetched Chromium present. uTLS clears most gates; if an interactive Turnstile fails and you have no system Chrome/Edge, enable 'fetch a minimal Chromium' in Advanced."))
+                rows.push(dim("Browser solver: no fetched Chromium present. uTLS clears most gates; if an interactive Turnstile fails and you have no system Chrome/Edge, enable 'fetch a minimal Chromium' in Advanced."))
             }
             if (fsErr.get()) {
                 rows.push(tray.div({
