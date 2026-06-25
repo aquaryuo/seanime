@@ -313,13 +313,6 @@ function init() {
             })
         }
 
-        function subValue(): string {
-            const rec = readCascade()
-            if (rec && rec.sub) return rec.sub.off ? "Off" : (rec.sub.label || rec.sub.language || "On")
-            if (rec && rec.cap) return rec.cap.label || rec.cap.language || "On"
-            return "Default"
-        }
-
         function dim(t: string): any {
             return tray.text(t, { style: { color: "rgba(255,255,255,0.5)", fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word" } })
         }
@@ -379,14 +372,6 @@ function init() {
             }
 
             rows.push(toggleRow(persistSubs.get(), "ap-subs", "Remember subtitle & caption choices"))
-            rows.push(tray.flex({
-                items: [
-                    heading("Saved"),
-                    tray.text(subValue(), { style: { fontSize: "13px", fontWeight: "700", color: "rgba(255,255,255,0.95)", marginLeft: "auto" } }),
-                ],
-                gap: 2,
-                style: { alignItems: "center" },
-            }))
 
             rows.push(divider())
             rows.push(tray.flex({
