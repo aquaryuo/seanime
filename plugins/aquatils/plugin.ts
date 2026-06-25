@@ -264,7 +264,7 @@ function init() {
         // Tall-but-detached floating modal: leaves a gap above and below so it reads as
         // a floating panel on the side rather than a flush full-height drawer. Matches the
         // fixed wrapper gaps below (4.5rem top + 4.5rem bottom = 9rem).
-        const PANEL_H = "min(540px, calc(100dvh - 9rem))"
+        const PANEL_H = "min(510px, calc(100dvh - 9rem))"
         // Accent gradient matched to the plugin icon (warm orange -> gold sunburst).
         const ACCENT_GRAD = "linear-gradient(135deg, rgba(242,145,47,0.9), rgba(255,200,64,0.9))"
         const ACCENT_STYLE: Record<string, string> = { background: ACCENT_GRAD, border: "none", color: "#1c1407", fontWeight: "600" }
