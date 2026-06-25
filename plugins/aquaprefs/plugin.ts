@@ -54,11 +54,50 @@ function init() {
             sset(CFG_KEY, { subs: persistSubs.get() })
         }
 
+        const PANEL_H = "calc(100dvh - 9rem)"
+        const ACCENT_SUBTLE: Record<string, string> = { background: "rgba(255,200,64,0.16)", border: "none", color: "#FFD27A", fontWeight: "500" }
+        const ICON_FS = "18px"
+
         const tray = ctx.newTray({
             iconUrl: "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquaprefs/icon.png",
             withContent: true,
-            width: "460px",
+            width: "480px",
+            minHeight: PANEL_H,
         })
+
+        function styleEls(els: any[], pairs: [string, string][]): void {
+            for (let i = 0; i < els.length; i++) {
+                for (let j = 0; j < pairs.length; j++) {
+                    try { els[i].setStyle(pairs[j][0], pairs[j][1]) } catch (_e) {}
+                }
+            }
+        }
+        const PANEL_TOP = "4.5rem", PANEL_BOTTOM = "4.5rem", PANEL_LEFT = "6rem"
+        try {
+            if (ctx.dom && ctx.dom.observe) {
+                ctx.dom.observe('[data-plugin-tray-popover-content="aquaprefs"] [class*="max-h-[35rem]"]', (els) => {
+                    styleEls(els, [["max-height", PANEL_H], ["maxHeight", PANEL_H], ["padding", "0px"]])
+                })
+                ctx.dom.observe('[data-plugin-tray-popover-content="aquaprefs"]', (els) => {
+                    styleEls(els, [["margin", "0"], ["max-height", "none"], ["maxHeight", "none"], ["background", "transparent"], ["box-shadow", "none"], ["boxShadow", "none"]])
+                    for (let i = 0; i < els.length; i++) {
+                        try {
+                            const p = els[i].getParent()
+                            if (p && p.then) {
+                                p.then((wrapper) => {
+                                    if (!wrapper) return
+                                    styleEls([wrapper], [
+                                        ["transform", "none"], ["position", "fixed"],
+                                        ["top", PANEL_TOP], ["bottom", PANEL_BOTTOM],
+                                        ["left", PANEL_LEFT], ["right", "auto"], ["margin", "0"],
+                                    ])
+                                }).catch(() => {})
+                            }
+                        } catch (_e) {}
+                    }
+                })
+            }
+        } catch (_e) {}
 
         let gen = 0
         let armedPid = ""
@@ -316,13 +355,45 @@ function init() {
             return tray.text(t, { style: { fontSize: "11px", fontWeight: "600", letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.4)", marginTop: "2px" } })
         }
         function divider(): any {
-            return tray.div({ items: [], style: { borderTop: "1px solid rgba(255,255,255,0.08)", marginTop: "4px", marginBottom: "4px" } })
+            return tray.div({ items: [], style: { marginTop: "5px", marginBottom: "5px" } })
+        }
+        function toggleRow(on: boolean, click: string, label: string): any {
+            return tray.flex({
+                items: [
+                    tray.button({ label: on ? "✓" : "✕", onClick: click, intent: "gray-subtle", size: "sm", style: on ? { ...ACCENT_SUBTLE, fontSize: ICON_FS } : { fontSize: ICON_FS } }),
+                    tray.text(label, { style: { fontSize: "13px", color: "rgba(255,255,255,0.85)", overflowWrap: "anywhere", wordBreak: "break-word" } }),
+                ],
+                gap: 2,
+                style: { alignItems: "center" },
+            })
+        }
+        function ledDot(on: boolean): any {
+            return tray.text("●", { style: { fontSize: "10px", lineHeight: "1", color: on ? "#5fd38a" : "rgba(255,255,255,0.35)", textShadow: on ? "0 0 6px rgba(95,211,138,0.85)" : "none" } })
+        }
+        function panel(rows: any[]): any {
+            return tray.stack({
+                items: rows,
+                gap: 3,
+                style: {
+                    display: "flex",
+                    flexDirection: "column",
+                    minHeight: PANEL_H,
+                    padding: "18px 16px",
+                    background: "linear-gradient(180deg, rgba(18,19,24,0.40), rgba(10,11,15,0.52))",
+                    backdropFilter: "blur(30px) saturate(115%)",
+                    WebkitBackdropFilter: "blur(30px) saturate(115%)",
+                    border: "none",
+                    outline: "none",
+                    borderRadius: "16px",
+                    boxShadow: "0 24px 60px -12px rgba(0,0,0,0.7)",
+                },
+            })
         }
         function logBox(): any {
             const tail = logs.slice(-30).join("\n")
             return tray.div({
-                items: [tray.text(tail || "(no logs yet — play something and change a track)", { style: { fontFamily: "monospace", fontSize: "11px", lineHeight: "1.45", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", color: "rgba(255,255,255,0.72)" } })],
-                style: { maxHeight: "200px", overflowY: "auto", background: "rgba(0,0,0,0.35)", borderRadius: "6px", padding: "8px", border: "1px solid rgba(255,255,255,0.08)" },
+                items: [tray.text(tail || "(no logs yet — play something and change a track)", { style: { fontSize: "11px", fontFamily: "ui-monospace, monospace", lineHeight: "1.5", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", color: "rgba(255,255,255,0.75)" } })],
+                style: { background: "rgba(0,0,0,0.28)", borderRadius: "10px", padding: "10px 12px", flexGrow: "1", minHeight: "160px", overflowY: "auto" },
             })
         }
 
@@ -334,25 +405,39 @@ function init() {
 
         function renderTray(): any {
             const rows: any[] = []
-            rows.push(tray.text("Aqua's Prefs", { style: { fontWeight: "600", fontSize: "15px" } }))
+            rows.push(tray.flex({
+                items: [
+                    tray.text("Aqua's Prefs", { style: { fontWeight: "600", fontSize: "15px", color: "rgba(255,255,255,0.95)" } }),
+                    tray.flex({
+                        items: [
+                            ledDot(hasVC && persistSubs.get()),
+                            tray.text(hasVC ? (persistSubs.get() ? "Active" : "Paused") : "Unavailable", { style: { fontSize: "11px", color: "rgba(255,255,255,0.55)" } }),
+                        ],
+                        gap: 2,
+                        style: { alignItems: "center", marginLeft: "auto" },
+                    }),
+                ],
+                gap: 2,
+                style: { alignItems: "center" },
+            }))
+            rows.push(divider())
+
             if (!hasVC) {
                 rows.push(dim("Needs the Playback permission — re-enable the plugin's permissions or update Seanime."))
-                return tray.stack({ items: rows, gap: 3 })
+                return panel(rows)
             }
 
+            rows.push(toggleRow(persistSubs.get(), "ap-subs", "Remember subtitle & caption choices"))
             rows.push(tray.flex({
                 items: [
-                    tray.button({ label: (persistSubs.get() ? "✓ " : "") + "Subtitles", onClick: "ap-subs", intent: persistSubs.get() ? "success-subtle" : "gray-subtle", size: "sm" }),
-                    tray.text(subValue(), { style: { fontWeight: "700", fontSize: "13px", color: "rgba(255,255,255,0.95)", alignSelf: "center" } }),
+                    heading("Saved"),
+                    tray.text(subValue(), { style: { fontSize: "13px", fontWeight: "700", color: "rgba(255,255,255,0.95)", marginLeft: "auto" } }),
                 ],
-                gap: 3,
+                gap: 2,
+                style: { alignItems: "center" },
             }))
-
-            rows.push(divider())
             rows.push(tray.flex({
-                items: [
-                    tray.button({ label: "Reset", onClick: "ap-reset", intent: "alert-subtle", size: "xs" }),
-                ],
+                items: [tray.button({ label: "Reset saved choices", onClick: "ap-reset", intent: "alert-subtle", size: "sm" })],
                 gap: 2,
             }))
             if (status.get()) rows.push(dim(status.get()))
@@ -366,9 +451,11 @@ function init() {
                     tray.button({ label: "Clear", onClick: "ap-log-clear", intent: "alert-subtle", size: "xs" }),
                 ],
                 gap: 2,
+                style: { alignItems: "center" },
             }))
             if (logsOpen.get()) rows.push(logBox())
-            return tray.stack({ items: rows, gap: 3 })
+            else rows.push(tray.div({ items: [], style: { flexGrow: "1" } }))
+            return panel(rows)
         }
 
         tray.render(renderTray)
