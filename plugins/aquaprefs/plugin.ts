@@ -71,10 +71,10 @@ function init() {
         }
         try {
             if (ctx.dom && ctx.dom.observe) {
-                ctx.dom.observe('[data-plugin-tray-popover-content="aquaprefs"] [class*="max-h-[35rem]"]', (els) => {
+                ctx.dom.observe('[data-plugin-tray-popover-content="aq-aquaprefs-beta"] [class*="max-h-[35rem]"]', (els) => {
                     styleEls(els, [["padding", "0px"]])
                 })
-                ctx.dom.observe('[data-plugin-tray-popover-content="aquaprefs"]', (els) => {
+                ctx.dom.observe('[data-plugin-tray-popover-content="aq-aquaprefs-beta"]', (els) => {
                     styleEls(els, [["background", "transparent"], ["box-shadow", "none"], ["boxShadow", "none"], ["padding", "0px"]])
                 })
             }

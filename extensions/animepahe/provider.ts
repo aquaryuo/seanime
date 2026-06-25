@@ -530,7 +530,7 @@ class Provider {
 
     private reportError(scope: string, message: string): void {
         try {
-            console.error("SEHERRv1 " + JSON.stringify({ t: this.now(), ext: "animepahe", scope: scope, msg: String(message) }))
+            console.error("SEHERRv1 " + JSON.stringify({ t: this.now(), ext: "aq-animepahe-beta", scope: scope, msg: String(message) }))
         } catch (_e) {}
     }
 
