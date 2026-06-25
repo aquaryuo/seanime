@@ -57,6 +57,7 @@ function init() {
         const fsPortRef = ctx.fieldRef<string>(fsPort.get())
         const fsSessionRef = ctx.fieldRef<string>(fsSession.get())
         const fsDnsCustomRef = ctx.fieldRef<string>(fsDnsCustom.get())
+        const fsDnsRef = ctx.fieldRef<string>(fsDns.get())
         let fsBusy = false
         let fsBinary: $os.Cmd | null = null
         let fsStartTicks = 0
@@ -1451,12 +1452,12 @@ function init() {
             applySolverEnvChange(fsWv2Utls.get() ? "uTLS fast path on" : "uTLS fast path off")
         })
         ctx.registerEventHandler("fs-help-wv2utls", () => ctx.toast.info("Experimental: after the first clear, serve requests through the fast uTLS path using the browser cleared cookie - lighter (lets the hidden browser idle). Watch the logs to confirm; off by default."))
-        ;["off", "auto", "cloudflare", "google", "quad9", "custom"].forEach((d) => {
-            ctx.registerEventHandler("fs-dns-set-" + d, () => {
-                fsDns.set(d)
-                fsPersist()
-                applySolverEnvChange("Encrypted DNS: " + d)
-            })
+        ctx.registerEventHandler("fs-dns-change", () => {
+            const val = fsDnsRef.current || "off"
+            fsDns.set(val)
+            fsPersist()
+            applySolverEnvChange("Encrypted DNS: " + val)
+            tray.update()
         })
         ctx.registerEventHandler("fs-dns-custom-save", () => {
             fsDnsCustom.set((fsDnsCustomRef.current || "").trim())
@@ -1692,10 +1693,11 @@ function init() {
             rows.push(divider())
             rows.push(dim("Encrypted DNS (DoH) — bypasses ISP DNS blocks. Auto enables it only when a block is detected; Custom takes a DoH URL."))
             const dnsOpts: [string, string][] = [["off", "Off"], ["auto", "Auto"], ["cloudflare", "Cloudflare"], ["google", "Google"], ["quad9", "Quad9"], ["custom", "Custom"]]
-            rows.push(tray.flex({
-                items: dnsOpts.map((o) => tray.button({ label: o[1], onClick: "fs-dns-set-" + o[0], intent: "gray-subtle", size: "sm", style: fsDns.get() === o[0] ? ACCENT_SUBTLE : {} })),
-                gap: 2,
-                style: { flexWrap: "wrap" },
+            rows.push(tray.select({
+                label: "Encrypted DNS",
+                fieldRef: fsDnsRef,
+                options: dnsOpts.map((o) => ({ label: o[1], value: o[0] })),
+                onChange: "fs-dns-change",
             }))
             if (fsDns.get() === "custom") {
                 rows.push(tray.flex({
