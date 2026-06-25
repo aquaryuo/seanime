@@ -47,22 +47,19 @@ function init() {
 
         const cfg = sget<any>(CFG_KEY, {})
         const persistSubs = ctx.state<boolean>(cfg.subs !== false)
-        const status = ctx.state<string>("")
         const logsOpen = ctx.state<boolean>(false)
 
         function saveCfg(): void {
             sset(CFG_KEY, { subs: persistSubs.get() })
         }
 
-        const PANEL_H = "calc(100dvh - 9rem)"
         const ACCENT_SUBTLE: Record<string, string> = { background: "rgba(255,200,64,0.16)", border: "none", color: "#FFD27A", fontWeight: "500" }
         const ICON_FS = "18px"
 
         const tray = ctx.newTray({
             iconUrl: "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquaprefs/icon.png",
             withContent: true,
-            width: "480px",
-            minHeight: PANEL_H,
+            width: "420px",
         })
 
         function styleEls(els: any[], pairs: [string, string][]): void {
@@ -72,29 +69,13 @@ function init() {
                 }
             }
         }
-        const PANEL_TOP = "4.5rem", PANEL_BOTTOM = "4.5rem", PANEL_LEFT = "6rem"
         try {
             if (ctx.dom && ctx.dom.observe) {
                 ctx.dom.observe('[data-plugin-tray-popover-content="aquaprefs"] [class*="max-h-[35rem]"]', (els) => {
-                    styleEls(els, [["max-height", PANEL_H], ["maxHeight", PANEL_H], ["padding", "0px"]])
+                    styleEls(els, [["padding", "0px"]])
                 })
                 ctx.dom.observe('[data-plugin-tray-popover-content="aquaprefs"]', (els) => {
-                    styleEls(els, [["margin", "0"], ["max-height", "none"], ["maxHeight", "none"], ["background", "transparent"], ["box-shadow", "none"], ["boxShadow", "none"]])
-                    for (let i = 0; i < els.length; i++) {
-                        try {
-                            const p = els[i].getParent()
-                            if (p && p.then) {
-                                p.then((wrapper) => {
-                                    if (!wrapper) return
-                                    styleEls([wrapper], [
-                                        ["transform", "none"], ["position", "fixed"],
-                                        ["top", PANEL_TOP], ["bottom", PANEL_BOTTOM],
-                                        ["left", PANEL_LEFT], ["right", "auto"], ["margin", "0"],
-                                    ])
-                                }).catch(() => {})
-                            }
-                        } catch (_e) {}
-                    }
+                    styleEls(els, [["background", "transparent"], ["box-shadow", "none"], ["boxShadow", "none"], ["padding", "0px"]])
                 })
             }
         } catch (_e) {}
@@ -332,15 +313,6 @@ function init() {
             })
         }
 
-        function resetPrefs(): void {
-            const idx = sget<string[]>(IDX_KEY, [])
-            for (let i = 0; i < idx.length; i++) { try { ($storage as any).remove(idx[i]) } catch (_e) { sset(idx[i], null) } }
-            sset(IDX_KEY, [])
-            ctx.toast.info("Preferences cleared")
-            status.set("Cleared all saved choices.")
-            log("✗ all saved preferences cleared")
-        }
-
         function subValue(): string {
             const rec = readCascade()
             if (rec && rec.sub) return rec.sub.off ? "Off" : (rec.sub.label || rec.sub.language || "On")
@@ -367,9 +339,6 @@ function init() {
                 style: { alignItems: "center" },
             })
         }
-        function ledDot(on: boolean): any {
-            return tray.text("●", { style: { fontSize: "10px", lineHeight: "1", color: on ? "#5fd38a" : "rgba(255,255,255,0.35)", textShadow: on ? "0 0 6px rgba(95,211,138,0.85)" : "none" } })
-        }
         function panel(rows: any[]): any {
             return tray.stack({
                 items: rows,
@@ -377,7 +346,6 @@ function init() {
                 style: {
                     display: "flex",
                     flexDirection: "column",
-                    minHeight: PANEL_H,
                     padding: "18px 16px",
                     background: "linear-gradient(180deg, rgba(18,19,24,0.40), rgba(10,11,15,0.52))",
                     backdropFilter: "blur(30px) saturate(115%)",
@@ -393,34 +361,17 @@ function init() {
             const tail = logs.slice(-30).join("\n")
             return tray.div({
                 items: [tray.text(tail || "(no logs yet — play something and change a track)", { style: { fontSize: "11px", fontFamily: "ui-monospace, monospace", lineHeight: "1.5", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", color: "rgba(255,255,255,0.75)" } })],
-                style: { background: "rgba(0,0,0,0.28)", borderRadius: "10px", padding: "10px 12px", flexGrow: "1", minHeight: "160px", overflowY: "auto" },
+                style: { background: "rgba(0,0,0,0.28)", borderRadius: "10px", padding: "10px 12px", maxHeight: "220px", overflowY: "auto" },
             })
         }
 
         ctx.registerEventHandler("ap-subs", () => { persistSubs.set(!persistSubs.get()); saveCfg(); tray.update() })
-        ctx.registerEventHandler("ap-reset", () => resetPrefs())
         ctx.registerEventHandler("ap-log-copy", () => { try { ctx.dom.clipboard.write(logs.join("\n")) } catch (_e) {} ctx.toast.success("Logs copied to clipboard") })
         ctx.registerEventHandler("ap-log-clear", () => { logs = []; sset(LOG_KEY, logs); ctx.toast.info("Logs cleared"); tray.update() })
         ctx.registerEventHandler("ap-log-toggle", () => { logsOpen.set(!logsOpen.get()); tray.update() })
 
         function renderTray(): any {
             const rows: any[] = []
-            rows.push(tray.flex({
-                items: [
-                    tray.text("Aqua's Prefs", { style: { fontWeight: "600", fontSize: "15px", color: "rgba(255,255,255,0.95)" } }),
-                    tray.flex({
-                        items: [
-                            ledDot(hasVC && persistSubs.get()),
-                            tray.text(hasVC ? (persistSubs.get() ? "Active" : "Paused") : "Unavailable", { style: { fontSize: "11px", color: "rgba(255,255,255,0.55)" } }),
-                        ],
-                        gap: 2,
-                        style: { alignItems: "center", marginLeft: "auto" },
-                    }),
-                ],
-                gap: 2,
-                style: { alignItems: "center" },
-            }))
-            rows.push(divider())
 
             if (!hasVC) {
                 rows.push(dim("Needs the Playback permission — re-enable the plugin's permissions or update Seanime."))
@@ -436,11 +387,6 @@ function init() {
                 gap: 2,
                 style: { alignItems: "center" },
             }))
-            rows.push(tray.flex({
-                items: [tray.button({ label: "Reset saved choices", onClick: "ap-reset", intent: "alert-subtle", size: "sm" })],
-                gap: 2,
-            }))
-            if (status.get()) rows.push(dim(status.get()))
 
             rows.push(divider())
             rows.push(tray.flex({
@@ -454,7 +400,6 @@ function init() {
                 style: { alignItems: "center" },
             }))
             if (logsOpen.get()) rows.push(logBox())
-            else rows.push(tray.div({ items: [], style: { flexGrow: "1" } }))
             return panel(rows)
         }
 
