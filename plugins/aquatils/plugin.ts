@@ -302,7 +302,7 @@ function init() {
                     // bg-gray-950 here is opaque — it becomes the panel's backdrop, so the
                     // blur shows solid gray instead of the app. Make it transparent so the
                     // backdrop-filter actually frosts the page behind the modal.
-                    styleEls(els, [["margin", "0"], ["max-height", "none"], ["maxHeight", "none"], ["background", "transparent"], ["box-shadow", "none"], ["boxShadow", "none"]])
+                    styleEls(els, [["margin", "0"], ["max-height", "none"], ["maxHeight", "none"], ["background", "transparent"], ["box-shadow", "none"], ["boxShadow", "none"], ["border", "none"], ["border-width", "0"], ["borderWidth", "0"], ["outline", "none"]])
                     for (let i = 0; i < els.length; i++) {
                         try {
                             const p = els[i].getParent()
@@ -313,6 +313,7 @@ function init() {
                                         ["transform", "none"], ["position", "fixed"],
                                         ["top", PANEL_TOP], ["bottom", PANEL_BOTTOM],
                                         ["left", PANEL_LEFT], ["right", "auto"], ["margin", "0"],
+                                        ["border", "none"], ["border-width", "0"], ["borderWidth", "0"], ["outline", "none"],
                                     ])
                                 }).catch(() => {})
                             }
