@@ -1,3 +1,5 @@
+declare const console: { log(...args: any[]): void; info(...args: any[]): void; warn(...args: any[]): void; error(...args: any[]): void }
+
 class Provider {
     private baseUrl = "{{baseUrl}}"
     private loadSubtitles = "{{loadSubtitles}}"
@@ -138,7 +140,7 @@ class Provider {
         }
 
         this.invalidateBase()
-        throw "anikoto: search failed (site unreachable)"
+        throw this.fail("search", "search failed (site unreachable)")
     }
 
     private filterBySeason(results: SearchResult[], season: number, part: number): SearchResult[] {
@@ -186,10 +188,6 @@ class Provider {
 
     private normTitle(s: string): string {
         return (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "")
-    }
-
-    private cleanCandidate(title: string): string {
-        return title.replace(/\s+[a-z0-9]{4,7}$/i, "").trim() || title
     }
 
     private simNorm(a: string, b: string): number {
@@ -339,9 +337,9 @@ class Provider {
             page = await this.fetchRetry(seriesUrl, { headers: this.pageHeaders(), timeout: 12 })
         } catch (e) {
             this.invalidateBase()
-            throw e
+            throw this.fail("episodes", e instanceof Error ? e.message : String(e))
         }
-        if (!page.ok) throw `anikoto: episode page failed (status ${page.status})`
+        if (!page.ok) throw this.fail("episodes", `episode page failed (status ${page.status})`)
 
         const pageHtml = page.text()
         let seriesId = this.firstAttr(LoadDoc(pageHtml), ["#watch-main", "[id*='watch'][data-id]", "main [data-id]"], "data-id")
@@ -349,14 +347,17 @@ class Provider {
             const m = pageHtml.match(/data-id="(\d+)"/)
             if (m) seriesId = m[1]
         }
-        if (!seriesId) throw "anikoto: could not determine series id (site layout may have changed)"
+        if (!seriesId) {
+            if (this.bodyIsChallenge(pageHtml)) throw this.fail("episodes", "the site is showing an anti-bot challenge; enable the custom solver in this provider's settings (run it via Aqua's Utils) or retry later")
+            throw this.fail("episodes", "could not determine series id (site layout may have changed)")
+        }
 
         const listRes = await this.fetchRetry(`${this.baseUrl}/ajax/episode/list/${seriesId}`, {
             headers: this.ajaxHeaders(), timeout: 12,
         })
-        if (!listRes.ok) throw `anikoto: episode list failed (status ${listRes.status})`
+        if (!listRes.ok) throw this.fail("episodes", `episode list failed (status ${listRes.status})`)
         const listJson = listRes.json<{ status: number; result: string }>()
-        if (!listJson || !listJson.result) throw "anikoto: empty episode list response"
+        if (!listJson || !listJson.result) throw this.fail("episodes", "empty episode list response")
 
         const $ = LoadDoc(listJson.result)
         const episodes: EpisodeDetails[] = []
@@ -392,7 +393,7 @@ class Provider {
             })
         })
 
-        if (episodes.length === 0) throw "anikoto: no episodes found"
+        if (episodes.length === 0) throw this.fail("episodes", "no episodes found")
 
         if (parsed.anilistId) {
             try {
@@ -460,7 +461,7 @@ class Provider {
             const candidates = this.collectServers($, groups)
                 .filter((c) => KNOWN_SERVERS.indexOf(c.name) !== -1)
                 .sort((a, b) => KNOWN_SERVERS.indexOf(a.name) - KNOWN_SERVERS.indexOf(b.name))
-            if (candidates.length === 0) throw audio === "dub" ? "anikoto: no dub is available for this episode" : "anikoto: no server available for this episode"
+            if (candidates.length === 0) throw this.fail("server", audio === "dub" ? "no dub is available for this episode" : "no server available for this episode")
 
             const label = server === "Auto" ? "Auto" : ""
             const wantSubs = this.loadSubtitles !== "disabled"
@@ -488,15 +489,15 @@ class Provider {
                 if (cl) firstResolved.headers = this.withClearance(firstResolved.headers, cl)
                 return firstResolved
             }
-            throw "anikoto: no playable server found for this episode"
+            throw this.fail("server", "no playable server found for this episode" + (this.solverEnabled() ? "" : "; if sources are Cloudflare-protected, enable the custom solver in settings (run it via Aqua's Utils)"))
         }
 
         const target = this.parseServerLabel(server, audio)
-        if (!target.ok) throw "anikoto: that server is not available for this audio track"
+        if (!target.ok) throw this.fail("server", "that server is not available for this audio track")
 
         const $ = await this.serverListDoc(dataIds)
         const picked = this.collectServers($, [target.group]).filter((c) => c.name === target.name)[0]
-        if (!picked) throw "anikoto: that server is not available for this episode"
+        if (!picked) throw this.fail("server", "that server is not available for this episode")
         const resolved = await this.resolveServer(picked.linkId, target.label, ctx, audio)
         const cl = this.cachedClearance(this.hostOf(resolved.videoSources[0].url))
         if (cl) resolved.headers = this.withClearance(resolved.headers, cl)
@@ -517,7 +518,7 @@ class Provider {
                 `${this.baseUrl}/ajax/server/list?servers=${encodeURIComponent(dataIds)}`,
                 { headers: this.ajaxHeaders(), timeout: 12 }
             )
-            if (!slRes.ok) throw `anikoto: server list failed (status ${slRes.status})`
+            if (!slRes.ok) throw this.fail("server", `server list failed (status ${slRes.status})`)
             const sl = slRes.json<{ status: number; result: string }>()
             html = (sl && sl.result) || ""
             if (html && html.indexOf("data-link-id") !== -1) this.writeCache(cacheKey, html)
@@ -542,8 +543,8 @@ class Provider {
 
     private async resolveServer(linkId: string, serverName: string, ctx: { anilistId: number; episode: number }, audio: string): Promise<EpisodeServer> {
         const got = await this.fetchSources(linkId)
-        if (!got || !got.file) throw "anikoto: could not resolve the player URL (source may be encrypted or down)"
-        if (audio === "dub" && (await this.dubLooksWrong(got.tracks, got.origin))) throw "anikoto: dub source resolved to the subbed (Japanese) track"
+        if (!got || !got.file) throw this.fail("server", "could not resolve the player URL (source may be encrypted or down)")
+        if (audio === "dub" && (await this.dubLooksWrong(got.tracks, got.origin))) throw this.fail("server", "dub source resolved to the subbed (Japanese) track")
         const subtitles = await this.buildSubtitles(got.tracks, ctx, got.origin)
         return {
             server: serverName,
@@ -966,6 +967,29 @@ class Provider {
         }
         const sa = this.splitAudio(rest)
         return { base: sa.base, audio: sa.audio, anilistId }
+    }
+
+    private reportError(scope: string, message: string): void {
+        try {
+            console.error("SEHERRv1 " + JSON.stringify({ t: this.now(), ext: "aq-anikoto-beta", scope: scope, msg: String(message) }))
+        } catch (_e) {}
+    }
+
+    private fail(scope: string, message: string): Error {
+        this.reportError(scope, message)
+        return new Error(message)
+    }
+
+    private challengeToken(body: string): string {
+        if (!body) return ""
+        const b = body.toLowerCase()
+        const toks = ["just a moment", "checking your browser", "cf-mitigated", "cf-browser-verification", "enable javascript and cookies", "ddos-guard", "attention required"]
+        for (let i = 0; i < toks.length; i++) if (b.indexOf(toks[i]) !== -1) return toks[i]
+        return ""
+    }
+
+    private bodyIsChallenge(body: string): boolean {
+        return this.challengeToken(body) !== ""
     }
 
     private now(): number {
