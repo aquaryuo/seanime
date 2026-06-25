@@ -181,7 +181,7 @@ class Provider {
         }
         const m3u8 = this.firstMatch(html, /https?:\/\/[^"'\s]+\/master\.m3u8/)
         if (!m3u8) throw "anizone: no stream found for this episode"
-        const subtitles = this.buildSubs(html, alId, parseInt(n, 10) || episode.number)
+        const subtitles = await this.buildSubs(html, alId, parseInt(n, 10) || episode.number)
         return {
             server: server === "Auto" || server === "default" || !server ? "Auto" : server,
             headers: { Referer: `${this.normBase()}/` },
@@ -314,10 +314,11 @@ class Provider {
         return titles[0]
     }
 
-    private buildSubs(html: string, anilistId: number, episode: number): VideoSubtitle[] {
+    private async buildSubs(html: string, anilistId: number, episode: number): Promise<VideoSubtitle[]> {
         const out: VideoSubtitle[] = []
         const re = /https?:\/\/[^"'\s]+\/subtitles\/[0-9]+_([a-z-]+)\.(ass|srt)/g
-        const viaSite = this.subtitleSource === "subryuo" && anilistId > 0 && episode > 0
+        const wantSite = this.subtitleSource === "subryuo" && anilistId > 0 && episode > 0
+        const viaSite = wantSite && (await this.subUp())
         const seen: { [key: string]: boolean } = {}
         let englishIdx = -1
         let m: RegExpExecArray | null
@@ -341,6 +342,20 @@ class Provider {
     private siteSubUrl(anilistId: number, episode: number, lang: string, ext: string, origin: string): string {
         const ref = encodeURIComponent(`${this.normBase()}/`)
         return `${this.subEndpoint}/s/${anilistId}/${episode}/${lang}.${ext}?source=anizone&src=${encodeURIComponent(origin)}&ref=${ref}`
+    }
+
+    private async subUp(): Promise<boolean> {
+        const cached = this.readCache<boolean>("anizone:subup", 60000)
+        if (cached !== undefined) return cached
+        let up = false
+        try {
+            const res = await fetch(`${this.subEndpoint}/health`, { timeout: 4 })
+            up = !!res && res.ok
+        } catch (_e) {
+            up = false
+        }
+        this.writeCache("anizone:subup", up)
+        return up
     }
 
     private alOf(id: string): number {
