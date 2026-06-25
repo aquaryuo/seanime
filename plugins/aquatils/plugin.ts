@@ -295,10 +295,10 @@ function init() {
         const PANEL_TOP = "4.5rem", PANEL_BOTTOM = "4.5rem", PANEL_LEFT = "6rem"
         try {
             if (ctx.dom && ctx.dom.observe) {
-                ctx.dom.observe('[data-plugin-tray-popover-content="aquatils"] [class*="max-h-[35rem]"]', (els) => {
+                ctx.dom.observe('[data-plugin-tray-popover-content="aq-aquatils"] [class*="max-h-[35rem]"]', (els) => {
                     styleEls(els, [["max-height", PANEL_H], ["maxHeight", PANEL_H], ["padding", "0px"]])
                 })
-                ctx.dom.observe('[data-plugin-tray-popover-content="aquatils"]', (els) => {
+                ctx.dom.observe('[data-plugin-tray-popover-content="aq-aquatils"]', (els) => {
                     // bg-gray-950 here is opaque — it becomes the panel's backdrop, so the
                     // blur shows solid gray instead of the app. Make it transparent so the
                     // backdrop-filter actually frosts the page behind the modal.

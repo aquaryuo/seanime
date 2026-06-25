@@ -1,6 +1,6 @@
 [
   {
-    "id": "anikoto",
+    "id": "aq-anikoto",
     "name": "Anikoto",
     "description": "Only anikoto compatibility layer you'll ever need",
     "author": "aquaryuo",
@@ -12,7 +12,7 @@
     "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/anikoto/manifest.json"
   },
   {
-    "id": "anizone",
+    "id": "aq-anizone",
     "name": "AniZone",
     "description": "Only anizone compatibility layer you'll ever need",
     "author": "aquaryuo",
@@ -24,7 +24,7 @@
     "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/anizone/manifest.json"
   },
   {
-    "id": "aquaprefs",
+    "id": "aq-aquaprefs",
     "name": "Aqua's Prefs",
     "description": "Remembers your player and series options.",
     "author": "aquaryuo",
@@ -36,7 +36,7 @@
     "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/plugins/aquaprefs/manifest.json"
   },
   {
-    "id": "aquatils",
+    "id": "aq-aquatils",
     "name": "Aqua's Utils",
     "description": "Toolbox plugin: surfaces compatible extension errors, launches a self-contained solver (or connects to a remote one you run) to reach guarded sites, and more.",
     "author": "aquaryuo",
