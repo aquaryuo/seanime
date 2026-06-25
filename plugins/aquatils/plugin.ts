@@ -1917,15 +1917,6 @@ function init() {
                 style: { alignItems: "center" },
             }))
             rows.push(divider())
-            rows.push(tray.flex({
-                items: [
-                    tray.button({ label: "Start", onClick: "fs-start", intent: "success", size: "sm", style: ACCENT_STYLE }),
-                    tray.button({ label: "Stop", onClick: "fs-stop", intent: "alert", size: "sm", disabled: fsRestarting }),
-                    tray.button({ label: fsRestarting ? "Restarting…" : "Restart", onClick: "fs-restart", intent: "warning-subtle", size: "sm", disabled: fsRestarting }),
-                ],
-                gap: 2,
-            }))
-            rows.push(divider())
             rows.push(heading("Configuration"))
             if (m === "remote") {
                 rows.push(dim("Host / Port"))
