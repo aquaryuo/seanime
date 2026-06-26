@@ -6,7 +6,7 @@ class Provider {
     private srcCacheTtl = 300000
 
     getSettings(): Settings {
-        return { episodeServers: ["Auto"], supportsDub: false }
+        return { episodeServers: ["Auto"], supportsDub: true }
     }
 
     async search(opts: SearchOptions): Promise<SearchResult[]> {
@@ -142,7 +142,8 @@ class Provider {
         if (!shortid) return []
         const alId = this.alOf(id)
         const alTag = alId > 0 ? `$al${alId}` : ""
-        const cacheKey = `anizone:eps:${shortid}${alTag}`
+        const audio = this.audioOf(id)
+        const cacheKey = `anizone:eps:${shortid}${alTag}$${audio}`
         const cached = this.readCache<EpisodeDetails[]>(cacheKey, this.cacheTtl)
         if (cached && cached.length > 0) return cached
         const res = await fetch(`${this.normBase()}/anime/${shortid}`, { headers: this.pageHeaders(), timeout: 12 })
@@ -159,7 +160,7 @@ class Provider {
         const episodes: EpisodeDetails[] = []
         for (const k in nums) {
             const n = parseInt(k, 10)
-            episodes.push({ id: `${shortid}$${n}${alTag}`, number: n, url: `${this.normBase()}/anime/${shortid}/${n}` })
+            episodes.push({ id: `${shortid}$${n}${alTag}$${audio}`, number: n, url: `${this.normBase()}/anime/${shortid}/${n}` })
         }
         episodes.sort((a, b) => a.number - b.number)
         if (episodes.length > 0) this.writeCache(cacheKey, episodes)
@@ -171,6 +172,7 @@ class Provider {
         const shortid = parts[0]
         const n = parts[1] || String(episode.number)
         const alId = this.alOf(episode.id)
+        const audio = this.audioOf(episode.id)
         const cacheKey = `anizone:src:${shortid}:${n}`
         let html = this.readCache<string>(cacheKey, this.srcCacheTtl)
         if (!html) {
@@ -181,6 +183,7 @@ class Provider {
         }
         const m3u8 = this.firstMatch(html, /https?:\/\/[^"'\s]+\/master\.m3u8/)
         if (!m3u8) throw "anizone: no stream found for this episode"
+        if (audio === "dub" && !(await this.hasEnglishAudio(m3u8, shortid, n))) throw "anizone: no dub available for this episode"
         const subtitles = await this.buildSubs(html, alId, parseInt(n, 10) || episode.number)
         return {
             server: server === "Auto" || server === "default" || !server ? "Auto" : server,
@@ -265,11 +268,12 @@ class Provider {
             if (!sid || seen[sid]) continue
             seen[sid] = true
             const alId = opts.media && opts.media.id > 0 ? opts.media.id : 0
+            const audio = opts.dub ? "dub" : "sub"
             results.push({
-                id: alId > 0 ? `${sid}$al${alId}` : sid,
+                id: (alId > 0 ? `${sid}$al${alId}` : sid) + `$${audio}`,
                 title: this.bestTitle(b.titles, target),
                 url: `${this.normBase()}/anime/${sid}`,
-                subOrDub: "sub",
+                subOrDub: "both",
             })
         }
     }
@@ -361,6 +365,27 @@ class Provider {
     private alOf(id: string): number {
         const m = (id || "").match(/\$al(\d+)/)
         return m ? parseInt(m[1] || "0", 10) : 0
+    }
+
+    private audioOf(id: string): string {
+        const m = (id || "").match(/\$(dub|sub)$/)
+        return m ? m[1] : "sub"
+    }
+
+    private async hasEnglishAudio(m3u8: string, shortid: string, n: string): Promise<boolean> {
+        const key = `anizone:dub:${shortid}:${n}`
+        const cached = this.readCache<boolean>(key, this.srcCacheTtl)
+        if (cached !== undefined) return cached
+        let ok = false
+        try {
+            const res = await fetch(m3u8, { headers: this.pageHeaders(), timeout: 8 })
+            if (res.ok) {
+                const body = res.text()
+                ok = /#EXT-X-MEDIA:TYPE=AUDIO[^\n]*LANGUAGE="en"/i.test(body) || /#EXT-X-MEDIA:TYPE=AUDIO[^\n]*(?:english|\bdub\b)/i.test(body)
+            }
+        } catch (_e) {}
+        this.writeCache(key, ok)
+        return ok
     }
 
     private langName(code: string): string {
