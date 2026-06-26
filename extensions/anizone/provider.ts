@@ -46,12 +46,13 @@ class Provider {
         const scored = results.map((r) => ({ r, s: this.scoreTitle(r.title, targets) })).sort((a, b) => b.s - a.s)
         const plausible = scored.filter((x) => x.s >= 0.5)
         if (plausible.length === 0) return []
-        const seasoned = this.filterBySeason(plausible, season, part)
-        if (seasoned.length === 0) return []
-        if (seasoned[0].s >= 0.85 && (seasoned.length === 1 || seasoned[0].s - seasoned[1].s >= 0.12)) {
-            return [seasoned[0].r]
+        const year = (media.startDate && media.startDate.year) || 0
+        const picked = this.disambiguate(plausible, season, part, year)
+        if (picked.length === 0) return []
+        if (picked[0].s >= 0.85 && (picked.length === 1 || picked[0].s - picked[1].s >= 0.12)) {
+            return [picked[0].r]
         }
-        return seasoned.map((x) => x.r)
+        return picked.map((x) => x.r)
     }
 
     private matchTargets(media: Media): string[] {
@@ -91,7 +92,17 @@ class Provider {
         return best
     }
 
-    private filterBySeason(scored: { r: SearchResult; s: number }[], season: number, part: number): { r: SearchResult; s: number }[] {
+    private disambiguate(scored: { r: SearchResult; s: number }[], season: number, part: number, year: number): { r: SearchResult; s: number }[] {
+        const anyYear = scored.some((x) => this.yearOf(x.r.title) > 0)
+        if (year > 0 && anyYear) {
+            const ym = scored.filter((x) => this.yearOf(x.r.title) === year)
+            if (ym.length > 0) return this.byPart(ym, part)
+            if (season < 2 && part < 2) {
+                const bare = scored.filter((x) => this.yearOf(x.r.title) === 0)
+                if (bare.length > 0) return bare
+            }
+            return []
+        }
         if (season < 2 && part < 2) return scored
         return scored.filter((x) => {
             const rs = this.seasonOf(x.r.title)
@@ -100,6 +111,20 @@ class Provider {
             const partOk = part < 2 || rp === part
             return seasonOk && partOk
         })
+    }
+
+    private byPart(list: { r: SearchResult; s: number }[], part: number): { r: SearchResult; s: number }[] {
+        if (part < 2) {
+            const main = list.filter((x) => this.partOf(x.r.title) < 2)
+            return main.length > 0 ? main : list
+        }
+        const pm = list.filter((x) => this.partOf(x.r.title) === part)
+        return pm.length > 0 ? pm : list
+    }
+
+    private yearOf(title: string): number {
+        const m = (title || "").match(/\((\d{4})\b/)
+        return m ? parseInt(m[1] || "0", 10) : 0
     }
 
     private seasonOf(title: string): number {
@@ -116,7 +141,7 @@ class Provider {
             const n = $scannerUtils.normalizeTitle(title)
             if (n && n.part) p = n.part
         } catch (_e) {}
-        const m = (title || "").match(/\b(?:part|cour)\s*(\d+)\b/i)
+        const m = (title || "").match(/\b(?:part|cour)\s*(\d+)\b/i) || (title || "").match(/\bdai\s*(\d+)\s*bu\b/i)
         if (m) {
             const v = parseInt(m[1] || "0", 10)
             if (v > p) p = v
