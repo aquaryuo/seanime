@@ -190,12 +190,21 @@ class Provider {
         if (res.status === 404) return []
         if (!res.ok) throw `anizone: series page failed (status ${res.status})`
         const html = res.text()
-        const re = new RegExp(`/anime/${shortid}/(\\d+)`, "g")
         const nums: { [key: number]: boolean } = {}
-        let m: RegExpExecArray | null
-        while ((m = re.exec(html)) !== null) {
-            const n = parseInt(m[1] || "0", 10)
-            if (n > 0) nums[n] = true
+        this.collectEps(html, shortid, nums)
+        if (/gotoPage\(\d+\)/.test(html)) {
+            for (let p = 2; p <= 60; p++) {
+                let pr: FetchResponse | undefined
+                try {
+                    pr = await fetch(`${this.normBase()}/anime/${shortid}?page=${p}`, { headers: this.pageHeaders(), timeout: 12 })
+                } catch (_e) {
+                    break
+                }
+                if (!pr || !pr.ok) break
+                const before = this.objLen(nums)
+                this.collectEps(pr.text(), shortid, nums)
+                if (this.objLen(nums) <= before) break
+            }
         }
         const episodes: EpisodeDetails[] = []
         for (const k in nums) {
@@ -449,6 +458,21 @@ class Provider {
     private shortId(id: string): string {
         const i = id.indexOf("$")
         return i === -1 ? id : id.slice(0, i)
+    }
+
+    private collectEps(html: string, shortid: string, nums: { [key: number]: boolean }): void {
+        const re = new RegExp(`/anime/${shortid}/(\\d+)`, "g")
+        let m: RegExpExecArray | null
+        while ((m = re.exec(html)) !== null) {
+            const n = parseInt(m[1] || "0", 10)
+            if (n > 0) nums[n] = true
+        }
+    }
+
+    private objLen(o: { [key: number]: boolean }): number {
+        let c = 0
+        for (const _k in o) c++
+        return c
     }
 
     private firstMatch(html: string, re: RegExp): string {
