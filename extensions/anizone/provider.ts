@@ -6,7 +6,7 @@ class Provider {
     private srcCacheTtl = 300000
 
     getSettings(): Settings {
-        return { episodeServers: ["Auto"], supportsDub: false }
+        return { episodeServers: ["Auto"], supportsDub: true }
     }
 
     async search(opts: SearchOptions): Promise<SearchResult[]> {
@@ -46,11 +46,13 @@ class Provider {
         const scored = results.map((r) => ({ r, s: this.scoreTitle(r.title, targets) })).sort((a, b) => b.s - a.s)
         const plausible = scored.filter((x) => x.s >= 0.5)
         if (plausible.length === 0) return []
-        const seasoned = this.filterBySeason(plausible, season, part)
-        if (seasoned[0].s >= 0.85 && (seasoned.length === 1 || seasoned[0].s - seasoned[1].s >= 0.12)) {
-            return [seasoned[0].r]
+        const year = (media.startDate && media.startDate.year) || 0
+        const picked = this.disambiguate(plausible, season, part, year)
+        if (picked.length === 0) return []
+        if (picked[0].s >= 0.85 && (picked.length === 1 || picked[0].s - picked[1].s >= 0.12)) {
+            return [picked[0].r]
         }
-        return seasoned.map((x) => x.r)
+        return picked.map((x) => x.r)
     }
 
     private matchTargets(media: Media): string[] {
@@ -90,23 +92,61 @@ class Provider {
         return best
     }
 
-    private filterBySeason(scored: { r: SearchResult; s: number }[], season: number, part: number): { r: SearchResult; s: number }[] {
+    private disambiguate(scored: { r: SearchResult; s: number }[], season: number, part: number, year: number): { r: SearchResult; s: number }[] {
+        const anyYear = scored.some((x) => this.yearOf(x.r.title) > 0)
+        if (year > 0 && anyYear) {
+            const ym = scored.filter((x) => this.yearOf(x.r.title) === year)
+            if (ym.length > 0) return this.byPart(ym, part)
+            if (season < 2 && part < 2) {
+                const bare = scored.filter((x) => this.yearOf(x.r.title) === 0)
+                if (bare.length > 0) return bare
+            }
+            return []
+        }
         if (season < 2 && part < 2) return scored
-        const matched = scored.filter((x) => {
-            let rs = -1
-            let rp = -1
-            try {
-                const n = $scannerUtils.normalizeTitle(x.r.title)
-                if (n) {
-                    rs = n.season
-                    rp = n.part
-                }
-            } catch (_e) {}
+        return scored.filter((x) => {
+            const rs = this.seasonOf(x.r.title)
+            const rp = this.partOf(x.r.title)
             const seasonOk = season < 2 || rs === season
             const partOk = part < 2 || rp === part
             return seasonOk && partOk
         })
-        return matched.length > 0 ? matched : scored
+    }
+
+    private byPart(list: { r: SearchResult; s: number }[], part: number): { r: SearchResult; s: number }[] {
+        if (part < 2) {
+            const main = list.filter((x) => this.partOf(x.r.title) < 2)
+            return main.length > 0 ? main : list
+        }
+        const pm = list.filter((x) => this.partOf(x.r.title) === part)
+        return pm.length > 0 ? pm : list
+    }
+
+    private yearOf(title: string): number {
+        const m = (title || "").match(/\((\d{4})\b/)
+        return m ? parseInt(m[1] || "0", 10) : 0
+    }
+
+    private seasonOf(title: string): number {
+        try {
+            const n = $scannerUtils.normalizeTitle(title)
+            if (n && n.season) return n.season
+        } catch (_e) {}
+        return 0
+    }
+
+    private partOf(title: string): number {
+        let p = 0
+        try {
+            const n = $scannerUtils.normalizeTitle(title)
+            if (n && n.part) p = n.part
+        } catch (_e) {}
+        const m = (title || "").match(/\b(?:part|cour)\s*(\d+)\b/i) || (title || "").match(/\bdai\s*(\d+)\s*bu\b/i)
+        if (m) {
+            const v = parseInt(m[1] || "0", 10)
+            if (v > p) p = v
+        }
+        return p
     }
 
     private normTitle(s: string): string {
@@ -142,24 +182,34 @@ class Provider {
         if (!shortid) return []
         const alId = this.alOf(id)
         const alTag = alId > 0 ? `$al${alId}` : ""
-        const cacheKey = `anizone:eps:${shortid}${alTag}`
+        const audio = this.audioOf(id)
+        const cacheKey = `anizone:eps:${shortid}${alTag}$${audio}`
         const cached = this.readCache<EpisodeDetails[]>(cacheKey, this.cacheTtl)
         if (cached && cached.length > 0) return cached
         const res = await fetch(`${this.normBase()}/anime/${shortid}`, { headers: this.pageHeaders(), timeout: 12 })
         if (res.status === 404) return []
         if (!res.ok) throw `anizone: series page failed (status ${res.status})`
         const html = res.text()
-        const re = new RegExp(`/anime/${shortid}/(\\d+)`, "g")
         const nums: { [key: number]: boolean } = {}
-        let m: RegExpExecArray | null
-        while ((m = re.exec(html)) !== null) {
-            const n = parseInt(m[1] || "0", 10)
-            if (n > 0) nums[n] = true
+        this.collectEps(html, shortid, nums)
+        if (/gotoPage\(\d+\)/.test(html)) {
+            for (let p = 2; p <= 60; p++) {
+                let pr: FetchResponse | undefined
+                try {
+                    pr = await fetch(`${this.normBase()}/anime/${shortid}?page=${p}`, { headers: this.pageHeaders(), timeout: 12 })
+                } catch (_e) {
+                    break
+                }
+                if (!pr || !pr.ok) break
+                const before = this.objLen(nums)
+                this.collectEps(pr.text(), shortid, nums)
+                if (this.objLen(nums) <= before) break
+            }
         }
         const episodes: EpisodeDetails[] = []
         for (const k in nums) {
             const n = parseInt(k, 10)
-            episodes.push({ id: `${shortid}$${n}${alTag}`, number: n, url: `${this.normBase()}/anime/${shortid}/${n}` })
+            episodes.push({ id: `${shortid}$${n}${alTag}$${audio}`, number: n, url: `${this.normBase()}/anime/${shortid}/${n}` })
         }
         episodes.sort((a, b) => a.number - b.number)
         if (episodes.length > 0) this.writeCache(cacheKey, episodes)
@@ -171,6 +221,7 @@ class Provider {
         const shortid = parts[0]
         const n = parts[1] || String(episode.number)
         const alId = this.alOf(episode.id)
+        const audio = this.audioOf(episode.id)
         const cacheKey = `anizone:src:${shortid}:${n}`
         let html = this.readCache<string>(cacheKey, this.srcCacheTtl)
         if (!html) {
@@ -181,6 +232,7 @@ class Provider {
         }
         const m3u8 = this.firstMatch(html, /https?:\/\/[^"'\s]+\/master\.m3u8/)
         if (!m3u8) throw "anizone: no stream found for this episode"
+        if (audio === "dub" && !(await this.hasEnglishAudio(m3u8, shortid, n))) throw "anizone: no dub available for this episode"
         const subtitles = await this.buildSubs(html, alId, parseInt(n, 10) || episode.number)
         return {
             server: server === "Auto" || server === "default" || !server ? "Auto" : server,
@@ -224,6 +276,15 @@ class Provider {
                 if (smart.titles) for (const t of smart.titles) add(primary, t)
             }
         } catch (_e) {}
+        if (part < 2) {
+            for (const s of [opts.query, romaji, english]) {
+                const pm = (s || "").match(/\b(?:part|cour)\s*(\d+)\b/i)
+                if (pm) {
+                    const v = parseInt(pm[1] || "0", 10)
+                    if (v > part) part = v
+                }
+            }
+        }
         add(primary, romaji)
         add(primary, english)
         add(fallback, this.firstWords(romaji, 1))
@@ -265,11 +326,12 @@ class Provider {
             if (!sid || seen[sid]) continue
             seen[sid] = true
             const alId = opts.media && opts.media.id > 0 ? opts.media.id : 0
+            const audio = opts.dub ? "dub" : "sub"
             results.push({
-                id: alId > 0 ? `${sid}$al${alId}` : sid,
+                id: (alId > 0 ? `${sid}$al${alId}` : sid) + `$${audio}`,
                 title: this.bestTitle(b.titles, target),
                 url: `${this.normBase()}/anime/${sid}`,
-                subOrDub: "sub",
+                subOrDub: "both",
             })
         }
     }
@@ -363,6 +425,27 @@ class Provider {
         return m ? parseInt(m[1] || "0", 10) : 0
     }
 
+    private audioOf(id: string): string {
+        const m = (id || "").match(/\$(dub|sub)$/)
+        return m ? m[1] : "sub"
+    }
+
+    private async hasEnglishAudio(m3u8: string, shortid: string, n: string): Promise<boolean> {
+        const key = `anizone:dub:${shortid}:${n}`
+        const cached = this.readCache<boolean>(key, this.srcCacheTtl)
+        if (cached !== undefined) return cached
+        let ok = false
+        try {
+            const res = await fetch(m3u8, { headers: this.pageHeaders(), timeout: 8 })
+            if (res.ok) {
+                const body = res.text()
+                ok = /#EXT-X-MEDIA:TYPE=AUDIO[^\n]*LANGUAGE="en"/i.test(body) || /#EXT-X-MEDIA:TYPE=AUDIO[^\n]*(?:english|\bdub\b)/i.test(body)
+            }
+        } catch (_e) {}
+        this.writeCache(key, ok)
+        return ok
+    }
+
     private langName(code: string): string {
         const map: { [key: string]: string } = {
             en: "English", ja: "Japanese", ar: "Arabic", de: "German", es: "Spanish", fr: "French",
@@ -375,6 +458,21 @@ class Provider {
     private shortId(id: string): string {
         const i = id.indexOf("$")
         return i === -1 ? id : id.slice(0, i)
+    }
+
+    private collectEps(html: string, shortid: string, nums: { [key: number]: boolean }): void {
+        const re = new RegExp(`/anime/${shortid}/(\\d+)`, "g")
+        let m: RegExpExecArray | null
+        while ((m = re.exec(html)) !== null) {
+            const n = parseInt(m[1] || "0", 10)
+            if (n > 0) nums[n] = true
+        }
+    }
+
+    private objLen(o: { [key: number]: boolean }): number {
+        let c = 0
+        for (const _k in o) c++
+        return c
     }
 
     private firstMatch(html: string, re: RegExp): string {
