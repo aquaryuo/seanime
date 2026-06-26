@@ -1571,7 +1571,7 @@ function init() {
         }
         function toggleRow(on: boolean, click: string, label: string, helpClick?: string): any {
             const items: any[] = [
-                tray.button({ label: on ? "✓" : "✕", onClick: click, intent: "gray-subtle", size: "sm", style: on ? { ...ACCENT_SUBTLE, fontSize: ICON_FS } : { fontSize: ICON_FS } }),
+                tray.button({ label: on ? "✓" : "✕", onClick: click, intent: "gray-subtle", size: "sm", style: on ? { ...ACCENT_SUBTLE, fontSize: ICON_FS, width: "40px", padding: "0" } : { fontSize: ICON_FS, width: "40px", padding: "0" } }),
                 tray.text(label, { style: { fontSize: "13px", color: "rgba(255,255,255,0.85)", overflowWrap: "anywhere", wordBreak: "break-word" } }),
             ]
             if (helpClick) {
@@ -1680,7 +1680,7 @@ function init() {
             }))
             rows.push(tray.div({
                 items: items,
-                style: { background: "rgba(0,0,0,0.28)", borderRadius: "10px", padding: "10px 12px", height: "220px", overflowY: "auto" },
+                style: { background: "rgba(0,0,0,0.28)", borderRadius: "10px", padding: "10px 12px", flexGrow: "1", minHeight: "160px", overflowY: "auto" },
             }))
             return rows
         }
