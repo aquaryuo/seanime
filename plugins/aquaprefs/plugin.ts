@@ -358,7 +358,31 @@ function init() {
             })
         }
 
+        function probeInjection(): void {
+            if (!ctx.dom || !ctx.dom.createElement || !ctx.dom.query) { log("probe: DOM API unavailable"); return }
+            log("probe: injecting a test <script>…")
+            ctx.dom.createElement("script").then((s) => {
+                try { s.setText("try{document.body.setAttribute('data-aqp-probe',String(Date.now()))}catch(e){}") } catch (_e) {}
+                ctx.dom.query("body").then((els) => {
+                    const body = (els && els.length) ? els[0] : null
+                    if (!body) { log("probe: no <body> found"); return }
+                    try { body.appendChild(s) } catch (e) { log("probe: appendChild failed — " + String(e)); return }
+                    ctx.setTimeout(() => {
+                        ctx.dom.query("body").then((e2) => {
+                            const b = (e2 && e2.length) ? e2[0] : null
+                            if (!b) { log("probe: re-query failed"); return }
+                            b.getAttribute("data-aqp-probe").then((v) => {
+                                if (v) { log("✓ JS INJECTION WORKS (probe=" + v + ") — quality-remember via injection is feasible"); try { ctx.toast.success("Player JS injection works") } catch (_e) {} }
+                                else { log("✗ JS injection blocked (likely CSP) — plugin cannot run page JS"); try { ctx.toast.info("Player JS injection blocked") } catch (_e) {} }
+                            }).catch(() => log("probe: getAttribute error"))
+                        }).catch(() => log("probe: re-query error"))
+                    }, 400)
+                }).catch(() => log("probe: query <body> error"))
+            }).catch((e) => log("probe: createElement error — " + String(e)))
+        }
+
         ctx.registerEventHandler("ap-subs", () => { persistSubs.set(!persistSubs.get()); saveCfg(); tray.update() })
+        ctx.registerEventHandler("ap-probe-inject", () => { probeInjection() })
         ctx.registerEventHandler("ap-log-copy", () => { try { ctx.dom.clipboard.write(logs.join("\n")) } catch (_e) {} ctx.toast.success("Logs copied to clipboard") })
         ctx.registerEventHandler("ap-log-clear", () => { logs = []; sset(LOG_KEY, logs); ctx.toast.info("Logs cleared"); tray.update() })
         ctx.registerEventHandler("ap-log-toggle", () => { logsOpen.set(!logsOpen.get()); tray.update() })
@@ -373,6 +397,11 @@ function init() {
 
             rows.push(heading("Preferences"))
             rows.push(toggleRow(persistSubs.get(), "ap-subs", "Remember player subtitle"))
+
+            rows.push(divider())
+            rows.push(heading("Experimental"))
+            rows.push(dim("Remembering player quality needs the plugin to run JS in the player (there is no native quality API). Tap to test whether that is permitted, then open Logs for the result."))
+            rows.push(tray.button({ label: "Test player JS injection", onClick: "ap-probe-inject", intent: "gray-subtle", size: "sm", style: ACCENT_SUBTLE }))
 
             rows.push(divider())
             rows.push(tray.flex({
