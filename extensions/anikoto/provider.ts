@@ -489,6 +489,21 @@ class Provider {
                 if (cl) firstResolved.headers = this.withClearance(firstResolved.headers, cl)
                 return firstResolved
             }
+            if (audio === "dub") {
+                for (const c of candidates) {
+                    let r: EpisodeServer | undefined
+                    try {
+                        r = await this.resolveServer(c.linkId, c.name, ctx, audio, true)
+                    } catch (_e) {
+                        r = undefined
+                    }
+                    if (!r) continue
+                    if (label) r.server = label
+                    const cl = this.cachedClearance(this.hostOf(r.videoSources[0].url))
+                    if (cl) r.headers = this.withClearance(r.headers, cl)
+                    return r
+                }
+            }
             throw this.fail("server", "no playable server found for this episode" + (this.solverEnabled() ? "" : "; if sources are Cloudflare-protected, enable the custom solver in settings (run it via Aqua's Utils)"))
         }
 
@@ -498,7 +513,7 @@ class Provider {
         const $ = await this.serverListDoc(dataIds)
         const picked = this.collectServers($, [target.group]).filter((c) => c.name === target.name)[0]
         if (!picked) throw this.fail("server", "that server is not available for this episode")
-        const resolved = await this.resolveServer(picked.linkId, target.label, ctx, audio)
+        const resolved = await this.resolveServer(picked.linkId, target.label, ctx, audio, true)
         const cl = this.cachedClearance(this.hostOf(resolved.videoSources[0].url))
         if (cl) resolved.headers = this.withClearance(resolved.headers, cl)
         return resolved
@@ -541,10 +556,10 @@ class Provider {
         return out
     }
 
-    private async resolveServer(linkId: string, serverName: string, ctx: { anilistId: number; episode: number }, audio: string): Promise<EpisodeServer> {
+    private async resolveServer(linkId: string, serverName: string, ctx: { anilistId: number; episode: number }, audio: string, skipDubCheck = false): Promise<EpisodeServer> {
         const got = await this.fetchSources(linkId)
         if (!got || !got.file) throw this.fail("server", "could not resolve the player URL (source may be encrypted or down)")
-        if (audio === "dub" && (await this.dubLooksWrong(got.tracks, got.origin))) throw this.fail("server", "dub source resolved to the subbed (Japanese) track")
+        if (!skipDubCheck && audio === "dub" && (await this.dubLooksWrong(got.tracks, got.origin))) throw this.fail("server", "dub source resolved to the subbed (Japanese) track")
         const subtitles = await this.buildSubtitles(got.tracks, ctx, got.origin)
         return {
             server: serverName,
