@@ -47,6 +47,7 @@ class Provider {
         const plausible = scored.filter((x) => x.s >= 0.5)
         if (plausible.length === 0) return []
         const seasoned = this.filterBySeason(plausible, season, part)
+        if (seasoned.length === 0) return []
         if (seasoned[0].s >= 0.85 && (seasoned.length === 1 || seasoned[0].s - seasoned[1].s >= 0.12)) {
             return [seasoned[0].r]
         }
@@ -92,21 +93,35 @@ class Provider {
 
     private filterBySeason(scored: { r: SearchResult; s: number }[], season: number, part: number): { r: SearchResult; s: number }[] {
         if (season < 2 && part < 2) return scored
-        const matched = scored.filter((x) => {
-            let rs = -1
-            let rp = -1
-            try {
-                const n = $scannerUtils.normalizeTitle(x.r.title)
-                if (n) {
-                    rs = n.season
-                    rp = n.part
-                }
-            } catch (_e) {}
+        return scored.filter((x) => {
+            const rs = this.seasonOf(x.r.title)
+            const rp = this.partOf(x.r.title)
             const seasonOk = season < 2 || rs === season
             const partOk = part < 2 || rp === part
             return seasonOk && partOk
         })
-        return matched.length > 0 ? matched : scored
+    }
+
+    private seasonOf(title: string): number {
+        try {
+            const n = $scannerUtils.normalizeTitle(title)
+            if (n && n.season) return n.season
+        } catch (_e) {}
+        return 0
+    }
+
+    private partOf(title: string): number {
+        let p = 0
+        try {
+            const n = $scannerUtils.normalizeTitle(title)
+            if (n && n.part) p = n.part
+        } catch (_e) {}
+        const m = (title || "").match(/\b(?:part|cour)\s*(\d+)\b/i)
+        if (m) {
+            const v = parseInt(m[1] || "0", 10)
+            if (v > p) p = v
+        }
+        return p
     }
 
     private normTitle(s: string): string {
@@ -227,6 +242,15 @@ class Provider {
                 if (smart.titles) for (const t of smart.titles) add(primary, t)
             }
         } catch (_e) {}
+        if (part < 2) {
+            for (const s of [opts.query, romaji, english]) {
+                const pm = (s || "").match(/\b(?:part|cour)\s*(\d+)\b/i)
+                if (pm) {
+                    const v = parseInt(pm[1] || "0", 10)
+                    if (v > part) part = v
+                }
+            }
+        }
         add(primary, romaji)
         add(primary, english)
         add(fallback, this.firstWords(romaji, 1))
