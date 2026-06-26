@@ -65,8 +65,7 @@ class Provider {
             if (blocked) throw new Error(`${this.blockedMessage()} (${lastErr})`)
             throw new Error(lastErr)
         }
-        const best = this.dominantMatch(results, opts.media)
-        return best ? [best] : this.filterBySeason(results, opts)
+        return this.filterBySeason(results, opts)
     }
 
     private filterBySeason(results: SearchResult[], opts: SearchOptions): SearchResult[] {
@@ -708,58 +707,6 @@ class Provider {
             .replace(/&lt;/g, "<")
             .replace(/&gt;/g, ">")
             .replace(/&amp;/g, "&")
-    }
-
-    private dominantMatch(results: SearchResult[], media: Media): SearchResult | null {
-        const targets: string[] = []
-        for (const t of [media.romajiTitle, media.englishTitle]) {
-            const n = this.normTitle(t || "")
-            if (n) targets.push(n)
-        }
-        if (targets.length === 0 || results.length === 0) return null
-        const isMovie = (media.format || "").toUpperCase() === "MOVIE"
-        const scored = results
-            .map((r) => {
-                const cn = this.normTitle(r.title)
-                let s = 0
-                for (const t of targets) {
-                    const v = this.simNorm(cn, t)
-                    if (v > s) s = v
-                }
-                if (isMovie && /\b(movie|film)\b/i.test(r.title)) s += 0.05
-                return { r, s }
-            })
-            .sort((a, b) => b.s - a.s)
-        if (scored[0].s >= 0.85 && (scored.length === 1 || scored[0].s - scored[1].s >= 0.2)) return scored[0].r
-        return null
-    }
-
-    private normTitle(s: string): string {
-        return (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "")
-    }
-
-    private simNorm(a: string, b: string): number {
-        const ml = Math.max(a.length, b.length)
-        return ml === 0 ? 0 : 1 - this.lev(a, b) / ml
-    }
-
-    private lev(a: string, b: string): number {
-        const m = a.length
-        const n = b.length
-        if (!m) return n
-        if (!n) return m
-        const d: number[] = new Array(n + 1)
-        for (let j = 0; j <= n; j++) d[j] = j
-        for (let i = 1; i <= m; i++) {
-            let prev = d[0]
-            d[0] = i
-            for (let j = 1; j <= n; j++) {
-                const tmp = d[j]
-                d[j] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, d[j], d[j - 1])
-                prev = tmp
-            }
-        }
-        return d[n]
     }
 
     private now(): number {
