@@ -118,5 +118,17 @@
     "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/main/plugins/aquatils/icon.png",
     "website": "https://github.com/aquaryuo/seanime",
     "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/plugins/aquatils/manifest.json"
+  },
+  {
+    "id": "aq-seatags-beta",
+    "name": "SeaTags - BETA",
+    "description": "Filter the marketplace by community status tags (Working / Broken / Deprecated), pulled from the Seanime-Marketplace tag list.",
+    "author": "aquaryuo",
+    "type": "plugin",
+    "language": "typescript",
+    "lang": "multi",
+    "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/seatags/icon.png",
+    "website": "https://github.com/aquaryuo/seanime",
+    "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/seatags/manifest.json"
   }
 ]
