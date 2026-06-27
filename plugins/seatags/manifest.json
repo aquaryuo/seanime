@@ -1,7 +1,7 @@
 {
   "id": "aq-seatags-beta",
   "name": "SeaTags - BETA",
-  "version": "1.1.3",
+  "version": "1.1.4",
   "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/seatags/manifest.json",
   "language": "typescript",
   "type": "plugin",
@@ -17,8 +17,8 @@
       "scopes": ["storage"],
       "allow": {
         "networkAccess": {
-          "allowedDomains": ["raw.githubusercontent.com"],
-          "reasoning": "Reads the community marketplace tag list (Working/Broken/Deprecated) from raw.githubusercontent.com so you can filter extensions and plugins by their reported status."
+          "allowedDomains": ["raw.githubusercontent.com", "localhost", "127.0.0.1"],
+          "reasoning": "Reads the community marketplace tag list (Working/Broken/Deprecated) from raw.githubusercontent.com so you can filter extensions by their reported status, and calls your local Seanime server (localhost / 127.0.0.1) to install an extension when you click Install."
         }
       }
     }
