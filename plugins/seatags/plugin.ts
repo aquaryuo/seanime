@@ -39,30 +39,33 @@ function init() {
 
         const tray = ctx.newTray({ iconUrl: ICON, withContent: true, width: "480px" })
 
+        let inflight = false
         async function load(force: boolean): Promise<void> {
+            if (inflight) return
             if (!force && entries.length > 0 && now() - lastAt < CACHE_TTL) return
+            inflight = true
             status.set("loading")
             try { tray.update() } catch (_e) {}
+            let msg = ""
             try {
                 const res = await fetch(SRC, { timeout: 15 })
                 if (!res.ok) {
-                    status.set("fetch failed (HTTP " + res.status + ")")
-                    tray.update()
-                    return
+                    msg = "fetch failed (HTTP " + res.status + ")"
+                } else {
+                    const data = res.json<any>()
+                    if (!Array.isArray(data)) {
+                        msg = "unexpected marketplace format"
+                    } else {
+                        entries = data as Entry[]
+                        lastAt = now()
+                        try { $storage.set(CACHE_KEY, { at: lastAt, data: entries }) } catch (_e) {}
+                    }
                 }
-                const data = res.json<any>()
-                if (!Array.isArray(data)) {
-                    status.set("unexpected marketplace format")
-                    tray.update()
-                    return
-                }
-                entries = data as Entry[]
-                lastAt = now()
-                try { $storage.set(CACHE_KEY, { at: lastAt, data: entries }) } catch (_e) {}
-                status.set("")
             } catch (_e) {
-                status.set("could not reach the marketplace")
+                msg = "could not reach the marketplace"
             }
+            inflight = false
+            status.set(msg)
             try { tray.update() } catch (_e) {}
         }
 
@@ -205,6 +208,7 @@ function init() {
         }
 
         tray.render(renderTray)
-        void load(false)
+        tray.onOpen(() => { void load(false) })
+        ctx.setTimeout(() => { void load(false) }, 0)
     })
 }
