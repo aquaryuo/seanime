@@ -164,9 +164,11 @@ html,body{margin:0;padding:0;background:#0b0b0e;color:#e6e6ea;font-family:-apple
   }
   function vtNums(e){
     var f = (e.flags==null)?"":String(e.flags);
-    var m = f.match(/^(\d+)\s*\/\s*(\d+)$/);
-    if(!m) return null;
-    return { n: parseInt(m[1],10), d: parseInt(m[2],10) };
+    var parts = f.split("/");
+    if(parts.length!==2) return null;
+    var n = parseInt(parts[0],10), d = parseInt(parts[1],10);
+    if(isNaN(n) || isNaN(d)) return null;
+    return { n: n, d: d };
   }
   function matchKind(e,k){ return k==="all" || (e.type||"")===k; }
   function matchSearch(e){
