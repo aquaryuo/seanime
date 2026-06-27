@@ -69,31 +69,39 @@ function init() {
             try { tray.update() } catch (_e) {}
         }
 
-        async function installExt(uri: string, origin: string): Promise<boolean> {
+        async function installExt(uri: string, origin: string): Promise<void> {
+            if (!origin) {
+                try { ctx.dom.clipboard.write(uri) } catch (_e) {}
+                try { ctx.toast.warning("Couldn't detect the Seanime server address — install link copied instead.") } catch (_e) {}
+                try { webview.channel.send("installed", { uri: uri, ok: false }) } catch (_e) {}
+                return
+            }
             let ok = false
-            let message = ""
-            if (origin) {
-                try {
-                    const res = await fetch(origin + "/api/v1/extensions/external/install", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ manifestUri: uri }),
-                        timeout: 30,
-                    })
-                    if (res.ok) {
-                        ok = true
-                        try { const d = res.json<any>(); message = d && d.message ? String(d.message) : "" } catch (_e) {}
-                    }
-                } catch (_e) {}
+            let detail = ""
+            try {
+                const res = await fetch(origin + "/api/v1/extensions/external/install", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ manifestUri: uri }),
+                    timeout: 30,
+                })
+                if (res.ok) {
+                    ok = true
+                    try { const d = res.json<any>(); detail = d && d.message ? String(d.message) : "" } catch (_e) {}
+                } else {
+                    detail = "HTTP " + res.status
+                    try { const d = res.json<any>(); if (d && d.error) detail = detail + ": " + String(d.error) } catch (_e) {}
+                }
+            } catch (_e) {
+                detail = "request failed"
             }
             if (ok) {
-                try { ctx.toast.success(message || "Extension installed") } catch (_e) {}
+                try { ctx.toast.success(detail || "Extension installed") } catch (_e) {}
             } else {
                 try { ctx.dom.clipboard.write(uri) } catch (_e) {}
-                try { ctx.toast.warning("Couldn't auto-install — link copied. Add it via Extensions ▸ Add Extension.") } catch (_e) {}
+                try { ctx.toast.warning("Auto-install failed (" + detail + ") — link copied. Use Extensions ▸ Add Extension.") } catch (_e) {}
             }
             try { webview.channel.send("installed", { uri: uri, ok: ok }) } catch (_e) {}
-            return ok
         }
 
         const SIDEBAR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="1.1em" height="1.1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5.5V11a2 2 0 0 0 .59 1.42l8 8a2 2 0 0 0 2.83 0l5.5-5.5a2 2 0 0 0 0-2.83l-8-8A2 2 0 0 0 10.5 3H5a2 2 0 0 0-2 2Z"/><circle cx="7.6" cy="7.6" r="1.1" fill="currentColor"/></svg>`
@@ -147,7 +155,7 @@ html,body{
   background:var(--background);
   color:var(--foreground);
   font-family:var(--sans);
-  font-size:14px;
+  font-size:16px;
   line-height:1.5;
   -webkit-font-smoothing:antialiased;
 }
@@ -353,7 +361,7 @@ html,body{
     var initial = esc(String(nm).charAt(0).toUpperCase() || "?");
     var typeLabel = KINDLABEL[e.type] || e.type || "";
     var stateCls = e.brokenTag ? "is-broken" : (e.deprecatedTag ? "is-deprecated" : "");
-    var iconImg = e.icon ? ('<img src="'+esc(e.icon)+'" alt="" crossorigin="anonymous" referrerpolicy="no-referrer">') : "";
+    var iconImg = e.icon ? ('<img src="'+esc(e.icon)+'" alt="" loading="lazy" referrerpolicy="no-referrer">') : "";
     var typeSpan = typeLabel ? ('<span class="type">'+esc(typeLabel)+' - </span>') : "";
     var desc = e.description ? ('<p class="ext-desc" title="'+esc(e.description)+'">'+esc(e.description)+'</p>') : "";
     var badges = statusBadges(e) + vtBadge(e) + officialBadge(e) +
@@ -453,9 +461,13 @@ html,body{
       else { b.innerHTML = '<span class="ic">'+DL_SVG+'</span>'; b.className = "btn icon btn-primary-subtle"; b.removeAttribute("disabled"); b.setAttribute("title","Install"); }
     }
   }
+  function loopbackOrigin(){
+    if(!SERVER_ORIGIN) return "";
+    try { var u = new URL(SERVER_ORIGIN); return u.protocol + "//127.0.0.1" + (u.port ? (":"+u.port) : ""); } catch(e){ return SERVER_ORIGIN; }
+  }
   function doInstall(uri, btn){
     setInstallState(uri,"installing");
-    if(window.webview && window.webview.send) window.webview.send("install", { manifestUri: uri, origin: SERVER_ORIGIN });
+    if(window.webview && window.webview.send) window.webview.send("install", { manifestUri: uri, origin: loopbackOrigin() });
   }
   function onInstalled(p){ if(!p) return; setInstallState(p.uri, p.ok ? "ok" : "reset"); }
 
