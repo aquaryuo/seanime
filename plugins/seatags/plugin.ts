@@ -69,6 +69,33 @@ function init() {
             try { tray.update() } catch (_e) {}
         }
 
+        async function installExt(uri: string, origin: string): Promise<boolean> {
+            let ok = false
+            let message = ""
+            if (origin) {
+                try {
+                    const res = await fetch(origin + "/api/v1/extensions/external/install", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ manifestUri: uri }),
+                        timeout: 30,
+                    })
+                    if (res.ok) {
+                        ok = true
+                        try { const d = res.json<any>(); message = d && d.message ? String(d.message) : "" } catch (_e) {}
+                    }
+                } catch (_e) {}
+            }
+            if (ok) {
+                try { ctx.toast.success(message || "Extension installed") } catch (_e) {}
+            } else {
+                try { ctx.dom.clipboard.write(uri) } catch (_e) {}
+                try { ctx.toast.warning("Couldn't auto-install — link copied. Add it via Extensions ▸ Add Extension.") } catch (_e) {}
+            }
+            try { webview.channel.send("installed", { uri: uri, ok: ok }) } catch (_e) {}
+            return ok
+        }
+
         const SIDEBAR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="1.1em" height="1.1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5.5V11a2 2 0 0 0 .59 1.42l8 8a2 2 0 0 0 2.83 0l5.5-5.5a2 2 0 0 0 0-2.83l-8-8A2 2 0 0 0 10.5 3H5a2 2 0 0 0-2 2Z"/><circle cx="7.6" cy="7.6" r="1.1" fill="currentColor"/></svg>`
 
         const PAGE = `<!doctype html>
@@ -126,7 +153,10 @@ html,body{
 }
 
 /* ===== Page chrome (header / filters / sort) ===== */
-#app{max-width:1200px;margin:0 auto;padding:20px 20px 56px}
+#app{margin:0;padding:1rem}
+@media (min-width:640px){#app{padding:2rem}}
+.spin{animation:seaspin 0.7s linear infinite;transform-origin:50% 50%}
+@keyframes seaspin{to{transform:rotate(360deg)}}
 .head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
 .title{font-size:1.375rem;font-weight:700;letter-spacing:-0.01em;color:var(--foreground)}
 .title .sub{font-size:0.8125rem;font-weight:500;color:var(--muted);margin-left:8px}
@@ -234,6 +264,10 @@ html,body{
 
   var DL_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
   var CK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+  var SPIN_SVG = '<svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.2-8.5"/></svg>';
+
+  var SERVER_ORIGIN = "";
+  window.addEventListener("message", function(ev){ if(ev && ev.origin && ev.origin!=="null" && !SERVER_ORIGIN) SERVER_ORIGIN = ev.origin; });
 
   function el(id){ return document.getElementById(id); }
   function esc(s){ s = (s==null)?"":String(s); return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
@@ -311,7 +345,7 @@ html,body{
     return "";
   }
   function actionButtons(e){
-    if(e.manifestURI) return '<button type="button" class="btn icon btn-primary-subtle" title="Copy install link" data-copy="'+esc(e.manifestURI)+'"><span class="ic">'+DL_SVG+'</span></button>';
+    if(e.manifestURI) return '<button type="button" class="btn icon btn-primary-subtle" title="Install" data-install="'+esc(e.manifestURI)+'"><span class="ic">'+DL_SVG+'</span></button>';
     return "";
   }
   function card(e){
@@ -382,6 +416,7 @@ html,body{
         var dt = t.getAttribute("data-tag"); if(dt!=null){ tag=dt; render(); return; }
         var dk = t.getAttribute("data-kind"); if(dk!=null){ kind=dk; render(); return; }
         var dsr = t.getAttribute("data-sort"); if(dsr!=null){ if(sortKey===dsr) sortDir=-sortDir; else { sortKey=dsr; sortDir=1; } render(); return; }
+        var din = t.getAttribute("data-install"); if(din!=null){ doInstall(din,t); return; }
         var dc = t.getAttribute("data-copy"); if(dc!=null){ sendCopy(dc,t); return; }
         if(t.id==="refresh"){ doRefresh(); return; }
       }
@@ -408,6 +443,21 @@ html,body{
     statusMsg = "loading"; renderStatus();
     if(window.webview && window.webview.send) window.webview.send("refresh", {});
   }
+  function setInstallState(uri, state){
+    var btns = el("list").getElementsByTagName("button");
+    for(var i=0;i<btns.length;i++){
+      var b = btns[i];
+      if(b.getAttribute("data-install")!==uri) continue;
+      if(state==="installing"){ b.innerHTML = '<span class="ic">'+SPIN_SVG+'</span>'; b.setAttribute("disabled","1"); }
+      else if(state==="ok"){ b.innerHTML = '<span class="ic">'+CK_SVG+'</span>'; b.className = "btn icon btn-success-subtle"; b.setAttribute("disabled","1"); b.setAttribute("title","Installed"); }
+      else { b.innerHTML = '<span class="ic">'+DL_SVG+'</span>'; b.className = "btn icon btn-primary-subtle"; b.removeAttribute("disabled"); b.setAttribute("title","Install"); }
+    }
+  }
+  function doInstall(uri, btn){
+    setInstallState(uri,"installing");
+    if(window.webview && window.webview.send) window.webview.send("install", { manifestUri: uri, origin: SERVER_ORIGIN });
+  }
+  function onInstalled(p){ if(!p) return; setInstallState(p.uri, p.ok ? "ok" : "reset"); }
 
   function onEntries(arr){ entries = (arr && typeof arr.length==="number") ? arr : []; render(); }
   function onStatus(s){ statusMsg = s || ""; render(); }
@@ -417,6 +467,7 @@ html,body{
     if(window.webview && window.webview.on && window.webview.send){
       window.webview.on("entries", onEntries);
       window.webview.on("status", onStatus);
+      window.webview.on("installed", onInstalled);
       window.webview.send("ready", {});
       render();
     } else if(tries++ < 100){ setTimeout(boot, 50); }
@@ -443,6 +494,11 @@ html,body{
             void load(false)
         })
         webview.channel.on("refresh", () => { void load(true) })
+        webview.channel.on("install", (p: any) => {
+            const uri = p && p.manifestUri ? String(p.manifestUri) : ""
+            const origin = p && p.origin ? String(p.origin) : ""
+            if (uri) void installExt(uri, origin)
+        })
         webview.channel.on("copy", (p: any) => {
             const url = p && p.url ? String(p.url) : ""
             if (!url) return
