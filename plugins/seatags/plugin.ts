@@ -69,37 +69,38 @@ function init() {
             try { tray.update() } catch (_e) {}
         }
 
-        async function installExt(uri: string, origin: string): Promise<void> {
-            if (!origin) {
-                try { ctx.dom.clipboard.write(uri) } catch (_e) {}
-                try { ctx.toast.warning("Couldn't detect the Seanime server address — install link copied instead.") } catch (_e) {}
-                try { webview.channel.send("installed", { uri: uri, ok: false }) } catch (_e) {}
-                return
-            }
+        async function installExt(uri: string, origins: string[]): Promise<void> {
+            const tried: string[] = []
             let ok = false
             let detail = ""
-            try {
-                const res = await fetch(origin + "/api/v1/extensions/external/install", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ manifestUri: uri }),
-                    timeout: 30,
-                })
-                if (res.ok) {
-                    ok = true
-                    try { const d = res.json<any>(); detail = d && d.message ? String(d.message) : "" } catch (_e) {}
-                } else {
-                    detail = "HTTP " + res.status
-                    try { const d = res.json<any>(); if (d && d.error) detail = detail + ": " + String(d.error) } catch (_e) {}
+            for (let i = 0; i < origins.length && !ok; i++) {
+                const o = origins[i]
+                if (!o || tried.indexOf(o) >= 0) continue
+                tried.push(o)
+                try {
+                    const res = await fetch(o + "/api/v1/extensions/external/install", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ manifestUri: uri }),
+                        timeout: 30,
+                    })
+                    if (res.ok) {
+                        ok = true
+                        try { const d = res.json<any>(); detail = d && d.message ? String(d.message) : "" } catch (_e) {}
+                    } else {
+                        detail = "HTTP " + res.status
+                        try { const d = res.json<any>(); if (d && d.error) detail = detail + " " + String(d.error) } catch (_e) {}
+                    }
+                } catch (e) {
+                    detail = (e && (e as any).message) ? String((e as any).message) : "request error"
                 }
-            } catch (_e) {
-                detail = "request failed"
             }
             if (ok) {
                 try { ctx.toast.success(detail || "Extension installed") } catch (_e) {}
             } else {
                 try { ctx.dom.clipboard.write(uri) } catch (_e) {}
-                try { ctx.toast.warning("Auto-install failed (" + detail + ") — link copied. Use Extensions ▸ Add Extension.") } catch (_e) {}
+                const where = tried.length ? tried[0] : "no server address"
+                try { ctx.toast.error("Install failed: " + detail + " [" + where + "] — link copied") } catch (_e) {}
             }
             try { webview.channel.send("installed", { uri: uri, ok: ok }) } catch (_e) {}
         }
@@ -467,7 +468,7 @@ html,body{
   }
   function doInstall(uri, btn){
     setInstallState(uri,"installing");
-    if(window.webview && window.webview.send) window.webview.send("install", { manifestUri: uri, origin: loopbackOrigin() });
+    if(window.webview && window.webview.send) window.webview.send("install", { manifestUri: uri, origin: SERVER_ORIGIN, loopback: loopbackOrigin() });
   }
   function onInstalled(p){ if(!p) return; setInstallState(p.uri, p.ok ? "ok" : "reset"); }
 
@@ -509,7 +510,8 @@ html,body{
         webview.channel.on("install", (p: any) => {
             const uri = p && p.manifestUri ? String(p.manifestUri) : ""
             const origin = p && p.origin ? String(p.origin) : ""
-            if (uri) void installExt(uri, origin)
+            const loopback = p && p.loopback ? String(p.loopback) : ""
+            if (uri) void installExt(uri, [origin, loopback])
         })
         webview.channel.on("copy", (p: any) => {
             const url = p && p.url ? String(p.url) : ""
