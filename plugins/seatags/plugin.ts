@@ -331,7 +331,7 @@ html,body{margin:0;padding:0;background:#0b0b0e;color:#e6e6ea;font-family:-apple
         const tray = ctx.newTray({ iconUrl: ICON, withContent: true, width: "300px" })
         ctx.registerEventHandler("st-refresh", () => { void load(true) })
         ctx.registerEventHandler("st-open", () => {
-            try { ctx.screen.navigateTo(webview.getScreenPath()) } catch (_e) {}
+            try { ctx.screen.navigateTo(webview.getScreenPath().replace(/-screen$/, "")) } catch (_e) {}
         })
         tray.render(() => {
             const es = entriesState.get()
