@@ -108,12 +108,13 @@ function init() {
             if (status === "untagged") return
             dTagged++
             try { card.setStyle("box-shadow", "inset 0 0 0 2px " + ringColor(status)) } catch (e) { dErr = "style" }
-            try {
-                const pill = await ctx.dom.createElement("div")
-                pill.setText(PILL_LABEL[status] || status)
-                pill.setCssText(pillCss(status))
-                card.appendChild(pill)
-            } catch (e) { dErr = "pill" }
+            let pill: any = null
+            try { pill = await ctx.dom.createElement("div") } catch (e) { dErr = "create" }
+            if (pill) {
+                try { pill.setText(PILL_LABEL[status] || status) } catch (e) { dErr = "text" }
+                try { pill.setCssText(pillCss(status)) } catch (e) { dErr = "css" }
+                try { card.append(pill) } catch (e) { dErr = "append" }
+            }
             pushDbg()
         }
         function decorateCards(cards: any[]): void {
