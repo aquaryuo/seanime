@@ -40,6 +40,8 @@ function init() {
         const filterState = ctx.state<string>("all")
         let lastAt = boot.at || 0
 
+        const FILTERS: string[][] = [["all", "All"], ["working", "Working"], ["broken", "Broken"], ["deprecated", "Deprecated"], ["untagged", "Untagged"]]
+
         let byId: { [k: string]: Entry } = {}
         let byName: { [k: string]: Entry } = {}
         function rebuildMaps(): void {
@@ -54,13 +56,8 @@ function init() {
         }
         rebuildMaps()
 
-        // ---------- diagnostics (shown in the tray) ----------
-        const dbg = ctx.state<string>("dec:off")
-        let dObs = 0, dSeen = 0, dTagged = 0, dErr = ""
-        function pushDbg(): void {
-            dbg.set("dec:" + (started ? "on" : "off") + " seen:" + dSeen + " tagged:" + dTagged + (dErr ? (" err:" + dErr) : ""))
-            try { tray.update() } catch (_e) {}
-        }
+        let dErr = ""
+        function refresh(): void { try { tray.update() } catch (_e) {} }
 
         // ---------- decoration of the real Extensions cards ----------
         let started = false
@@ -73,12 +70,6 @@ function init() {
             return "untagged"
         }
         const PILL_LABEL: { [k: string]: string } = { working: "Working", broken: "Broken", deprecated: "Deprecated" }
-        function ringColor(status: string): string {
-            if (status === "broken") return "#ff6b6b"
-            if (status === "deprecated") return "#ffb454"
-            if (status === "working") return "#5fe0a6"
-            return "#9a9aa6"
-        }
         function pillCss(status: string): string {
             let bg = "rgba(150,150,165,0.15)", fg = "#b8b8c2", bd = "rgba(150,150,165,0.4)"
             if (status === "broken") { bg = "rgba(255,80,80,0.18)"; fg = "#ff8585"; bd = "rgba(255,80,80,0.5)" }
@@ -106,8 +97,6 @@ function init() {
             const status = info ? statusOf(info) : "untagged"
             try { card.setAttribute("data-seatags", status) } catch (e) { dErr = "attr" }
             if (status === "untagged") return
-            dTagged++
-            try { card.setStyle("box-shadow", "inset 0 0 0 2px " + ringColor(status)) } catch (e) { dErr = "style" }
             let pill: any = null
             try { pill = await ctx.dom.createElement("div") } catch (e) { dErr = "create" }
             if (pill) {
@@ -115,12 +104,8 @@ function init() {
                 try { pill.setCssText(pillCss(status)) } catch (e) { dErr = "css" }
                 try { card.append(pill) } catch (e) { dErr = "append" }
             }
-            pushDbg()
         }
         function decorateCards(cards: any[]): void {
-            dObs++
-            dSeen += (cards ? cards.length : 0)
-            pushDbg()
             if (!cards) return
             for (let i = 0; i < cards.length; i++) void decorateOne(cards[i])
         }
@@ -147,8 +132,9 @@ function init() {
         }
 
         function startDecorator(): void {
-            if (started) return
             if (entriesState.get().length === 0) return
+            void ensureBar()
+            if (started) return
             started = true
             try {
                 ctx.dom.observe('[class*="extension-card"]:not([data-seatags])', decorateCards, { withInnerHTML: true })
@@ -157,10 +143,69 @@ function init() {
                 started = false
             }
             void applyFilter()
-            pushDbg()
         }
 
         try { ctx.dom.onReady(() => { startDecorator() }) } catch (_e) {}
+
+        // ---------- on-page floating filter bar (Extensions screen only) ----------
+        let bar: any = null
+        let barBuilt = false
+        const barBtns: { [k: string]: any } = {}
+
+        function barBtnCss(active: boolean): string {
+            if (active) return "appearance:none;cursor:pointer;border:1px solid transparent;border-radius:8px;padding:5px 12px;font-size:12px;font-weight:600;background:#6152df;color:#ffffff;font-family:inherit"
+            return "appearance:none;cursor:pointer;border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:5px 12px;font-size:12px;font-weight:500;background:rgba(255,255,255,0.06);color:#cacaca;font-family:inherit"
+        }
+        function styleBarButtons(): void {
+            const f = filterState.get()
+            for (let i = 0; i < FILTERS.length; i++) {
+                const k = FILTERS[i][0]
+                const btn = barBtns[k]
+                if (btn) { try { btn.setCssText(barBtnCss(f === k)) } catch (_e) {} }
+            }
+        }
+        function selectFilter(k: string): void {
+            filterState.set(k)
+            void applyFilter()
+            styleBarButtons()
+            refresh()
+        }
+        function isExtPath(p: string): boolean { return !!p && p.indexOf("/extensions") === 0 }
+        function currentPath(): string {
+            try { return ctx.screen.state().get().pathname || "" } catch (_e) { return "" }
+        }
+        function showBar(show: boolean): void {
+            if (!bar) return
+            try { bar.setStyle("display", show ? "flex" : "none") } catch (_e) {}
+        }
+        async function ensureBar(): Promise<void> {
+            if (barBuilt) return
+            barBuilt = true
+            try {
+                const body = await ctx.dom.queryOne("body")
+                if (!body) { barBuilt = false; return }
+                const b = await ctx.dom.createElement("div")
+                b.setCssText("position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:9999;display:none;flex-direction:row;flex-wrap:wrap;gap:6px;align-items:center;justify-content:center;padding:7px 11px;background:rgba(16,16,20,0.94);border:1px solid rgba(255,255,255,0.12);border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,0.5)")
+                const label = await ctx.dom.createElement("span")
+                label.setText("SeaTags")
+                label.setCssText("font-size:11px;font-weight:700;letter-spacing:0.02em;color:rgba(255,255,255,0.5);margin-right:4px")
+                b.append(label)
+                for (let i = 0; i < FILTERS.length; i++) {
+                    const k = FILTERS[i][0]
+                    const btn = await ctx.dom.createElement("button")
+                    btn.setText(FILTERS[i][1])
+                    btn.setCssText(barBtnCss(filterState.get() === k))
+                    try { btn.addEventListener("click", () => { selectFilter(k) }) } catch (_e) {}
+                    b.append(btn)
+                    barBtns[k] = btn
+                }
+                body.append(b)
+                bar = b
+                showBar(isExtPath(currentPath()))
+            } catch (e) { dErr = "bar"; barBuilt = false }
+        }
+
+        try { ctx.screen.onNavigate((e: any) => { const p = (e && e.pathname) ? String(e.pathname) : ""; showBar(isExtPath(p)); if (isExtPath(p)) startDecorator() }) } catch (_e) {}
 
         // ---------- load the marketplace tag list ----------
         let inflight = false
@@ -169,7 +214,7 @@ function init() {
             if (!force && entriesState.get().length > 0 && now() - lastAt < CACHE_TTL) return
             inflight = true
             statusState.set("loading")
-            try { tray.update() } catch (_e) {}
+            refresh()
             let msg = ""
             try {
                 const res = await fetch(SRC, { timeout: 15 })
@@ -191,16 +236,15 @@ function init() {
             }
             inflight = false
             statusState.set(msg)
-            try { tray.update() } catch (_e) {}
+            refresh()
             startDecorator()
         }
 
-        // ---------- tray (stats + filter controls + diagnostics) ----------
+        // ---------- tray (stats + filter controls) ----------
         const tray = ctx.newTray({ iconUrl: ICON, withContent: true, width: "300px" })
-        const FILTERS: string[][] = [["all", "All"], ["working", "Working"], ["broken", "Broken"], ["deprecated", "Deprecated"], ["untagged", "Untagged"]]
         for (let i = 0; i < FILTERS.length; i++) {
             const k = FILTERS[i][0]
-            ctx.registerEventHandler("st-f-" + k, () => { filterState.set(k); void applyFilter(); tray.update() })
+            ctx.registerEventHandler("st-f-" + k, () => { selectFilter(k) })
         }
         ctx.registerEventHandler("st-refresh", () => { void load(true) })
 
@@ -230,14 +274,14 @@ function init() {
                     gap: 2,
                     style: { flexWrap: "wrap" },
                 }))
-                items.push(tray.text("Filter the Extensions page", { style: { color: "rgba(255,255,255,0.55)", fontSize: "11px", marginTop: "4px" } }))
+                items.push(tray.text("Filter (also shown on the Extensions page)", { style: { color: "rgba(255,255,255,0.55)", fontSize: "11px", marginTop: "4px" } }))
                 items.push(tray.flex({
                     items: FILTERS.map((f) => tray.button({ label: f[1], onClick: "st-f-" + f[0], intent: filterState.get() === f[0] ? "primary" : "gray-subtle", size: "xs" })),
                     gap: 2,
                     style: { flexWrap: "wrap" },
                 }))
             }
-            items.push(tray.text(dbg.get(), { style: { color: "rgba(255,255,255,0.35)", fontSize: "10px", marginTop: "4px" } }))
+            if (dErr) items.push(tray.text("⚠ " + dErr, { style: { color: "rgba(255,180,80,0.7)", fontSize: "10px", marginTop: "4px" } }))
             return tray.stack({ items: items, gap: 3 })
         })
         tray.onOpen(() => { void load(false); startDecorator() })
