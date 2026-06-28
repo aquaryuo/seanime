@@ -71,12 +71,25 @@ function init() {
             return t
         }
         const PILL_LABEL: { [k: string]: string } = { working: "Working", broken: "Broken", deprecated: "Deprecated" }
-        function pillCss(status: string): string {
-            let bg = "rgba(150,150,165,0.15)", fg = "#b8b8c2", bd = "rgba(150,150,165,0.4)"
-            if (status === "broken") { bg = "rgba(255,80,80,0.18)"; fg = "#ff8585"; bd = "rgba(255,80,80,0.5)" }
-            else if (status === "deprecated") { bg = "rgba(255,180,60,0.18)"; fg = "#ffce80"; bd = "rgba(255,180,60,0.5)" }
-            else if (status === "working") { bg = "rgba(62,207,142,0.18)"; fg = "#5fe0a6"; bd = "rgba(62,207,142,0.5)" }
-            return "display:inline-block;margin-top:8px;margin-right:6px;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;line-height:1.5;background:" + bg + ";color:" + fg + ";border:1px solid " + bd + ";position:relative;z-index:3"
+        function cap(s: string): string { s = s || ""; return s ? (s.charAt(0).toUpperCase() + s.slice(1)) : "" }
+        function chipCss(kind: string): string {
+            const base = "display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:6px;font-size:11px;font-weight:600;line-height:1;white-space:nowrap;border:1px solid transparent;box-sizing:border-box"
+            if (kind === "version") return base + ";background:rgba(225,225,225,0.10);color:#cacaca;border-color:rgba(90,90,90,0.40)"
+            if (kind === "author") return base + ";background:transparent;color:#cacaca;border-color:rgba(255,255,255,0.10)"
+            if (kind === "lang") return base + ";background:rgba(239,246,255,0.10);color:#93c5fd"
+            if (kind === "language") return base + ";background:transparent;color:rgba(255,255,255,0.40);padding:0"
+            if (kind === "broken") return base + ";font-weight:700;background:rgba(255,80,80,0.18);color:#ff8585;border-color:rgba(255,80,80,0.50)"
+            if (kind === "deprecated") return base + ";font-weight:700;background:rgba(255,180,60,0.18);color:#ffce80;border-color:rgba(255,180,60,0.50)"
+            if (kind === "working") return base + ";font-weight:700;background:rgba(62,207,142,0.18);color:#5fe0a6;border-color:rgba(62,207,142,0.50)"
+            return base
+        }
+        async function addChip(parent: any, text: string, kind: string): Promise<void> {
+            let c: any = null
+            try { c = await ctx.dom.createElement("span") } catch (e) { dErr = "create" }
+            if (!c) return
+            try { c.setText(text) } catch (e) { dErr = "text" }
+            try { c.setCssText(chipCss(kind)) } catch (e) { dErr = "css" }
+            try { parent.append(c) } catch (e) { dErr = "append" }
         }
         function extractId(html: string): string {
             const m = html.match(/opacity-30[^>]*>([^<]+)</)
@@ -85,6 +98,42 @@ function init() {
         function extractName(html: string): string {
             const m = html.match(/font-semibold[^>]*>([^<]+)</)
             return m ? m[1].trim() : ""
+        }
+
+        async function rebuildBadges(card: any, info: Entry, tags: string[]): Promise<void> {
+            let row: any = null
+            try {
+                const badges = await card.query(".UI-Badge__root")
+                if (badges && badges.length) row = await badges[0].getParent()
+            } catch (e) { dErr = "findrow" }
+            if (!row) {
+                for (let i = 0; i < tags.length; i++) await addChip(card, PILL_LABEL[tags[i]] || tags[i], tags[i])
+                return
+            }
+            try { row.setStyle("display", "none") } catch (_e) {}
+            let block: any = null
+            try { block = await ctx.dom.createElement("div") } catch (e) { dErr = "create" }
+            if (!block) return
+            try { block.setCssText("display:flex;flex-direction:column;gap:6px") } catch (_e) {}
+            const rowCss = "display:flex;flex-wrap:wrap;gap:6px;align-items:center"
+            let r1: any = null, r2: any = null
+            try { r1 = await ctx.dom.createElement("div") } catch (_e) {}
+            try { r2 = await ctx.dom.createElement("div") } catch (_e) {}
+            if (r1) {
+                try { r1.setCssText(rowCss) } catch (_e) {}
+                if (info.version) await addChip(r1, String(info.version), "version")
+                const lang = (info.lang || "").toString()
+                if (lang) await addChip(r1, lang.toUpperCase(), lang.toLowerCase() === "multi" ? "language" : "lang")
+                for (let i = 0; i < tags.length; i++) await addChip(r1, PILL_LABEL[tags[i]] || tags[i], tags[i])
+                block.append(r1)
+            }
+            if (r2) {
+                try { r2.setCssText(rowCss) } catch (_e) {}
+                if (info.author) await addChip(r2, String(info.author), "author")
+                if (info.language) await addChip(r2, cap(String(info.language)), "language")
+                block.append(r2)
+            }
+            try { row.after(block) } catch (e) { dErr = "insert" }
         }
 
         async function decorateOne(card: any): Promise<void> {
@@ -97,15 +146,7 @@ function init() {
             }
             const tags = info ? tagsOf(info) : []
             try { card.setAttribute("data-seatags", tags.length ? tags.join(" ") : "untagged") } catch (e) { dErr = "attr" }
-            for (let i = 0; i < tags.length; i++) {
-                const status = tags[i]
-                let pill: any = null
-                try { pill = await ctx.dom.createElement("div") } catch (e) { dErr = "create" }
-                if (!pill) continue
-                try { pill.setText(PILL_LABEL[status] || status) } catch (e) { dErr = "text" }
-                try { pill.setCssText(pillCss(status)) } catch (e) { dErr = "css" }
-                try { card.append(pill) } catch (e) { dErr = "append" }
-            }
+            if (info) await rebuildBadges(card, info, tags)
         }
         function decorateCards(cards: any[]): void {
             if (!cards) return
