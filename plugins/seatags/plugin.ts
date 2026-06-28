@@ -125,9 +125,9 @@ function init() {
             if (r1) {
                 try { r1.setCssText(rowCss) } catch (_e) {}
                 if (info.version) await addChip(r1, String(info.version), "version")
+                for (let i = 0; i < tags.length; i++) await addChip(r1, PILL_LABEL[tags[i]] || tags[i], tags[i])
                 const lang = (info.lang || "").toString()
                 if (lang) await addChip(r1, lang.toUpperCase(), lang.toLowerCase() === "multi" ? "language" : "lang")
-                for (let i = 0; i < tags.length; i++) await addChip(r1, PILL_LABEL[tags[i]] || tags[i], tags[i])
                 block.append(r1)
             }
             if (r2) {
