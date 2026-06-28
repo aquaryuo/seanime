@@ -38,9 +38,12 @@ function init() {
         const entriesState = ctx.state<Entry[]>(boot.data && boot.data.length > 0 ? boot.data : [])
         const statusState = ctx.state<string>("")
         const filterState = ctx.state<string>("all")
+        const starsState = ctx.state<string>("0")
         let lastAt = boot.at || 0
 
         const FILTERS: string[][] = [["all", "All"], ["working", "Working"], ["broken", "Broken"], ["deprecated", "Deprecated"], ["untagged", "Untagged"]]
+        const STARS: string[][] = [["0", "Any"], ["1", "★1+"], ["3", "★3+"], ["5", "★5+"], ["10", "★10+"]]
+        const STAR_THRESHOLDS = [1, 3, 5, 10]
 
         let byId: { [k: string]: Entry } = {}
         let byName: { [k: string]: Entry } = {}
@@ -145,7 +148,10 @@ function init() {
                 if (nm && byName[nm.toLowerCase()]) info = byName[nm.toLowerCase()]
             }
             const tags = info ? tagsOf(info) : []
-            try { card.setAttribute("data-seatags", tags.length ? tags.join(" ") : "untagged") } catch (e) { dErr = "attr" }
+            const toks = tags.length ? tags.slice() : ["untagged"]
+            const stars = (info && typeof info.stars === "number") ? info.stars : 0
+            for (let i = 0; i < STAR_THRESHOLDS.length; i++) { if (stars >= STAR_THRESHOLDS[i]) toks.push("s" + STAR_THRESHOLDS[i]) }
+            try { card.setAttribute("data-seatags", toks.join(" ")) } catch (e) { dErr = "attr" }
             if (info) await rebuildBadges(card, info, tags)
         }
         function decorateCards(cards: any[]): void {
@@ -169,8 +175,10 @@ function init() {
             await ensureFilterStyle()
             if (!filterStyle) return
             const f = filterState.get()
+            const s = starsState.get()
             let css = ""
-            if (f !== "all") css = '[class*="extension-card"]:not([data-seatags~="' + f + '"]){display:none !important}'
+            if (f !== "all") css += '[class*="extension-card"]:not([data-seatags~="' + f + '"]){display:none !important}'
+            if (s !== "0") css += '[class*="extension-card"]:not([data-seatags~="s' + s + '"]){display:none !important}'
             try { filterStyle.setText(css) } catch (e) { dErr = "filter" }
         }
 
@@ -194,6 +202,7 @@ function init() {
         let bar: any = null
         let barBuilt = false
         const barBtns: { [k: string]: any } = {}
+        const barStarBtns: { [k: string]: any } = {}
 
         function barBtnCss(active: boolean): string {
             if (active) return "appearance:none;cursor:pointer;border:1px solid transparent;border-radius:8px;padding:5px 12px;font-size:12px;font-weight:600;background:#6152df;color:#ffffff;font-family:inherit"
@@ -206,9 +215,21 @@ function init() {
                 const btn = barBtns[k]
                 if (btn) { try { btn.setCssText(barBtnCss(f === k)) } catch (_e) {} }
             }
+            const s = starsState.get()
+            for (let i = 0; i < STARS.length; i++) {
+                const k = STARS[i][0]
+                const btn = barStarBtns[k]
+                if (btn) { try { btn.setCssText(barBtnCss(s === k)) } catch (_e) {} }
+            }
         }
         function selectFilter(k: string): void {
             filterState.set(k)
+            void applyFilter()
+            styleBarButtons()
+            refresh()
+        }
+        function selectStars(k: string): void {
+            starsState.set(k)
             void applyFilter()
             styleBarButtons()
             refresh()
@@ -221,6 +242,26 @@ function init() {
             if (!bar) return
             try { bar.setStyle("display", show ? "flex" : "none") } catch (_e) {}
         }
+        const BAR_ROW_CSS = "display:flex;flex-direction:row;flex-wrap:wrap;gap:6px;align-items:center"
+        const BAR_LABEL_CSS = "font-size:11px;font-weight:700;letter-spacing:0.02em;color:rgba(255,255,255,0.5);min-width:48px"
+        async function buildBarRow(parent: any, labelText: string, defs: string[][], refs: { [k: string]: any }, getCur: () => string, onPick: (k: string) => void): Promise<void> {
+            const rowEl = await ctx.dom.createElement("div")
+            try { rowEl.setCssText(BAR_ROW_CSS) } catch (_e) {}
+            const lab = await ctx.dom.createElement("span")
+            lab.setText(labelText)
+            try { lab.setCssText(BAR_LABEL_CSS) } catch (_e) {}
+            rowEl.append(lab)
+            for (let i = 0; i < defs.length; i++) {
+                const k = defs[i][0]
+                const btn = await ctx.dom.createElement("button")
+                btn.setText(defs[i][1])
+                btn.setCssText(barBtnCss(getCur() === k))
+                try { btn.addEventListener("click", () => { onPick(k) }) } catch (_e) {}
+                rowEl.append(btn)
+                refs[k] = btn
+            }
+            parent.append(rowEl)
+        }
         async function ensureBar(): Promise<void> {
             if (barBuilt) return
             barBuilt = true
@@ -228,20 +269,9 @@ function init() {
                 const body = await ctx.dom.queryOne("body")
                 if (!body) { barBuilt = false; return }
                 const b = await ctx.dom.createElement("div")
-                b.setCssText("position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:9999;display:none;flex-direction:row;flex-wrap:wrap;gap:6px;align-items:center;justify-content:center;padding:7px 11px;background:rgba(16,16,20,0.94);border:1px solid rgba(255,255,255,0.12);border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,0.5)")
-                const label = await ctx.dom.createElement("span")
-                label.setText("SeaTags")
-                label.setCssText("font-size:11px;font-weight:700;letter-spacing:0.02em;color:rgba(255,255,255,0.5);margin-right:4px")
-                b.append(label)
-                for (let i = 0; i < FILTERS.length; i++) {
-                    const k = FILTERS[i][0]
-                    const btn = await ctx.dom.createElement("button")
-                    btn.setText(FILTERS[i][1])
-                    btn.setCssText(barBtnCss(filterState.get() === k))
-                    try { btn.addEventListener("click", () => { selectFilter(k) }) } catch (_e) {}
-                    b.append(btn)
-                    barBtns[k] = btn
-                }
+                b.setCssText("position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:9999;display:none;flex-direction:column;gap:7px;padding:9px 12px;background:rgba(16,16,20,0.94);border:1px solid rgba(255,255,255,0.12);border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,0.5)")
+                await buildBarRow(b, "Status", FILTERS, barBtns, () => filterState.get(), selectFilter)
+                await buildBarRow(b, "Stars", STARS, barStarBtns, () => starsState.get(), selectStars)
                 body.append(b)
                 bar = b
                 showBar(isExtPath(currentPath()))
@@ -289,6 +319,10 @@ function init() {
             const k = FILTERS[i][0]
             ctx.registerEventHandler("st-f-" + k, () => { selectFilter(k) })
         }
+        for (let i = 0; i < STARS.length; i++) {
+            const k = STARS[i][0]
+            ctx.registerEventHandler("st-s-" + k, () => { selectStars(k) })
+        }
         ctx.registerEventHandler("st-refresh", () => { void load(true) })
 
         tray.render(() => {
@@ -317,9 +351,15 @@ function init() {
                     gap: 2,
                     style: { flexWrap: "wrap" },
                 }))
-                items.push(tray.text("Filter (also shown on the Extensions page)", { style: { color: "rgba(255,255,255,0.55)", fontSize: "11px", marginTop: "4px" } }))
+                items.push(tray.text("Status (also on the Extensions page)", { style: { color: "rgba(255,255,255,0.55)", fontSize: "11px", marginTop: "4px" } }))
                 items.push(tray.flex({
                     items: FILTERS.map((f) => tray.button({ label: f[1], onClick: "st-f-" + f[0], intent: filterState.get() === f[0] ? "primary" : "gray-subtle", size: "xs" })),
+                    gap: 2,
+                    style: { flexWrap: "wrap" },
+                }))
+                items.push(tray.text("Min stars", { style: { color: "rgba(255,255,255,0.55)", fontSize: "11px", marginTop: "4px" } }))
+                items.push(tray.flex({
+                    items: STARS.map((s) => tray.button({ label: s[1], onClick: "st-s-" + s[0], intent: starsState.get() === s[0] ? "primary" : "gray-subtle", size: "xs" })),
                     gap: 2,
                     style: { flexWrap: "wrap" },
                 }))
