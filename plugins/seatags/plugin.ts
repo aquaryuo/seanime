@@ -54,8 +54,15 @@ function init() {
         }
         rebuildMaps()
 
-        // ---------- DOM decoration of the real Extensions cards ----------
-        let domReady = false
+        // ---------- diagnostics (shown in the tray) ----------
+        const dbg = ctx.state<string>("dec:off")
+        let dObs = 0, dSeen = 0, dTagged = 0, dErr = ""
+        function pushDbg(): void {
+            dbg.set("dec:" + (started ? "on" : "off") + " seen:" + dSeen + " tagged:" + dTagged + (dErr ? (" err:" + dErr) : ""))
+            try { tray.update() } catch (_e) {}
+        }
+
+        // ---------- decoration of the real Extensions cards ----------
         let started = false
         let filterStyle: any = null
 
@@ -66,12 +73,18 @@ function init() {
             return "untagged"
         }
         const PILL_LABEL: { [k: string]: string } = { working: "Working", broken: "Broken", deprecated: "Deprecated" }
+        function ringColor(status: string): string {
+            if (status === "broken") return "#ff6b6b"
+            if (status === "deprecated") return "#ffb454"
+            if (status === "working") return "#5fe0a6"
+            return "#9a9aa6"
+        }
         function pillCss(status: string): string {
-            let bg = "rgba(150,150,165,0.15)", fg = "#b8b8c2", bd = "rgba(150,150,165,0.35)"
-            if (status === "broken") { bg = "rgba(255,80,80,0.15)"; fg = "#ff8585"; bd = "rgba(255,80,80,0.4)" }
-            else if (status === "deprecated") { bg = "rgba(255,180,60,0.15)"; fg = "#ffce80"; bd = "rgba(255,180,60,0.4)" }
-            else if (status === "working") { bg = "rgba(62,207,142,0.15)"; fg = "#5fe0a6"; bd = "rgba(62,207,142,0.4)" }
-            return "display:inline-block;margin-top:6px;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:600;line-height:1.5;background:" + bg + ";color:" + fg + ";border:1px solid " + bd + ";position:relative;z-index:2"
+            let bg = "rgba(150,150,165,0.15)", fg = "#b8b8c2", bd = "rgba(150,150,165,0.4)"
+            if (status === "broken") { bg = "rgba(255,80,80,0.18)"; fg = "#ff8585"; bd = "rgba(255,80,80,0.5)" }
+            else if (status === "deprecated") { bg = "rgba(255,180,60,0.18)"; fg = "#ffce80"; bd = "rgba(255,180,60,0.5)" }
+            else if (status === "working") { bg = "rgba(62,207,142,0.18)"; fg = "#5fe0a6"; bd = "rgba(62,207,142,0.5)" }
+            return "display:inline-block;margin-top:8px;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;line-height:1.5;background:" + bg + ";color:" + fg + ";border:1px solid " + bd + ";position:relative;z-index:3"
         }
         function extractId(html: string): string {
             const m = html.match(/opacity-30[^>]*>([^<]+)</)
@@ -91,32 +104,28 @@ function init() {
                 if (nm && byName[nm.toLowerCase()]) info = byName[nm.toLowerCase()]
             }
             const status = info ? statusOf(info) : "untagged"
-            try { card.setAttribute("data-seatags", status) } catch (_e) {}
+            try { card.setAttribute("data-seatags", status) } catch (e) { dErr = "attr" }
             if (status === "untagged") return
+            dTagged++
+            try { card.setStyle("box-shadow", "inset 0 0 0 2px " + ringColor(status)) } catch (e) { dErr = "style" }
             try {
                 const pill = await ctx.dom.createElement("div")
                 pill.setText(PILL_LABEL[status] || status)
                 pill.setCssText(pillCss(status))
                 card.appendChild(pill)
-            } catch (_e) {}
+            } catch (e) { dErr = "pill" }
+            pushDbg()
         }
         function decorateCards(cards: any[]): void {
+            dObs++
+            dSeen += (cards ? cards.length : 0)
+            pushDbg()
+            if (!cards) return
             for (let i = 0; i < cards.length; i++) void decorateOne(cards[i])
         }
 
-        function applyFilter(): void {
-            if (!filterStyle) return
-            const f = filterState.get()
-            let css = ""
-            if (f !== "all") css = '[class*="extension-card"]:not([data-seatags="' + f + '"]){display:none !important}'
-            try { filterStyle.setText(css) } catch (_e) {}
-        }
-
-        async function startDecorator(): Promise<void> {
-            if (started) return
-            if (!domReady) return
-            if (entriesState.get().length === 0) return
-            started = true
+        async function ensureFilterStyle(): Promise<void> {
+            if (filterStyle) return
             try {
                 const body = await ctx.dom.queryOne("body")
                 if (body) {
@@ -125,12 +134,32 @@ function init() {
                     body.appendChild(s)
                     filterStyle = s
                 }
-            } catch (_e) {}
-            applyFilter()
-            try { ctx.dom.observe('[class*="extension-card"]:not([data-seatags])', decorateCards, { withInnerHTML: true }) } catch (_e) {}
+            } catch (e) { dErr = "fstyle" }
+        }
+        async function applyFilter(): Promise<void> {
+            await ensureFilterStyle()
+            if (!filterStyle) return
+            const f = filterState.get()
+            let css = ""
+            if (f !== "all") css = '[class*="extension-card"]:not([data-seatags="' + f + '"]){display:none !important}'
+            try { filterStyle.setText(css) } catch (e) { dErr = "filter" }
         }
 
-        ctx.dom.onReady(() => { domReady = true; void startDecorator() })
+        function startDecorator(): void {
+            if (started) return
+            if (entriesState.get().length === 0) return
+            started = true
+            try {
+                ctx.dom.observe('[class*="extension-card"]:not([data-seatags])', decorateCards, { withInnerHTML: true })
+            } catch (e) {
+                dErr = "observe"
+                started = false
+            }
+            void applyFilter()
+            pushDbg()
+        }
+
+        try { ctx.dom.onReady(() => { startDecorator() }) } catch (_e) {}
 
         // ---------- load the marketplace tag list ----------
         let inflight = false
@@ -162,15 +191,15 @@ function init() {
             inflight = false
             statusState.set(msg)
             try { tray.update() } catch (_e) {}
-            void startDecorator()
+            startDecorator()
         }
 
-        // ---------- tray (stats + filter controls) ----------
+        // ---------- tray (stats + filter controls + diagnostics) ----------
         const tray = ctx.newTray({ iconUrl: ICON, withContent: true, width: "300px" })
         const FILTERS: string[][] = [["all", "All"], ["working", "Working"], ["broken", "Broken"], ["deprecated", "Deprecated"], ["untagged", "Untagged"]]
         for (let i = 0; i < FILTERS.length; i++) {
             const k = FILTERS[i][0]
-            ctx.registerEventHandler("st-f-" + k, () => { filterState.set(k); applyFilter(); tray.update() })
+            ctx.registerEventHandler("st-f-" + k, () => { filterState.set(k); void applyFilter(); tray.update() })
         }
         ctx.registerEventHandler("st-refresh", () => { void load(true) })
 
@@ -187,31 +216,32 @@ function init() {
             }))
             if (es.length === 0) {
                 items.push(tray.text(statusState.get() === "loading" ? "Loading the marketplace…" : (statusState.get() || "Tap Refresh to load the tag list."), { style: { color: "rgba(255,255,255,0.6)", fontSize: "12px" } }))
-                return tray.stack({ items: items, gap: 3 })
+            } else {
+                let w = 0, b = 0, d = 0
+                for (let i = 0; i < es.length; i++) { if (es[i].workingTag) w++; if (es[i].brokenTag) b++; if (es[i].deprecatedTag) d++ }
+                items.push(tray.flex({
+                    items: [
+                        tray.badge({ text: "✓ " + w, intent: "success", size: "sm" }),
+                        tray.badge({ text: "✗ " + b, intent: "alert", size: "sm" }),
+                        tray.badge({ text: "⚠ " + d, intent: "warning", size: "sm" }),
+                        tray.badge({ text: es.length + " total", intent: "gray", size: "sm" }),
+                    ],
+                    gap: 2,
+                    style: { flexWrap: "wrap" },
+                }))
+                items.push(tray.text("Filter the Extensions page", { style: { color: "rgba(255,255,255,0.55)", fontSize: "11px", marginTop: "4px" } }))
+                items.push(tray.flex({
+                    items: FILTERS.map((f) => tray.button({ label: f[1], onClick: "st-f-" + f[0], intent: filterState.get() === f[0] ? "primary" : "gray-subtle", size: "xs" })),
+                    gap: 2,
+                    style: { flexWrap: "wrap" },
+                }))
             }
-            let w = 0, b = 0, d = 0
-            for (let i = 0; i < es.length; i++) { if (es[i].workingTag) w++; if (es[i].brokenTag) b++; if (es[i].deprecatedTag) d++ }
-            items.push(tray.flex({
-                items: [
-                    tray.badge({ text: "✓ " + w, intent: "success", size: "sm" }),
-                    tray.badge({ text: "✗ " + b, intent: "alert", size: "sm" }),
-                    tray.badge({ text: "⚠ " + d, intent: "warning", size: "sm" }),
-                    tray.badge({ text: es.length + " total", intent: "gray", size: "sm" }),
-                ],
-                gap: 2,
-                style: { flexWrap: "wrap" },
-            }))
-            items.push(tray.text("Filter the Extensions page", { style: { color: "rgba(255,255,255,0.55)", fontSize: "11px", marginTop: "4px" } }))
-            items.push(tray.flex({
-                items: FILTERS.map((f) => tray.button({ label: f[1], onClick: "st-f-" + f[0], intent: filterState.get() === f[0] ? "primary" : "gray-subtle", size: "xs" })),
-                gap: 2,
-                style: { flexWrap: "wrap" },
-            }))
-            items.push(tray.text("Open Extensions ▸ Installed or Marketplace to see tags on the cards.", { style: { color: "rgba(255,255,255,0.4)", fontSize: "10px", marginTop: "2px" } }))
+            items.push(tray.text(dbg.get(), { style: { color: "rgba(255,255,255,0.35)", fontSize: "10px", marginTop: "4px" } }))
             return tray.stack({ items: items, gap: 3 })
         })
-        tray.onOpen(() => { void load(false) })
+        tray.onOpen(() => { void load(false); startDecorator() })
 
-        ctx.setTimeout(() => { void load(false) }, 0)
+        ctx.setTimeout(() => { void load(false); startDecorator() }, 0)
+        ctx.setTimeout(() => { startDecorator() }, 1500)
     })
 }
