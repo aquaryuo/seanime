@@ -63,11 +63,12 @@ function init() {
         let started = false
         let filterStyle: any = null
 
-        function statusOf(e: Entry): string {
-            if (e.brokenTag) return "broken"
-            if (e.deprecatedTag) return "deprecated"
-            if (e.workingTag) return "working"
-            return "untagged"
+        function tagsOf(e: Entry): string[] {
+            const t: string[] = []
+            if (e.brokenTag) t.push("broken")
+            if (e.deprecatedTag) t.push("deprecated")
+            if (e.workingTag) t.push("working")
+            return t
         }
         const PILL_LABEL: { [k: string]: string } = { working: "Working", broken: "Broken", deprecated: "Deprecated" }
         function pillCss(status: string): string {
@@ -75,7 +76,7 @@ function init() {
             if (status === "broken") { bg = "rgba(255,80,80,0.18)"; fg = "#ff8585"; bd = "rgba(255,80,80,0.5)" }
             else if (status === "deprecated") { bg = "rgba(255,180,60,0.18)"; fg = "#ffce80"; bd = "rgba(255,180,60,0.5)" }
             else if (status === "working") { bg = "rgba(62,207,142,0.18)"; fg = "#5fe0a6"; bd = "rgba(62,207,142,0.5)" }
-            return "display:inline-block;margin-top:8px;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;line-height:1.5;background:" + bg + ";color:" + fg + ";border:1px solid " + bd + ";position:relative;z-index:3"
+            return "display:inline-block;margin-top:8px;margin-right:6px;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;line-height:1.5;background:" + bg + ";color:" + fg + ";border:1px solid " + bd + ";position:relative;z-index:3"
         }
         function extractId(html: string): string {
             const m = html.match(/opacity-30[^>]*>([^<]+)</)
@@ -94,12 +95,13 @@ function init() {
                 const nm = extractName(html)
                 if (nm && byName[nm.toLowerCase()]) info = byName[nm.toLowerCase()]
             }
-            const status = info ? statusOf(info) : "untagged"
-            try { card.setAttribute("data-seatags", status) } catch (e) { dErr = "attr" }
-            if (status === "untagged") return
-            let pill: any = null
-            try { pill = await ctx.dom.createElement("div") } catch (e) { dErr = "create" }
-            if (pill) {
+            const tags = info ? tagsOf(info) : []
+            try { card.setAttribute("data-seatags", tags.length ? tags.join(" ") : "untagged") } catch (e) { dErr = "attr" }
+            for (let i = 0; i < tags.length; i++) {
+                const status = tags[i]
+                let pill: any = null
+                try { pill = await ctx.dom.createElement("div") } catch (e) { dErr = "create" }
+                if (!pill) continue
                 try { pill.setText(PILL_LABEL[status] || status) } catch (e) { dErr = "text" }
                 try { pill.setCssText(pillCss(status)) } catch (e) { dErr = "css" }
                 try { card.append(pill) } catch (e) { dErr = "append" }
@@ -127,7 +129,7 @@ function init() {
             if (!filterStyle) return
             const f = filterState.get()
             let css = ""
-            if (f !== "all") css = '[class*="extension-card"]:not([data-seatags="' + f + '"]){display:none !important}'
+            if (f !== "all") css = '[class*="extension-card"]:not([data-seatags~="' + f + '"]){display:none !important}'
             try { filterStyle.setText(css) } catch (e) { dErr = "filter" }
         }
 
