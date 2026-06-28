@@ -132,7 +132,7 @@ function init() {
                 if (body) {
                     const s = await ctx.dom.createElement("style")
                     s.setText("")
-                    body.appendChild(s)
+                    body.append(s)
                     filterStyle = s
                 }
             } catch (e) { dErr = "fstyle" }
