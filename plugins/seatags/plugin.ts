@@ -60,7 +60,10 @@ function init() {
         let controlsStarted = false
         let domReady = false
         let filterStyle: any = null
-        let staticStyle: any = null
+
+        const CTL_INPUT_CSS = "height:40px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:#0b0b0b;color:#d1d1d1;font-size:14px;outline:none;font-family:inherit;box-sizing:border-box;padding:0 12px;min-width:180px"
+        const CTL_SELECT_CSS = "height:40px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:#0b0b0b;color:#d1d1d1;font-size:14px;outline:none;font-family:inherit;box-sizing:border-box;cursor:pointer;padding:0 10px;min-width:160px"
+        const CTL_WRAP_CSS = "display:flex;flex-direction:row;flex-wrap:wrap;gap:8px;align-items:center;flex:1 1 auto;min-width:0"
 
         // ---------- helpers ----------
         function tagsOf(e: Entry): string[] {
@@ -152,25 +155,6 @@ function init() {
         }
 
         // ---------- injected stylesheets ----------
-        async function ensureStaticStyle(): Promise<void> {
-            if (staticStyle) return
-            try {
-                const body = await ctx.dom.queryOne("body")
-                if (!body) return
-                const s = await ctx.dom.createElement("style")
-                s.setText(
-                    ".seatags-group{display:flex;flex-direction:row;flex-wrap:wrap;gap:8px;align-items:center}" +
-                    ".seatags-input,.seatags-select{height:40px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:#0b0b0b;color:#d1d1d1;font-size:14px;outline:none;font-family:inherit;box-sizing:border-box}" +
-                    ".seatags-input{padding:0 12px;min-width:200px}" +
-                    ".seatags-select{padding:0 30px 0 12px;min-width:170px;cursor:pointer;-webkit-appearance:none;-moz-appearance:none;appearance:none;background-image:url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.5)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>\");background-repeat:no-repeat;background-position:right 10px center}" +
-                    ".seatags-input:focus,.seatags-select:focus{border-color:#d4d0ff}" +
-                    ".seatags-input::placeholder{color:rgba(255,255,255,0.4)}" +
-                    ".seatags-select option{background:#0b0b0b;color:#d1d1d1}"
-                )
-                body.append(s)
-                staticStyle = s
-            } catch (e) { dErr = "sstyle" }
-        }
         async function ensureFilterStyle(): Promise<void> {
             if (filterStyle) return
             try {
@@ -221,23 +205,25 @@ function init() {
         }
         async function injectControls(inputs: any[]): Promise<void> {
             if (!inputs || !inputs.length) return
-            await ensureStaticStyle()
             for (let i = 0; i < inputs.length; i++) {
                 const input = inputs[i]
                 try { input.setAttribute("data-seatags-tb", "1") } catch (_e) {}
-                let grp: any = null
-                try { grp = await ctx.dom.createElement("div") } catch (e) { dErr = "ctl" }
-                if (!grp) continue
-                try { grp.setAttribute("class", "seatags-group") } catch (_e) {}
+                let ic: any = null
+                try { ic = await input.getParent() } catch (_e) {}
+                const anchor = ic || input
+
+                let wrap: any = null
+                try { wrap = await ctx.dom.createElement("div") } catch (e) { dErr = "ctl" }
+                if (!wrap) continue
+                try { wrap.setCssText(CTL_WRAP_CSS) } catch (_e) {}
 
                 let sel: any = null
                 try { sel = await ctx.dom.createElement("select") } catch (_e) {}
                 if (sel) {
-                    try { sel.setAttribute("class", "seatags-select") } catch (_e) {}
+                    try { sel.setCssText(CTL_SELECT_CSS) } catch (_e) {}
                     try { sel.setInnerHTML(statusOptionsHtml()) } catch (_e) {}
                     try { sel.setProperty("value", filterState.get()) } catch (_e) {}
                     try { sel.addEventListener("change", () => { onStatusChange(sel) }) } catch (_e) {}
-                    grp.append(sel)
                 }
 
                 let author: any = null
@@ -245,16 +231,16 @@ function init() {
                 if (author) {
                     try { author.setAttribute("type", "text") } catch (_e) {}
                     try { author.setAttribute("placeholder", "Search by author...") } catch (_e) {}
-                    try { author.setAttribute("class", "seatags-input") } catch (_e) {}
+                    try { author.setCssText(CTL_INPUT_CSS) } catch (_e) {}
                     try { author.setProperty("value", authorState.get()) } catch (_e) {}
                     try { author.addEventListener("input", () => { onAuthorInput(author) }) } catch (_e) {}
-                    grp.append(author)
                 }
 
-                let ic: any = null
-                try { ic = await input.getParent() } catch (_e) {}
-                if (ic) { try { ic.after(grp) } catch (e) { dErr = "place" } }
-                else { try { input.after(grp) } catch (_e) {} }
+                try { anchor.before(wrap) } catch (e) { dErr = "place" }
+                try { anchor.setStyle("flex", "1 1 220px") } catch (_e) {}
+                try { wrap.append(anchor) } catch (e) { dErr = "move" }
+                if (sel) { try { wrap.append(sel) } catch (_e) {} }
+                if (author) { try { wrap.append(author) } catch (_e) {} }
             }
         }
 
