@@ -1,7 +1,6 @@
 function init() {
     $ui.register((ctx) => {
         const SRC = "https://raw.githubusercontent.com/Bas1874/Seanime-Marketplace/main/Marketplace/Main.json"
-        const ICON = "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/seatags/icon.png"
         const CACHE_KEY = "seatags:cache"
         const CACHE_TTL = 3600000
 
@@ -36,11 +35,11 @@ function init() {
 
         const boot = sget<{ at: number; data: Entry[] }>(CACHE_KEY, { at: 0, data: [] })
         const entriesState = ctx.state<Entry[]>(boot.data && boot.data.length > 0 ? boot.data : [])
-        const statusState = ctx.state<string>("")
         const filterState = ctx.state<string>("all")
+        const authorState = ctx.state<string>("")
         let lastAt = boot.at || 0
 
-        const FILTERS: string[][] = [["all", "All"], ["working", "Working"], ["broken", "Broken"], ["deprecated", "Deprecated"], ["untagged", "Untagged"]]
+        const STATUS_OPTS: string[][] = [["all", "All statuses"], ["working", "Working"], ["broken", "Broken"], ["deprecated", "Deprecated"], ["untagged", "Untagged"]]
 
         let byId: { [k: string]: Entry } = {}
         let byName: { [k: string]: Entry } = {}
@@ -57,13 +56,13 @@ function init() {
         rebuildMaps()
 
         let dErr = ""
-        function refresh(): void { try { tray.update() } catch (_e) {} }
-
-        // ---------- decoration of the real Extensions cards ----------
         let started = false
+        let controlsStarted = false
         let domReady = false
         let filterStyle: any = null
+        let staticStyle: any = null
 
+        // ---------- helpers ----------
         function tagsOf(e: Entry): string[] {
             const t: string[] = []
             if (e.brokenTag) t.push("broken")
@@ -73,6 +72,9 @@ function init() {
         }
         const PILL_LABEL: { [k: string]: string } = { working: "Working", broken: "Broken", deprecated: "Deprecated" }
         function cap(s: string): string { s = s || ""; return s ? (s.charAt(0).toUpperCase() + s.slice(1)) : "" }
+        function esc(s: string): string {
+            return (s == null ? "" : String(s)).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
+        }
         function chipCss(kind: string): string {
             const base = "display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:6px;font-size:11px;font-weight:600;line-height:1;white-space:nowrap;border:1px solid transparent;box-sizing:border-box"
             if (kind === "version") return base + ";background:rgba(225,225,225,0.10);color:#cacaca;border-color:rgba(90,90,90,0.40)"
@@ -84,9 +86,6 @@ function init() {
             if (kind === "working") return base + ";font-weight:700;background:rgba(62,207,142,0.18);color:#5fe0a6;border-color:rgba(62,207,142,0.50)"
             if (kind === "stars") return base + ";background:transparent;color:#fcd34d;padding:0"
             return base
-        }
-        function esc(s: string): string {
-            return (s == null ? "" : String(s)).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
         }
         function chipHtml(text: string, kind: string): string {
             return '<span style="' + chipCss(kind) + '">' + esc(text) + "</span>"
@@ -113,6 +112,7 @@ function init() {
             return m ? m[1].trim() : ""
         }
 
+        // ---------- card decoration ----------
         async function rebuildBadges(card: any, info: Entry, tags: string[]): Promise<void> {
             let row: any = null
             try {
@@ -141,7 +141,9 @@ function init() {
                 if (nm && byName[nm.toLowerCase()]) info = byName[nm.toLowerCase()]
             }
             const tags = info ? tagsOf(info) : []
+            const author = info && info.author ? String(info.author).toLowerCase() : ""
             try { card.setAttribute("data-seatags", tags.length ? tags.join(" ") : "untagged") } catch (e) { dErr = "attr" }
+            try { card.setAttribute("data-seatags-author", author) } catch (_e) {}
             if (info) await rebuildBadges(card, info, tags)
         }
         function decorateCards(cards: any[]): void {
@@ -149,6 +151,26 @@ function init() {
             for (let i = 0; i < cards.length; i++) decorateOne(cards[i]).catch(() => {})
         }
 
+        // ---------- injected stylesheets ----------
+        async function ensureStaticStyle(): Promise<void> {
+            if (staticStyle) return
+            try {
+                const body = await ctx.dom.queryOne("body")
+                if (!body) return
+                const s = await ctx.dom.createElement("style")
+                s.setText(
+                    ".seatags-group{display:flex;flex-direction:row;flex-wrap:wrap;gap:8px;align-items:center}" +
+                    ".seatags-input,.seatags-select{height:40px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:#0b0b0b;color:#d1d1d1;font-size:14px;outline:none;font-family:inherit;box-sizing:border-box}" +
+                    ".seatags-input{padding:0 12px;min-width:200px}" +
+                    ".seatags-select{padding:0 30px 0 12px;min-width:170px;cursor:pointer;-webkit-appearance:none;-moz-appearance:none;appearance:none;background-image:url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.5)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>\");background-repeat:no-repeat;background-position:right 10px center}" +
+                    ".seatags-input:focus,.seatags-select:focus{border-color:#d4d0ff}" +
+                    ".seatags-input::placeholder{color:rgba(255,255,255,0.4)}" +
+                    ".seatags-select option{background:#0b0b0b;color:#d1d1d1}"
+                )
+                body.append(s)
+                staticStyle = s
+            } catch (e) { dErr = "sstyle" }
+        }
         async function ensureFilterStyle(): Promise<void> {
             if (filterStyle) return
             try {
@@ -165,94 +187,102 @@ function init() {
             await ensureFilterStyle()
             if (!filterStyle) return
             const f = filterState.get()
+            const a = authorState.get().toLowerCase().replace(/["\\]/g, "")
             let css = ""
-            if (f !== "all") css = '[class*="extension-card"]:not([data-seatags~="' + f + '"]){display:none !important}'
+            if (f && f !== "all") css += '[class*="extension-card"]:not([data-seatags~="' + f + '"]){display:none !important}'
+            if (a) css += '[class*="extension-card"]:not([data-seatags-author*="' + a + '"]){display:none !important}'
             try { filterStyle.setText(css) } catch (e) { dErr = "filter" }
         }
 
-        function startDecorator(): void {
-            if (!domReady) return
-            ensureBar().catch(() => {})
-            if (started) return
+        // ---------- toolbar controls (Author search + Status dropdown) ----------
+        let authorToken = 0
+        function onAuthorInput(el: any): void {
+            const t = ++authorToken
+            try {
+                el.getProperty("value").then((v: any) => {
+                    if (t !== authorToken) return
+                    authorState.set(v == null ? "" : String(v))
+                    applyFilter().catch(() => {})
+                }).catch(() => {})
+            } catch (_e) {}
+        }
+        function onStatusChange(el: any): void {
+            try {
+                el.getProperty("value").then((v: any) => {
+                    filterState.set(v == null ? "all" : String(v))
+                    applyFilter().catch(() => {})
+                }).catch(() => {})
+            } catch (_e) {}
+        }
+        function statusOptionsHtml(): string {
+            let h = ""
+            for (let i = 0; i < STATUS_OPTS.length; i++) h += '<option value="' + esc(STATUS_OPTS[i][0]) + '">' + esc(STATUS_OPTS[i][1]) + "</option>"
+            return h
+        }
+        async function injectControls(inputs: any[]): Promise<void> {
+            if (!inputs || !inputs.length) return
+            await ensureStaticStyle()
+            for (let i = 0; i < inputs.length; i++) {
+                const input = inputs[i]
+                try { input.setAttribute("data-seatags-tb", "1") } catch (_e) {}
+                let grp: any = null
+                try { grp = await ctx.dom.createElement("div") } catch (e) { dErr = "ctl" }
+                if (!grp) continue
+                try { grp.setAttribute("class", "seatags-group") } catch (_e) {}
+
+                let sel: any = null
+                try { sel = await ctx.dom.createElement("select") } catch (_e) {}
+                if (sel) {
+                    try { sel.setAttribute("class", "seatags-select") } catch (_e) {}
+                    try { sel.setInnerHTML(statusOptionsHtml()) } catch (_e) {}
+                    try { sel.setProperty("value", filterState.get()) } catch (_e) {}
+                    try { sel.addEventListener("change", () => { onStatusChange(sel) }) } catch (_e) {}
+                    grp.append(sel)
+                }
+
+                let author: any = null
+                try { author = await ctx.dom.createElement("input") } catch (_e) {}
+                if (author) {
+                    try { author.setAttribute("type", "text") } catch (_e) {}
+                    try { author.setAttribute("placeholder", "Search by author...") } catch (_e) {}
+                    try { author.setAttribute("class", "seatags-input") } catch (_e) {}
+                    try { author.setProperty("value", authorState.get()) } catch (_e) {}
+                    try { author.addEventListener("input", () => { onAuthorInput(author) }) } catch (_e) {}
+                    grp.append(author)
+                }
+
+                let ic: any = null
+                try { ic = await input.getParent() } catch (_e) {}
+                if (ic) { try { ic.after(grp) } catch (e) { dErr = "place" } }
+                else { try { input.after(grp) } catch (_e) {} }
+            }
+        }
+
+        // ---------- startup ----------
+        function startControls(): void {
+            if (!domReady || controlsStarted) return
+            controlsStarted = true
+            try {
+                ctx.dom.observe('input[placeholder*="extensions"]:not([data-seatags-tb])', injectControls)
+            } catch (e) { dErr = "obs-ctl"; controlsStarted = false }
+        }
+        function startCards(): void {
+            if (!domReady || started) return
             if (entriesState.get().length === 0) return
             started = true
             try {
                 ctx.dom.observe('[class*="extension-card"]:not([data-seatags])', decorateCards, { withInnerHTML: true })
-            } catch (e) {
-                dErr = "observe"
-                started = false
-            }
+            } catch (e) { dErr = "obs-cards"; started = false }
             applyFilter().catch(() => {})
         }
         function onDomReady(): void {
             domReady = true
-            startDecorator()
+            startControls()
             load(false).catch(() => {})
         }
-
         try { ctx.dom.onReady(() => { onDomReady() }) } catch (_e) {}
         try { ctx.dom.onMainTabReady(() => { onDomReady() }) } catch (_e) {}
-
-        // ---------- on-page floating filter bar (Extensions screen only) ----------
-        let bar: any = null
-        let barBuilt = false
-        const barBtns: { [k: string]: any } = {}
-
-        function barBtnCss(active: boolean): string {
-            if (active) return "appearance:none;cursor:pointer;border:1px solid transparent;border-radius:8px;padding:5px 12px;font-size:12px;font-weight:600;background:#6152df;color:#ffffff;font-family:inherit"
-            return "appearance:none;cursor:pointer;border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:5px 12px;font-size:12px;font-weight:500;background:rgba(255,255,255,0.06);color:#cacaca;font-family:inherit"
-        }
-        function styleBarButtons(): void {
-            const f = filterState.get()
-            for (let i = 0; i < FILTERS.length; i++) {
-                const k = FILTERS[i][0]
-                const btn = barBtns[k]
-                if (btn) { try { btn.setCssText(barBtnCss(f === k)) } catch (_e) {} }
-            }
-        }
-        function selectFilter(k: string): void {
-            filterState.set(k)
-            applyFilter().catch(() => {})
-            styleBarButtons()
-            refresh()
-        }
-        function isExtPath(p: string): boolean { return !!p && p.indexOf("/extensions") === 0 }
-        function currentPath(): string {
-            try { return ctx.screen.state().get().pathname || "" } catch (_e) { return "" }
-        }
-        function showBar(show: boolean): void {
-            if (!bar) return
-            try { bar.setStyle("display", show ? "flex" : "none") } catch (_e) {}
-        }
-        const BAR_LABEL_CSS = "font-size:11px;font-weight:700;letter-spacing:0.02em;color:rgba(255,255,255,0.5);margin-right:2px"
-        async function ensureBar(): Promise<void> {
-            if (barBuilt || bar) return
-            barBuilt = true
-            try {
-                const body = await ctx.dom.queryOne("body")
-                if (!body) { barBuilt = false; return }
-                const b = await ctx.dom.createElement("div")
-                b.setCssText("position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:9999;display:none;flex-direction:row;flex-wrap:wrap;gap:6px;align-items:center;padding:8px 12px;background:rgba(16,16,20,0.94);border:1px solid rgba(255,255,255,0.12);border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,0.5)")
-                const lab = await ctx.dom.createElement("span")
-                lab.setText("SeaTags")
-                try { lab.setCssText(BAR_LABEL_CSS) } catch (_e) {}
-                b.append(lab)
-                for (let i = 0; i < FILTERS.length; i++) {
-                    const k = FILTERS[i][0]
-                    const btn = await ctx.dom.createElement("button")
-                    btn.setText(FILTERS[i][1])
-                    try { btn.setCssText(barBtnCss(filterState.get() === k)) } catch (_e) {}
-                    try { btn.addEventListener("click", () => { selectFilter(k) }) } catch (_e) {}
-                    b.append(btn)
-                    barBtns[k] = btn
-                }
-                body.append(b)
-                bar = b
-                showBar(isExtPath(currentPath()))
-            } catch (e) { dErr = "bar"; barBuilt = false }
-        }
-
-        try { ctx.screen.onNavigate((e: any) => { const p = (e && e.pathname) ? String(e.pathname) : ""; showBar(isExtPath(p)); if (isExtPath(p)) startDecorator() }) } catch (_e) {}
+        try { ctx.screen.onNavigate(() => { startControls(); startCards() }) } catch (_e) {}
 
         // ---------- load the marketplace tag list ----------
         let inflight = false
@@ -260,18 +290,11 @@ function init() {
             if (inflight) return
             if (!force && entriesState.get().length > 0 && now() - lastAt < CACHE_TTL) return
             inflight = true
-            statusState.set("loading")
-            refresh()
-            let msg = ""
             try {
                 const res = await fetch(SRC, { timeout: 15 })
-                if (!res.ok) {
-                    msg = "fetch failed (HTTP " + res.status + ")"
-                } else {
+                if (res.ok) {
                     const data = res.json<any>()
-                    if (!Array.isArray(data)) {
-                        msg = "unexpected marketplace format"
-                    } else {
+                    if (Array.isArray(data)) {
                         entriesState.set(data as Entry[])
                         rebuildMaps()
                         lastAt = now()
@@ -279,63 +302,11 @@ function init() {
                     }
                 }
             } catch (_e) {
-                msg = "could not reach the marketplace"
+                dErr = "fetch"
             }
             inflight = false
-            statusState.set(msg)
-            refresh()
-            startDecorator()
+            startCards()
         }
-
-        // ---------- tray (stats + filter controls) ----------
-        const tray = ctx.newTray({ iconUrl: ICON, withContent: true, width: "300px" })
-        for (let i = 0; i < FILTERS.length; i++) {
-            const k = FILTERS[i][0]
-            ctx.registerEventHandler("st-f-" + k, () => { selectFilter(k) })
-        }
-        ctx.registerEventHandler("st-refresh", () => { load(true).catch(() => {}) })
-
-        tray.render(() => {
-          try {
-            const es = entriesState.get()
-            const items: any[] = []
-            items.push(tray.flex({
-                items: [
-                    tray.text("SeaTags", { style: { fontWeight: "600", fontSize: "15px", color: "rgba(255,255,255,0.95)" } }),
-                    tray.button({ label: statusState.get() === "loading" ? "Loading…" : "Refresh", onClick: "st-refresh", intent: "gray-subtle", size: "xs", style: { marginLeft: "auto" } }),
-                ],
-                gap: 2,
-                style: { alignItems: "center" },
-            }))
-            if (es.length === 0) {
-                items.push(tray.text(statusState.get() === "loading" ? "Loading the marketplace…" : (statusState.get() || "Tap Refresh to load the tag list."), { style: { color: "rgba(255,255,255,0.6)", fontSize: "12px" } }))
-            } else {
-                let w = 0, b = 0, d = 0
-                for (let i = 0; i < es.length; i++) { if (es[i].workingTag) w++; if (es[i].brokenTag) b++; if (es[i].deprecatedTag) d++ }
-                items.push(tray.flex({
-                    items: [
-                        tray.badge({ text: "✓ " + w, intent: "success", size: "sm" }),
-                        tray.badge({ text: "✗ " + b, intent: "alert", size: "sm" }),
-                        tray.badge({ text: "⚠ " + d, intent: "warning", size: "sm" }),
-                        tray.badge({ text: es.length + " total", intent: "gray", size: "sm" }),
-                    ],
-                    gap: 2,
-                    style: { flexWrap: "wrap" },
-                }))
-                items.push(tray.text("Filter (also shown on the Extensions page)", { style: { color: "rgba(255,255,255,0.55)", fontSize: "11px", marginTop: "4px" } }))
-                items.push(tray.flex({
-                    items: FILTERS.map((f) => tray.button({ label: f[1], onClick: "st-f-" + f[0], intent: filterState.get() === f[0] ? "primary" : "gray-subtle", size: "xs" })),
-                    gap: 2,
-                    style: { flexWrap: "wrap" },
-                }))
-            }
-            if (dErr) items.push(tray.text("⚠ " + dErr, { style: { color: "rgba(255,180,80,0.7)", fontSize: "10px", marginTop: "4px" } }))
-            return tray.stack({ items: items, gap: 3 })
-          } catch (_e) {
-            return tray.stack({ items: [tray.text("SeaTags", { style: { fontWeight: "600" } })], gap: 3 })
-          }
-        })
-        tray.onOpen(() => { load(false).catch(() => {}); startDecorator() })
 
         ctx.setTimeout(() => { if (!domReady) onDomReady() }, 3000)
     })
