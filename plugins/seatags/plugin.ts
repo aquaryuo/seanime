@@ -62,8 +62,12 @@ function init() {
         let filterStyle: any = null
 
         const CTL_INPUT_CSS = "height:40px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:#0b0b0b;color:#d1d1d1;font-size:14px;outline:none;font-family:inherit;box-sizing:border-box;padding:0 12px;min-width:180px"
-        const CTL_SELECT_CSS = "height:40px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background-color:#0b0b0b;color:#d1d1d1;font-size:14px;outline:none;font-family:inherit;box-sizing:border-box;cursor:pointer;padding:0 30px 0 12px;min-width:160px;-webkit-appearance:none;-moz-appearance:none;appearance:none;background-image:url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.5)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>\");background-repeat:no-repeat;background-position:right 10px center"
         const CTL_WRAP_CSS = "display:flex;flex-direction:row;flex-wrap:wrap;gap:8px;align-items:center;flex:1 1 auto;min-width:0"
+        const CTL_TRIGGER_CSS = "display:inline-flex;align-items:center;justify-content:space-between;gap:8px;height:40px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background-color:#0b0b0b;color:#d1d1d1;font-size:14px;padding:0 12px;min-width:160px;cursor:pointer;box-sizing:border-box;font-family:inherit"
+        const SEL_CONTENT_CLASS = "UI-Select__content w-full overflow-hidden rounded-[--radius] shadow-md bg-[--paper] border leading-none z-[100]"
+        const SEL_VIEWPORT_CLASS = "UI-Select__viewport p-1"
+        const SEL_ITEM_CLASS = "UI-Select__item seatags-status-item text-base leading-none rounded-[--radius] flex items-center h-8 px-3 relative select-none"
+        const CHEVRON_SVG = "<svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'></polyline></svg>"
 
         // ---------- helpers ----------
         function tagsOf(e: Entry): string[] {
@@ -190,19 +194,98 @@ function init() {
                 }).catch(() => {})
             } catch (_e) {}
         }
-        function onStatusChange(el: any): void {
+        function statusLabel(v: string): string {
+            for (let i = 0; i < STATUS_OPTS.length; i++) if (STATUS_OPTS[i][0] === v) return STATUS_OPTS[i][1]
+            return STATUS_OPTS[0][1]
+        }
+        let hoverStyle: any = null
+        async function ensureHoverStyle(): Promise<void> {
+            if (hoverStyle) return
             try {
-                el.getProperty("value").then((v: any) => {
-                    filterState.set(v == null ? "all" : String(v))
-                    applyFilter().catch(() => {})
-                }).catch(() => {})
+                const b = await ctx.dom.queryOne("body")
+                if (!b) return
+                const s = await ctx.dom.createElement("style")
+                s.setText(".seatags-status-item:hover{background-color:rgba(255,255,255,0.08)}")
+                b.append(s)
+                hoverStyle = s
             } catch (_e) {}
         }
-        function statusOptionsHtml(): string {
-            let h = ""
-            for (let i = 0; i < STATUS_OPTS.length; i++) h += '<option value="' + esc(STATUS_OPTS[i][0]) + '">' + esc(STATUS_OPTS[i][1]) + "</option>"
-            return h
+
+        type Menu = { open: boolean; cancel: any; content: any; body: any }
+        function closeMenu(st: Menu): void {
+            try { st.content.setStyle("display", "none") } catch (_e) {}
+            st.open = false
+            if (st.cancel) { try { st.cancel() } catch (_e) {} ; st.cancel = null }
         }
+        function openMenu(st: Menu): void {
+            try { st.content.setStyle("display", "block") } catch (_e) {}
+            st.open = true
+            if (st.body) { try { st.cancel = st.body.addEventListener("click", () => { closeMenu(st) }) } catch (_e) {} }
+        }
+        function toggleMenu(st: Menu): void { if (st.open) closeMenu(st); else openMenu(st) }
+
+        // Builds a div-based dropdown that reuses Seanime's own Select classes (looks identical)
+        async function buildStatusDropdown(boxClass: string): Promise<any> {
+            await ensureHoverStyle()
+            let body: any = null
+            try { body = await ctx.dom.queryOne("body") } catch (_e) {}
+
+            let container: any = null
+            try { container = await ctx.dom.createElement("div") } catch (_e) {}
+            if (!container) return null
+            try { container.setCssText("position:relative;display:inline-block") } catch (_e) {}
+
+            let trigger: any = null
+            try { trigger = await ctx.dom.createElement("div") } catch (_e) {}
+            if (!trigger) return null
+            if (boxClass) { try { trigger.setAttribute("class", boxClass) } catch (_e) {} }
+            else { try { trigger.setCssText(CTL_TRIGGER_CSS) } catch (_e) {} }
+            try { trigger.addClass("inline-flex", "items-center", "justify-between") } catch (_e) {}
+            try { trigger.setStyle("cursor", "pointer") } catch (_e) {}
+
+            let label: any = null
+            try { label = await ctx.dom.createElement("span") } catch (_e) {}
+            if (label) { try { label.setText(statusLabel(filterState.get())) } catch (_e) {} ; try { trigger.append(label) } catch (_e) {} }
+
+            let chev: any = null
+            try { chev = await ctx.dom.createElement("span") } catch (_e) {}
+            if (chev) {
+                try { chev.setAttribute("class", "UI-Combobox__chevronIcon ml-2 h-4 w-4 shrink-0 opacity-50") } catch (_e) {}
+                try { chev.setInnerHTML(CHEVRON_SVG) } catch (_e) {}
+                try { trigger.append(chev) } catch (_e) {}
+            }
+
+            let content: any = null
+            try { content = await ctx.dom.createElement("div") } catch (_e) {}
+            if (!content) return null
+            try { content.setAttribute("class", SEL_CONTENT_CLASS) } catch (_e) {}
+            try { content.setCssText("position:absolute;top:100%;left:0;width:100%;min-width:170px;margin-top:4px;display:none") } catch (_e) {}
+
+            let vp: any = null
+            try { vp = await ctx.dom.createElement("div") } catch (_e) {}
+            if (vp) { try { vp.setAttribute("class", SEL_VIEWPORT_CLASS) } catch (_e) {} ; try { content.append(vp) } catch (_e) {} }
+
+            const st: Menu = { open: false, cancel: null, content: content, body: body }
+
+            for (let i = 0; i < STATUS_OPTS.length; i++) {
+                const val = STATUS_OPTS[i][0]
+                const lbl = STATUS_OPTS[i][1]
+                let it: any = null
+                try { it = await ctx.dom.createElement("div") } catch (_e) {}
+                if (!it) continue
+                try { it.setAttribute("class", SEL_ITEM_CLASS) } catch (_e) {}
+                try { it.setStyle("cursor", "pointer") } catch (_e) {}
+                try { it.setText(lbl) } catch (_e) {}
+                try { it.addEventListener("click", () => { filterState.set(val); if (label) { try { label.setText(lbl) } catch (_e) {} } applyFilter().catch(() => {}); closeMenu(st) }) } catch (_e) {}
+                if (vp) { try { vp.append(it) } catch (_e) {} }
+            }
+
+            try { container.append(trigger) } catch (_e) {}
+            try { container.append(content) } catch (_e) {}
+            try { trigger.addEventListener("click", () => { toggleMenu(st) }) } catch (_e) {}
+            return container
+        }
+
         const injectedIds: { [k: string]: boolean } = {}
         async function injectControls(inputs: any[]): Promise<void> {
             if (!inputs || !inputs.length) return
@@ -221,14 +304,11 @@ function init() {
                 if (rowEl) { try { langRoot = await rowEl.query(".UI-Select__root") } catch (_e) {} }
                 const hasLang = !!(langRoot && langRoot.length)
 
-                let sel: any = null
-                try { sel = await ctx.dom.createElement("select") } catch (_e) {}
-                if (sel) {
-                    try { sel.setCssText(CTL_SELECT_CSS) } catch (_e) {}
-                    try { sel.setInnerHTML(statusOptionsHtml()) } catch (_e) {}
-                    try { sel.setProperty("value", filterState.get()) } catch (_e) {}
-                    try { sel.addEventListener("change", () => { onStatusChange(sel) }) } catch (_e) {}
-                }
+                let boxClass = ""
+                if (hasLang) { try { const c = await langRoot[0].getAttribute("class"); boxClass = c ? String(c) : "" } catch (_e) {} }
+                if (!boxClass && ic) { try { const c = await ic.getAttribute("class"); boxClass = c ? String(c) : "" } catch (_e) {} }
+
+                const statusEl = await buildStatusDropdown(boxClass)
 
                 let author: any = null
                 try { author = await ctx.dom.createElement("input") } catch (_e) {}
@@ -242,7 +322,7 @@ function init() {
 
                 if (hasLang) {
                     // Marketplace row: [Status][All Languages][Author][Search] — pure insertion, no node moves
-                    if (sel) { try { langRoot[0].before(sel) } catch (e) { dErr = "place" } }
+                    if (statusEl) { try { langRoot[0].before(statusEl) } catch (e) { dErr = "place" } }
                     if (author && ic) { try { ic.before(author) } catch (_e) {} }
                 } else if (ic) {
                     // Installed (no language dropdown): wrap into a flex row → [Status][Author][Search]
@@ -252,7 +332,7 @@ function init() {
                         try { wrap.setCssText(CTL_WRAP_CSS) } catch (_e) {}
                         try { ic.before(wrap) } catch (e) { dErr = "place" }
                         try { ic.setStyle("flex", "1 1 220px") } catch (_e) {}
-                        if (sel) { try { wrap.append(sel) } catch (_e) {} }
+                        if (statusEl) { try { wrap.append(statusEl) } catch (_e) {} }
                         if (author) { try { wrap.append(author) } catch (_e) {} }
                         try { wrap.append(ic) } catch (e) { dErr = "move" }
                     }
