@@ -62,7 +62,7 @@ function init() {
         let filterStyle: any = null
 
         const CTL_INPUT_CSS = "height:40px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:#0b0b0b;color:#d1d1d1;font-size:14px;outline:none;font-family:inherit;box-sizing:border-box;padding:0 12px;min-width:180px"
-        const CTL_SELECT_CSS = "height:40px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:#0b0b0b;color:#d1d1d1;font-size:14px;outline:none;font-family:inherit;box-sizing:border-box;cursor:pointer;padding:0 10px;min-width:160px"
+        const CTL_SELECT_CSS = "height:40px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background-color:#0b0b0b;color:#d1d1d1;font-size:14px;outline:none;font-family:inherit;box-sizing:border-box;cursor:pointer;padding:0 30px 0 12px;min-width:160px;-webkit-appearance:none;-moz-appearance:none;appearance:none;background-image:url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.5)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>\");background-repeat:no-repeat;background-position:right 10px center"
         const CTL_WRAP_CSS = "display:flex;flex-direction:row;flex-wrap:wrap;gap:8px;align-items:center;flex:1 1 auto;min-width:0"
 
         // ---------- helpers ----------
@@ -203,10 +203,14 @@ function init() {
             for (let i = 0; i < STATUS_OPTS.length; i++) h += '<option value="' + esc(STATUS_OPTS[i][0]) + '">' + esc(STATUS_OPTS[i][1]) + "</option>"
             return h
         }
+        const injectedIds: { [k: string]: boolean } = {}
         async function injectControls(inputs: any[]): Promise<void> {
             if (!inputs || !inputs.length) return
             for (let i = 0; i < inputs.length; i++) {
                 const input = inputs[i]
+                const eid = input && input.id ? String(input.id) : ""
+                if (eid && injectedIds[eid]) continue
+                if (eid) injectedIds[eid] = true
                 try { input.setAttribute("data-seatags-tb", "1") } catch (_e) {}
 
                 let ic: any = null
@@ -217,17 +221,10 @@ function init() {
                 if (rowEl) { try { langRoot = await rowEl.query(".UI-Select__root") } catch (_e) {} }
                 const hasLang = !!(langRoot && langRoot.length)
 
-                let inpClass = ""
-                if (ic) { try { const c = await ic.getAttribute("class"); inpClass = c ? String(c) : "" } catch (_e) {} }
-                let selClass = ""
-                if (hasLang) { try { const c = await langRoot[0].getAttribute("class"); selClass = c ? String(c) : "" } catch (_e) {} }
-                if (!selClass) selClass = inpClass
-
                 let sel: any = null
                 try { sel = await ctx.dom.createElement("select") } catch (_e) {}
                 if (sel) {
-                    if (selClass) { try { sel.setAttribute("class", selClass) } catch (_e) {} }
-                    else { try { sel.setCssText(CTL_SELECT_CSS) } catch (_e) {} }
+                    try { sel.setCssText(CTL_SELECT_CSS) } catch (_e) {}
                     try { sel.setInnerHTML(statusOptionsHtml()) } catch (_e) {}
                     try { sel.setProperty("value", filterState.get()) } catch (_e) {}
                     try { sel.addEventListener("change", () => { onStatusChange(sel) }) } catch (_e) {}
@@ -238,8 +235,7 @@ function init() {
                 if (author) {
                     try { author.setAttribute("type", "text") } catch (_e) {}
                     try { author.setAttribute("placeholder", "Search by author...") } catch (_e) {}
-                    if (inpClass) { try { author.setAttribute("class", inpClass) } catch (_e) {} }
-                    else { try { author.setCssText(CTL_INPUT_CSS) } catch (_e) {} }
+                    try { author.setCssText(CTL_INPUT_CSS) } catch (_e) {}
                     try { author.setProperty("value", authorState.get()) } catch (_e) {}
                     try { author.addEventListener("input", () => { onAuthorInput(author) }) } catch (_e) {}
                 }
