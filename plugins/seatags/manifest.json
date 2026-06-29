@@ -1,7 +1,7 @@
 {
   "id": "aq-seatags-beta",
   "name": "SeaTags - BETA",
-  "version": "1.6.3",
+  "version": "1.6.4",
   "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/seatags/manifest.json",
   "language": "typescript",
   "type": "plugin",
