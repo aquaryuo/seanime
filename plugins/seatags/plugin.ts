@@ -61,6 +61,7 @@ function init() {
 
         // ---------- decoration of the real Extensions cards ----------
         let started = false
+        let domReady = false
         let filterStyle: any = null
 
         function tagsOf(e: Entry): string[] {
@@ -170,9 +171,10 @@ function init() {
         }
 
         function startDecorator(): void {
-            if (entriesState.get().length === 0) return
+            if (!domReady) return
             ensureBar().catch(() => {})
             if (started) return
+            if (entriesState.get().length === 0) return
             started = true
             try {
                 ctx.dom.observe('[class*="extension-card"]:not([data-seatags])', decorateCards, { withInnerHTML: true })
@@ -182,8 +184,14 @@ function init() {
             }
             applyFilter().catch(() => {})
         }
+        function onDomReady(): void {
+            domReady = true
+            startDecorator()
+            load(false).catch(() => {})
+        }
 
-        try { ctx.dom.onReady(() => { startDecorator() }) } catch (_e) {}
+        try { ctx.dom.onReady(() => { onDomReady() }) } catch (_e) {}
+        try { ctx.dom.onMainTabReady(() => { onDomReady() }) } catch (_e) {}
 
         // ---------- on-page floating filter bar (Extensions screen only) ----------
         let bar: any = null
@@ -329,7 +337,6 @@ function init() {
         })
         tray.onOpen(() => { load(false).catch(() => {}); startDecorator() })
 
-        ctx.setTimeout(() => { load(false).catch(() => {}); startDecorator() }, 0)
-        ctx.setTimeout(() => { startDecorator() }, 1500)
+        ctx.setTimeout(() => { if (!domReady) onDomReady() }, 3000)
     })
 }
