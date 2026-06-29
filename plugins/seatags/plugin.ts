@@ -84,13 +84,24 @@ function init() {
             if (kind === "stars") return base + ";background:transparent;color:#fcd34d;padding:0"
             return base
         }
-        async function addChip(parent: any, text: string, kind: string): Promise<void> {
-            let c: any = null
-            try { c = await ctx.dom.createElement("span") } catch (e) { dErr = "create" }
-            if (!c) return
-            try { c.setText(text) } catch (e) { dErr = "text" }
-            try { c.setCssText(chipCss(kind)) } catch (e) { dErr = "css" }
-            try { parent.append(c) } catch (e) { dErr = "append" }
+        function esc(s: string): string {
+            return (s == null ? "" : String(s)).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
+        }
+        function chipHtml(text: string, kind: string): string {
+            return '<span style="' + chipCss(kind) + '">' + esc(text) + "</span>"
+        }
+        function blockHtml(info: Entry, tags: string[]): string {
+            const rcss = "display:flex;flex-wrap:wrap;gap:6px;align-items:center"
+            let r1 = ""
+            if (info.version) r1 += chipHtml(String(info.version), "version")
+            for (let i = 0; i < tags.length; i++) r1 += chipHtml(PILL_LABEL[tags[i]] || tags[i], tags[i])
+            const lang = (info.lang || "").toString()
+            if (lang) r1 += chipHtml(lang.toUpperCase(), lang.toLowerCase() === "multi" ? "language" : "lang")
+            let r2 = ""
+            if (info.author) r2 += chipHtml(String(info.author), "author")
+            if (info.language) r2 += chipHtml(cap(String(info.language)), "language")
+            if (typeof info.stars === "number" && info.stars > 0) r2 += chipHtml("★ " + info.stars, "stars")
+            return '<div style="' + rcss + '">' + r1 + '</div><div style="' + rcss + '">' + r2 + "</div>"
         }
         function extractId(html: string): string {
             const m = html.match(/opacity-30[^>]*>([^<]+)</)
@@ -107,35 +118,17 @@ function init() {
                 const badges = await card.query(".UI-Badge__root")
                 if (badges && badges.length) row = await badges[0].getParent()
             } catch (e) { dErr = "findrow" }
-            if (!row) {
-                for (let i = 0; i < tags.length; i++) await addChip(card, PILL_LABEL[tags[i]] || tags[i], tags[i])
-                return
-            }
-            try { row.setStyle("display", "none") } catch (_e) {}
             let block: any = null
             try { block = await ctx.dom.createElement("div") } catch (e) { dErr = "create" }
             if (!block) return
-            try { block.setCssText("display:flex;flex-direction:column;gap:6px") } catch (_e) {}
-            const rowCss = "display:flex;flex-wrap:wrap;gap:6px;align-items:center"
-            let r1: any = null, r2: any = null
-            try { r1 = await ctx.dom.createElement("div") } catch (_e) {}
-            try { r2 = await ctx.dom.createElement("div") } catch (_e) {}
-            if (r1) {
-                try { r1.setCssText(rowCss) } catch (_e) {}
-                if (info.version) await addChip(r1, String(info.version), "version")
-                for (let i = 0; i < tags.length; i++) await addChip(r1, PILL_LABEL[tags[i]] || tags[i], tags[i])
-                const lang = (info.lang || "").toString()
-                if (lang) await addChip(r1, lang.toUpperCase(), lang.toLowerCase() === "multi" ? "language" : "lang")
-                block.append(r1)
+            try { block.setCssText("display:flex;flex-direction:column;gap:6px;margin-top:8px") } catch (_e) {}
+            try { block.setInnerHTML(blockHtml(info, tags)) } catch (e) { dErr = "html" }
+            if (row) {
+                try { row.setStyle("display", "none") } catch (_e) {}
+                try { row.after(block) } catch (e) { dErr = "insert" }
+            } else {
+                try { card.append(block) } catch (e) { dErr = "append" }
             }
-            if (r2) {
-                try { r2.setCssText(rowCss) } catch (_e) {}
-                if (info.author) await addChip(r2, String(info.author), "author")
-                if (info.language) await addChip(r2, cap(String(info.language)), "language")
-                if (typeof info.stars === "number" && info.stars > 0) await addChip(r2, "★ " + info.stars, "stars")
-                block.append(r2)
-            }
-            try { row.after(block) } catch (e) { dErr = "insert" }
         }
 
         async function decorateOne(card: any): Promise<void> {
