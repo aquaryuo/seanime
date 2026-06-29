@@ -68,6 +68,8 @@ function init() {
         const SEL_VIEWPORT_CLASS = "UI-Select__viewport p-1"
         const SEL_ITEM_CLASS = "UI-Select__item seatags-status-item text-base leading-none rounded-[--radius] flex items-center h-8 px-3 relative select-none"
         const CHEVRON_SVG = "<svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'></polyline></svg>"
+        const PERSON_SVG = "<svg width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2'></path><circle cx='12' cy='7' r='4'></circle></svg>"
+        const ICON_CLASS = "UI-Input__addons--icon pointer-events-none absolute inset-y-0 left-0 w-12 grid place-content-center text-gray-500 dark:text-gray-300"
 
         // ---------- helpers ----------
         function tagsOf(e: Entry): string[] {
@@ -241,11 +243,22 @@ function init() {
             if (boxClass) { try { trigger.setAttribute("class", boxClass) } catch (_e) {} }
             else { try { trigger.setCssText(CTL_TRIGGER_CSS) } catch (_e) {} }
             try { trigger.addClass("inline-flex", "items-center", "justify-between") } catch (_e) {}
+            try { trigger.setStyle("display", "inline-flex") } catch (_e) {}
+            try { trigger.setStyle("align-items", "center") } catch (_e) {}
+            try { trigger.setStyle("justify-content", "space-between") } catch (_e) {}
             try { trigger.setStyle("cursor", "pointer") } catch (_e) {}
 
             let label: any = null
             try { label = await ctx.dom.createElement("span") } catch (_e) {}
-            if (label) { try { label.setText(statusLabel(filterState.get())) } catch (_e) {} ; try { trigger.append(label) } catch (_e) {} }
+            if (label) {
+                try { label.setText(statusLabel(filterState.get())) } catch (_e) {}
+                try { label.setStyle("flex", "1") } catch (_e) {}
+                try { label.setStyle("text-align", "left") } catch (_e) {}
+                try { label.setStyle("overflow", "hidden") } catch (_e) {}
+                try { label.setStyle("text-overflow", "ellipsis") } catch (_e) {}
+                try { label.setStyle("white-space", "nowrap") } catch (_e) {}
+                try { trigger.append(label) } catch (_e) {}
+            }
 
             let chev: any = null
             try { chev = await ctx.dom.createElement("span") } catch (_e) {}
@@ -313,20 +326,39 @@ function init() {
                 const statusEl = await buildStatusDropdown(boxClass)
 
                 let author: any = null
-                try { author = await ctx.dom.createElement("input") } catch (_e) {}
-                if (author) {
-                    try { author.setAttribute("type", "text") } catch (_e) {}
-                    try { author.setAttribute("placeholder", "Search by author...") } catch (_e) {}
-                    if (inputClass) {
-                        try { author.setAttribute("class", inputClass) } catch (_e) {}
-                        try { author.setStyle("padding-left", "0.75rem") } catch (_e) {}
-                        try { author.setStyle("flex", "1 1 200px") } catch (_e) {}
-                        try { author.setStyle("min-width", "160px") } catch (_e) {}
-                    } else {
-                        try { author.setCssText(CTL_INPUT_CSS) } catch (_e) {}
+                if (inputClass) {
+                    // Replicate the search box: container > absolute person icon > input (keeps pl-10)
+                    try { author = await ctx.dom.createElement("div") } catch (_e) {}
+                    if (author) {
+                        try { author.setCssText("position:relative;display:flex;align-items:center;flex:1 1 200px;min-width:160px") } catch (_e) {}
+                        let aicon: any = null
+                        try { aicon = await ctx.dom.createElement("span") } catch (_e) {}
+                        if (aicon) {
+                            try { aicon.setAttribute("class", ICON_CLASS) } catch (_e) {}
+                            try { aicon.setStyle("z-index", "1") } catch (_e) {}
+                            try { aicon.setInnerHTML(PERSON_SVG) } catch (_e) {}
+                            try { author.append(aicon) } catch (_e) {}
+                        }
+                        let ainput: any = null
+                        try { ainput = await ctx.dom.createElement("input") } catch (_e) {}
+                        if (ainput) {
+                            try { ainput.setAttribute("type", "text") } catch (_e) {}
+                            try { ainput.setAttribute("placeholder", "Search by author...") } catch (_e) {}
+                            try { ainput.setAttribute("class", inputClass) } catch (_e) {}
+                            try { ainput.setProperty("value", authorState.get()) } catch (_e) {}
+                            try { ainput.addEventListener("input", () => { onAuthorInput(ainput) }) } catch (_e) {}
+                            try { author.append(ainput) } catch (_e) {}
+                        }
                     }
-                    try { author.setProperty("value", authorState.get()) } catch (_e) {}
-                    try { author.addEventListener("input", () => { onAuthorInput(author) }) } catch (_e) {}
+                } else {
+                    try { author = await ctx.dom.createElement("input") } catch (_e) {}
+                    if (author) {
+                        try { author.setAttribute("type", "text") } catch (_e) {}
+                        try { author.setAttribute("placeholder", "Search by author...") } catch (_e) {}
+                        try { author.setCssText(CTL_INPUT_CSS) } catch (_e) {}
+                        try { author.setProperty("value", authorState.get()) } catch (_e) {}
+                        try { author.addEventListener("input", () => { onAuthorInput(author) }) } catch (_e) {}
+                    }
                 }
 
                 if (hasLang) {
