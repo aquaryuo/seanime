@@ -67,7 +67,7 @@ function init() {
         const SEL_CONTENT_CLASS = "UI-Select__content w-full overflow-hidden rounded-[--radius] shadow-md bg-[--paper] border leading-none z-[100]"
         const SEL_VIEWPORT_CLASS = "UI-Select__viewport p-1"
         const SEL_ITEM_CLASS = "UI-Select__item seatags-status-item text-base leading-none rounded-[--radius] flex items-center h-8 px-3 relative select-none"
-        const CHEVRON_SVG = "<svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'></polyline></svg>"
+        const CHEVRON_SVG = "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'></path></svg>"
         const PERSON_SVG = "<svg width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2'></path><circle cx='12' cy='7' r='4'></circle></svg>"
         const ICON_CLASS = "UI-Input__addons--icon pointer-events-none absolute inset-y-0 left-0 w-12 grid place-content-center text-gray-500 dark:text-gray-300"
 
@@ -248,6 +248,9 @@ function init() {
             try { trigger.setStyle("justify-content", "space-between") } catch (_e) {}
             try { trigger.setStyle("padding-left", "0.75rem") } catch (_e) {}
             try { trigger.setStyle("padding-right", "0.75rem") } catch (_e) {}
+            try { trigger.setStyle("width", "200px") } catch (_e) {}
+            try { trigger.setStyle("max-width", "200px") } catch (_e) {}
+            try { trigger.setStyle("flex", "none") } catch (_e) {}
             try { trigger.setStyle("cursor", "pointer") } catch (_e) {}
 
             let label: any = null
@@ -332,7 +335,7 @@ function init() {
                     // Replicate the search box: container > absolute person icon > input (keeps pl-10)
                     try { author = await ctx.dom.createElement("div") } catch (_e) {}
                     if (author) {
-                        try { author.setCssText("position:relative;display:flex;align-items:center;flex:1 1 200px;min-width:160px") } catch (_e) {}
+                        try { author.setCssText("position:relative;display:flex;align-items:center;flex:none;width:220px;max-width:220px") } catch (_e) {}
                         let aicon: any = null
                         try { aicon = await ctx.dom.createElement("span") } catch (_e) {}
                         if (aicon) {
