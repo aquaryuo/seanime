@@ -129,7 +129,7 @@ class Provider {
     }
 
     private normBase(): string {
-        return this.baseUrl.replace(/\/+$/, "")
+        return this.baseUrl.replace(/animelok\.online/i, "animelok.net").replace(/\/+$/, "")
     }
 
     private now(): number {
