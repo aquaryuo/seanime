@@ -246,6 +246,8 @@ function init() {
             try { trigger.setStyle("display", "inline-flex") } catch (_e) {}
             try { trigger.setStyle("align-items", "center") } catch (_e) {}
             try { trigger.setStyle("justify-content", "space-between") } catch (_e) {}
+            try { trigger.setStyle("padding-left", "0.75rem") } catch (_e) {}
+            try { trigger.setStyle("padding-right", "0.75rem") } catch (_e) {}
             try { trigger.setStyle("cursor", "pointer") } catch (_e) {}
 
             let label: any = null
