@@ -200,6 +200,11 @@ function init() {
             for (let i = 0; i < STATUS_OPTS.length; i++) if (STATUS_OPTS[i][0] === v) return STATUS_OPTS[i][1]
             return STATUS_OPTS[0][1]
         }
+        function selIndex(v: string): number {
+            for (let i = 0; i < STATUS_OPTS.length; i++) if (STATUS_OPTS[i][0] === v) return i
+            return 0
+        }
+        const ITEM_H = 32
         let hoverStyle: any = null
         async function ensureHoverStyle(): Promise<void> {
             if (hoverStyle) return
@@ -220,6 +225,8 @@ function init() {
             if (st.cancel) { try { st.cancel() } catch (_e) {} ; st.cancel = null }
         }
         function openMenu(st: Menu): void {
+            const idx = selIndex(filterState.get())
+            try { st.content.setStyle("top", (-(1 + idx * ITEM_H)) + "px") } catch (_e) {}
             try { st.content.setStyle("display", "block") } catch (_e) {}
             st.open = true
             if (st.body) { try { st.cancel = st.body.addEventListener("click", () => { closeMenu(st) }) } catch (_e) {} }
@@ -277,7 +284,7 @@ function init() {
             try { content = await ctx.dom.createElement("div") } catch (_e) {}
             if (!content) return null
             try { content.setAttribute("class", SEL_CONTENT_CLASS) } catch (_e) {}
-            try { content.setCssText("position:absolute;top:100%;left:0;width:100%;min-width:170px;margin-top:4px;display:none") } catch (_e) {}
+            try { content.setCssText("position:absolute;top:0;left:0;width:100%;min-width:170px;display:none") } catch (_e) {}
 
             let vp: any = null
             try { vp = await ctx.dom.createElement("div") } catch (_e) {}
