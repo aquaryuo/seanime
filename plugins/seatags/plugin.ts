@@ -242,7 +242,7 @@ function init() {
             let container: any = null
             try { container = await ctx.dom.createElement("div") } catch (_e) {}
             if (!container) return null
-            try { container.setCssText("position:relative;display:inline-block") } catch (_e) {}
+            try { container.setCssText("position:relative;flex:none;width:200px;box-sizing:border-box") } catch (_e) {}
 
             let trigger: any = null
             try { trigger = await ctx.dom.createElement("div") } catch (_e) {}
@@ -250,14 +250,13 @@ function init() {
             if (boxClass) { try { trigger.setAttribute("class", boxClass) } catch (_e) {} }
             else { try { trigger.setCssText(CTL_TRIGGER_CSS) } catch (_e) {} }
             try { trigger.addClass("inline-flex", "items-center", "justify-between") } catch (_e) {}
-            try { trigger.setStyle("display", "inline-flex") } catch (_e) {}
+            try { trigger.setStyle("display", "flex") } catch (_e) {}
             try { trigger.setStyle("align-items", "center") } catch (_e) {}
             try { trigger.setStyle("justify-content", "space-between") } catch (_e) {}
             try { trigger.setStyle("padding-left", "0.75rem") } catch (_e) {}
             try { trigger.setStyle("padding-right", "0.75rem") } catch (_e) {}
-            try { trigger.setStyle("width", "200px") } catch (_e) {}
-            try { trigger.setStyle("max-width", "200px") } catch (_e) {}
-            try { trigger.setStyle("flex", "none") } catch (_e) {}
+            try { trigger.setStyle("width", "100%") } catch (_e) {}
+            try { trigger.setStyle("box-sizing", "border-box") } catch (_e) {}
             try { trigger.setStyle("cursor", "pointer") } catch (_e) {}
 
             let label: any = null
