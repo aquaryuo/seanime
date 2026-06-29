@@ -208,19 +208,26 @@ function init() {
             for (let i = 0; i < inputs.length; i++) {
                 const input = inputs[i]
                 try { input.setAttribute("data-seatags-tb", "1") } catch (_e) {}
+
                 let ic: any = null
                 try { ic = await input.getParent() } catch (_e) {}
-                const anchor = ic || input
+                let rowEl: any = null
+                if (ic) { try { rowEl = await ic.getParent() } catch (_e) {} }
+                let langRoot: any[] = []
+                if (rowEl) { try { langRoot = await rowEl.query(".UI-Select__root") } catch (_e) {} }
+                const hasLang = !!(langRoot && langRoot.length)
 
-                let wrap: any = null
-                try { wrap = await ctx.dom.createElement("div") } catch (e) { dErr = "ctl" }
-                if (!wrap) continue
-                try { wrap.setCssText(CTL_WRAP_CSS) } catch (_e) {}
+                let inpClass = ""
+                if (ic) { try { const c = await ic.getAttribute("class"); inpClass = c ? String(c) : "" } catch (_e) {} }
+                let selClass = ""
+                if (hasLang) { try { const c = await langRoot[0].getAttribute("class"); selClass = c ? String(c) : "" } catch (_e) {} }
+                if (!selClass) selClass = inpClass
 
                 let sel: any = null
                 try { sel = await ctx.dom.createElement("select") } catch (_e) {}
                 if (sel) {
-                    try { sel.setCssText(CTL_SELECT_CSS) } catch (_e) {}
+                    if (selClass) { try { sel.setAttribute("class", selClass) } catch (_e) {} }
+                    else { try { sel.setCssText(CTL_SELECT_CSS) } catch (_e) {} }
                     try { sel.setInnerHTML(statusOptionsHtml()) } catch (_e) {}
                     try { sel.setProperty("value", filterState.get()) } catch (_e) {}
                     try { sel.addEventListener("change", () => { onStatusChange(sel) }) } catch (_e) {}
@@ -231,16 +238,29 @@ function init() {
                 if (author) {
                     try { author.setAttribute("type", "text") } catch (_e) {}
                     try { author.setAttribute("placeholder", "Search by author...") } catch (_e) {}
-                    try { author.setCssText(CTL_INPUT_CSS) } catch (_e) {}
+                    if (inpClass) { try { author.setAttribute("class", inpClass) } catch (_e) {} }
+                    else { try { author.setCssText(CTL_INPUT_CSS) } catch (_e) {} }
                     try { author.setProperty("value", authorState.get()) } catch (_e) {}
                     try { author.addEventListener("input", () => { onAuthorInput(author) }) } catch (_e) {}
                 }
 
-                try { anchor.before(wrap) } catch (e) { dErr = "place" }
-                try { anchor.setStyle("flex", "1 1 220px") } catch (_e) {}
-                try { wrap.append(anchor) } catch (e) { dErr = "move" }
-                if (sel) { try { wrap.append(sel) } catch (_e) {} }
-                if (author) { try { wrap.append(author) } catch (_e) {} }
+                if (hasLang) {
+                    // Marketplace row: [Status][All Languages][Author][Search] — pure insertion, no node moves
+                    if (sel) { try { langRoot[0].before(sel) } catch (e) { dErr = "place" } }
+                    if (author && ic) { try { ic.before(author) } catch (_e) {} }
+                } else if (ic) {
+                    // Installed (no language dropdown): wrap into a flex row → [Status][Author][Search]
+                    let wrap: any = null
+                    try { wrap = await ctx.dom.createElement("div") } catch (_e) {}
+                    if (wrap) {
+                        try { wrap.setCssText(CTL_WRAP_CSS) } catch (_e) {}
+                        try { ic.before(wrap) } catch (e) { dErr = "place" }
+                        try { ic.setStyle("flex", "1 1 220px") } catch (_e) {}
+                        if (sel) { try { wrap.append(sel) } catch (_e) {} }
+                        if (author) { try { wrap.append(author) } catch (_e) {} }
+                        try { wrap.append(ic) } catch (e) { dErr = "move" }
+                    }
+                }
             }
         }
 
