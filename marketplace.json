@@ -122,7 +122,7 @@
   {
     "id": "aq-seatags-beta",
     "name": "SeaTags - BETA",
-    "description": "Tags Seanime's own Extensions cards (Installed & Marketplace) with their community status (Working / Broken / Deprecated) and lets you filter by it — pulled from the Seanime-Marketplace tag list.",
+    "description": "Tags Seanime's own Extensions cards (Installed & Marketplace) with their community status (Working / Broken / Deprecated) and adds an Extension Status dropdown and author search to the Extensions toolbar — pulled from the Seanime-Marketplace tag list.",
     "author": "aquaryuo",
     "type": "plugin",
     "language": "typescript",
