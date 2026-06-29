@@ -61,9 +61,9 @@ function init() {
         let domReady = false
         let filterStyle: any = null
 
-        const CTL_INPUT_CSS = "height:40px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:#0b0b0b;color:#d1d1d1;font-size:14px;outline:none;font-family:inherit;box-sizing:border-box;padding:0 12px;min-width:180px"
+        const CTL_INPUT_CSS = "height:40px;border-radius:12px;border:1px solid rgba(255,255,255,0.12);background:#0b0b0b;color:#d1d1d1;font-size:14px;outline:none;font-family:inherit;box-sizing:border-box;padding:0 12px;min-width:180px"
         const CTL_WRAP_CSS = "display:flex;flex-direction:row;flex-wrap:wrap;gap:8px;align-items:center;flex:1 1 auto;min-width:0"
-        const CTL_TRIGGER_CSS = "display:inline-flex;align-items:center;justify-content:space-between;gap:8px;height:40px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background-color:#0b0b0b;color:#d1d1d1;font-size:14px;padding:0 12px;min-width:160px;cursor:pointer;box-sizing:border-box;font-family:inherit"
+        const CTL_TRIGGER_CSS = "display:inline-flex;align-items:center;justify-content:space-between;gap:8px;height:40px;border-radius:12px;border:1px solid rgba(255,255,255,0.12);background-color:#0b0b0b;color:#d1d1d1;font-size:14px;padding:0 12px;min-width:160px;cursor:pointer;box-sizing:border-box;font-family:inherit"
         const SEL_CONTENT_CLASS = "UI-Select__content w-full overflow-hidden rounded-[--radius] shadow-md bg-[--paper] border leading-none z-[100]"
         const SEL_VIEWPORT_CLASS = "UI-Select__viewport p-1"
         const SEL_ITEM_CLASS = "UI-Select__item seatags-status-item text-base leading-none rounded-[--radius] flex items-center h-8 px-3 relative select-none"
@@ -304,9 +304,11 @@ function init() {
                 if (rowEl) { try { langRoot = await rowEl.query(".UI-Select__root") } catch (_e) {} }
                 const hasLang = !!(langRoot && langRoot.length)
 
+                let inputClass = ""
+                try { const c = await input.getAttribute("class"); inputClass = c ? String(c) : "" } catch (_e) {}
                 let boxClass = ""
                 if (hasLang) { try { const c = await langRoot[0].getAttribute("class"); boxClass = c ? String(c) : "" } catch (_e) {} }
-                if (!boxClass && ic) { try { const c = await ic.getAttribute("class"); boxClass = c ? String(c) : "" } catch (_e) {} }
+                if (!boxClass) boxClass = inputClass
 
                 const statusEl = await buildStatusDropdown(boxClass)
 
@@ -315,7 +317,14 @@ function init() {
                 if (author) {
                     try { author.setAttribute("type", "text") } catch (_e) {}
                     try { author.setAttribute("placeholder", "Search by author...") } catch (_e) {}
-                    try { author.setCssText(CTL_INPUT_CSS) } catch (_e) {}
+                    if (inputClass) {
+                        try { author.setAttribute("class", inputClass) } catch (_e) {}
+                        try { author.setStyle("padding-left", "0.75rem") } catch (_e) {}
+                        try { author.setStyle("flex", "1 1 200px") } catch (_e) {}
+                        try { author.setStyle("min-width", "160px") } catch (_e) {}
+                    } else {
+                        try { author.setCssText(CTL_INPUT_CSS) } catch (_e) {}
+                    }
                     try { author.setProperty("value", authorState.get()) } catch (_e) {}
                     try { author.addEventListener("input", () => { onAuthorInput(author) }) } catch (_e) {}
                 }
