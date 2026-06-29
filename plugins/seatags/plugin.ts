@@ -145,7 +145,7 @@ function init() {
         }
         function decorateCards(cards: any[]): void {
             if (!cards) return
-            for (let i = 0; i < cards.length; i++) void decorateOne(cards[i])
+            for (let i = 0; i < cards.length; i++) decorateOne(cards[i]).catch(() => {})
         }
 
         async function ensureFilterStyle(): Promise<void> {
@@ -171,7 +171,7 @@ function init() {
 
         function startDecorator(): void {
             if (entriesState.get().length === 0) return
-            void ensureBar()
+            ensureBar().catch(() => {})
             if (started) return
             started = true
             try {
@@ -180,7 +180,7 @@ function init() {
                 dErr = "observe"
                 started = false
             }
-            void applyFilter()
+            applyFilter().catch(() => {})
         }
 
         try { ctx.dom.onReady(() => { startDecorator() }) } catch (_e) {}
@@ -204,7 +204,7 @@ function init() {
         }
         function selectFilter(k: string): void {
             filterState.set(k)
-            void applyFilter()
+            applyFilter().catch(() => {})
             styleBarButtons()
             refresh()
         }
@@ -216,35 +216,28 @@ function init() {
             if (!bar) return
             try { bar.setStyle("display", show ? "flex" : "none") } catch (_e) {}
         }
-        const BAR_ROW_CSS = "display:flex;flex-direction:row;flex-wrap:wrap;gap:6px;align-items:center"
-        const BAR_LABEL_CSS = "font-size:11px;font-weight:700;letter-spacing:0.02em;color:rgba(255,255,255,0.5);min-width:48px"
-        async function buildBarRow(parent: any, labelText: string, defs: string[][], refs: { [k: string]: any }, getCur: () => string, onPick: (k: string) => void): Promise<void> {
-            const rowEl = await ctx.dom.createElement("div")
-            try { rowEl.setCssText(BAR_ROW_CSS) } catch (_e) {}
-            const lab = await ctx.dom.createElement("span")
-            lab.setText(labelText)
-            try { lab.setCssText(BAR_LABEL_CSS) } catch (_e) {}
-            rowEl.append(lab)
-            for (let i = 0; i < defs.length; i++) {
-                const k = defs[i][0]
-                const btn = await ctx.dom.createElement("button")
-                btn.setText(defs[i][1])
-                btn.setCssText(barBtnCss(getCur() === k))
-                try { btn.addEventListener("click", () => { onPick(k) }) } catch (_e) {}
-                rowEl.append(btn)
-                refs[k] = btn
-            }
-            parent.append(rowEl)
-        }
+        const BAR_LABEL_CSS = "font-size:11px;font-weight:700;letter-spacing:0.02em;color:rgba(255,255,255,0.5);margin-right:2px"
         async function ensureBar(): Promise<void> {
-            if (barBuilt) return
+            if (barBuilt || bar) return
             barBuilt = true
             try {
                 const body = await ctx.dom.queryOne("body")
                 if (!body) { barBuilt = false; return }
                 const b = await ctx.dom.createElement("div")
-                b.setCssText("position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:9999;display:none;flex-direction:column;gap:7px;padding:9px 12px;background:rgba(16,16,20,0.94);border:1px solid rgba(255,255,255,0.12);border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,0.5)")
-                await buildBarRow(b, "Status", FILTERS, barBtns, () => filterState.get(), selectFilter)
+                b.setCssText("position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:9999;display:none;flex-direction:row;flex-wrap:wrap;gap:6px;align-items:center;padding:8px 12px;background:rgba(16,16,20,0.94);border:1px solid rgba(255,255,255,0.12);border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,0.5)")
+                const lab = await ctx.dom.createElement("span")
+                lab.setText("SeaTags")
+                try { lab.setCssText(BAR_LABEL_CSS) } catch (_e) {}
+                b.append(lab)
+                for (let i = 0; i < FILTERS.length; i++) {
+                    const k = FILTERS[i][0]
+                    const btn = await ctx.dom.createElement("button")
+                    btn.setText(FILTERS[i][1])
+                    try { btn.setCssText(barBtnCss(filterState.get() === k)) } catch (_e) {}
+                    try { btn.addEventListener("click", () => { selectFilter(k) }) } catch (_e) {}
+                    b.append(btn)
+                    barBtns[k] = btn
+                }
                 body.append(b)
                 bar = b
                 showBar(isExtPath(currentPath()))
@@ -292,9 +285,10 @@ function init() {
             const k = FILTERS[i][0]
             ctx.registerEventHandler("st-f-" + k, () => { selectFilter(k) })
         }
-        ctx.registerEventHandler("st-refresh", () => { void load(true) })
+        ctx.registerEventHandler("st-refresh", () => { load(true).catch(() => {}) })
 
         tray.render(() => {
+          try {
             const es = entriesState.get()
             const items: any[] = []
             items.push(tray.flex({
@@ -329,10 +323,13 @@ function init() {
             }
             if (dErr) items.push(tray.text("⚠ " + dErr, { style: { color: "rgba(255,180,80,0.7)", fontSize: "10px", marginTop: "4px" } }))
             return tray.stack({ items: items, gap: 3 })
+          } catch (_e) {
+            return tray.stack({ items: [tray.text("SeaTags", { style: { fontWeight: "600" } })], gap: 3 })
+          }
         })
-        tray.onOpen(() => { void load(false); startDecorator() })
+        tray.onOpen(() => { load(false).catch(() => {}); startDecorator() })
 
-        ctx.setTimeout(() => { void load(false); startDecorator() }, 0)
+        ctx.setTimeout(() => { load(false).catch(() => {}); startDecorator() }, 0)
         ctx.setTimeout(() => { startDecorator() }, 1500)
     })
 }
