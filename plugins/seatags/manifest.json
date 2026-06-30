@@ -1,0 +1,26 @@
+{
+  "id": "aq-seatags",
+  "name": "SeaTags",
+  "version": "1.7.1",
+  "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/plugins/seatags/manifest.json",
+  "language": "typescript",
+  "type": "plugin",
+  "description": "Tags Seanime's own Extensions cards (Installed & Marketplace) with their community status (Working / Broken / Deprecated) and adds an Extension Status dropdown and author search to the Extensions toolbar — pulled from the Seanime-Marketplace tag list.",
+  "author": "aquaryuo",
+  "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/main/plugins/seatags/icon.png",
+  "website": "https://github.com/aquaryuo/seanime",
+  "lang": "multi",
+  "payloadURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/plugins/seatags/plugin.ts",
+  "plugin": {
+    "version": "1",
+    "permissions": {
+      "scopes": ["storage"],
+      "allow": {
+        "networkAccess": {
+          "allowedDomains": ["raw.githubusercontent.com"],
+          "reasoning": "Reads the community marketplace tag list (Working/Broken/Deprecated) from raw.githubusercontent.com so it can tag and filter the Extensions cards by their reported status."
+        }
+      }
+    }
+  }
+}
