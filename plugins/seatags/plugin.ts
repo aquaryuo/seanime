@@ -214,7 +214,7 @@ function init() {
                 const b = await ctx.dom.queryOne("body")
                 if (!b) return
                 const s = await ctx.dom.createElement("style")
-                s.setText(".seatags-status-item:hover{background-color:rgba(255,255,255,0.08)}")
+                s.setText(".seatags-status-item:hover{background-color:var(--subtle)}")
                 b.append(s)
                 hoverStyle = s
             } catch (_e) {}
@@ -268,7 +268,7 @@ function init() {
             try { trigger.setStyle("padding-right", "0.75rem") } catch (_e) {}
             try { trigger.setStyle("width", "100%") } catch (_e) {}
             try { trigger.setStyle("box-sizing", "border-box") } catch (_e) {}
-            try { trigger.setStyle("cursor", "pointer") } catch (_e) {}
+            try { trigger.setStyle("cursor", "default") } catch (_e) {}
 
             let label: any = null
             try { label = await ctx.dom.createElement("span") } catch (_e) {}
@@ -309,7 +309,7 @@ function init() {
                 try { it = await ctx.dom.createElement("div") } catch (_e) {}
                 if (!it) continue
                 try { it.setAttribute("class", SEL_ITEM_CLASS) } catch (_e) {}
-                try { it.setStyle("cursor", "pointer") } catch (_e) {}
+                try { it.setStyle("cursor", "default") } catch (_e) {}
                 let chk: any = null
                 try { chk = await ctx.dom.createElement("span") } catch (_e) {}
                 if (chk) {
