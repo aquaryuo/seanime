@@ -245,21 +245,32 @@ function init() {
         }
         function toggleMenu(st: Menu): void { if (st.open) closeMenu(st); else openMenu(st) }
 
+        let cachedBody: any = null
+        async function getBody(): Promise<any> {
+            if (cachedBody) return cachedBody
+            try { cachedBody = await ctx.dom.queryOne("body") } catch (_e) {}
+            return cachedBody
+        }
+
         // Builds a div-based dropdown that reuses Seanime's own Select classes (looks identical).
-        // Batches DOM construction via setInnerHTML + one query per ref to minimize async round-trips.
+        // Parallelizes the blocking reads (createElement / query) to minimize insertion latency.
         async function buildStatusDropdown(boxClass: string): Promise<any> {
             await ensureHoverStyle()
-            let body: any = null
-            try { body = await ctx.dom.queryOne("body") } catch (_e) {}
+            const body = await getBody()
 
-            let container: any = null
-            try { container = await ctx.dom.createElement("div") } catch (_e) {}
-            if (!container) return null
+            let container: any = null, trigger: any = null, content: any = null
+            try {
+                const made = await Promise.all([
+                    ctx.dom.createElement("div").catch(() => null),
+                    ctx.dom.createElement("div").catch(() => null),
+                    ctx.dom.createElement("div").catch(() => null),
+                ])
+                container = made[0]; trigger = made[1]; content = made[2]
+            } catch (_e) {}
+            if (!container || !trigger || !content) return null
+
             try { container.setCssText("position:relative;flex:none;width:200px;box-sizing:border-box") } catch (_e) {}
 
-            let trigger: any = null
-            try { trigger = await ctx.dom.createElement("div") } catch (_e) {}
-            if (!trigger) return null
             if (boxClass) {
                 try { trigger.setAttribute("class", boxClass) } catch (_e) {}
                 try { trigger.setCssText(TRIGGER_OVERRIDE_CSS) } catch (_e) {}
@@ -269,9 +280,6 @@ function init() {
             const labelStyle = "flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
             try { trigger.setInnerHTML('<span class="seatags-label" style="' + labelStyle + '">' + esc(statusLabel(filterState.get())) + '</span><span class="UI-Combobox__chevronIcon ml-2 h-4 w-4 shrink-0 opacity-50">' + CHEVRON_SVG + '</span>') } catch (_e) {}
 
-            let content: any = null
-            try { content = await ctx.dom.createElement("div") } catch (_e) {}
-            if (!content) return null
             try { content.setAttribute("class", SEL_CONTENT_CLASS) } catch (_e) {}
             try { content.setCssText("position:absolute;top:0;left:-24px;width:224px;box-sizing:border-box;display:none") } catch (_e) {}
             let itemsHtml = '<div class="' + SEL_VIEWPORT_CLASS + '">'
@@ -287,12 +295,17 @@ function init() {
             try { container.append(trigger) } catch (_e) {}
             try { container.append(content) } catch (_e) {}
 
-            let label: any = null
-            try { const ls = await trigger.query(".seatags-label"); if (ls && ls.length) label = ls[0] } catch (_e) {}
-            let items: any[] = []
-            try { items = await content.query(".seatags-status-item") } catch (_e) {}
-            let checks: any[] = []
-            try { checks = await content.query(".seatags-check") } catch (_e) {}
+            let label: any = null, items: any[] = [], checks: any[] = []
+            try {
+                const q = await Promise.all([
+                    trigger.query(".seatags-label").catch(() => []),
+                    content.query(".seatags-status-item").catch(() => []),
+                    content.query(".seatags-check").catch(() => []),
+                ])
+                if (q[0] && q[0].length) label = q[0][0]
+                items = q[1] || []
+                checks = q[2] || []
+            } catch (_e) {}
 
             const st: Menu = { open: false, cancel: null, content: content, body: body, checks: [] }
             if (checks) {
@@ -312,7 +325,38 @@ function init() {
             return container
         }
 
+        async function buildAuthorInput(inputClass: string): Promise<any> {
+            if (inputClass) {
+                let author: any = null
+                try { author = await ctx.dom.createElement("div") } catch (_e) {}
+                if (!author) return null
+                try { author.setCssText("position:relative;display:flex;align-items:center;flex:none;width:220px;max-width:220px;box-sizing:border-box") } catch (_e) {}
+                try { author.setInnerHTML('<span class="' + ICON_CLASS + '" style="z-index:1">' + PERSON_SVG + '</span><input type="text" placeholder="Search by author..." class="' + esc(inputClass) + '" />') } catch (_e) {}
+                let ains: any[] = []
+                try { ains = await author.query("input") } catch (_e) {}
+                if (ains && ains.length) {
+                    const ainput = ains[0]
+                    try { ainput.setProperty("value", authorState.get()) } catch (_e) {}
+                    try { ainput.addEventListener("input", () => { onAuthorInput(ainput) }) } catch (_e) {}
+                    try { ainput.addEventListener("keyup", () => { onAuthorInput(ainput) }) } catch (_e) {}
+                }
+                return author
+            }
+            let author: any = null
+            try { author = await ctx.dom.createElement("input") } catch (_e) {}
+            if (!author) return null
+            try { author.setAttribute("type", "text") } catch (_e) {}
+            try { author.setAttribute("placeholder", "Search by author...") } catch (_e) {}
+            try { author.setCssText(CTL_INPUT_CSS) } catch (_e) {}
+            try { author.setProperty("value", authorState.get()) } catch (_e) {}
+            try { author.addEventListener("input", () => { onAuthorInput(author) }) } catch (_e) {}
+            try { author.addEventListener("keyup", () => { onAuthorInput(author) }) } catch (_e) {}
+            return author
+        }
+
         const injectedIds: { [k: string]: boolean } = {}
+        let cachedInputClass = ""
+        let cachedBoxClass = ""
         async function injectControls(inputs: any[]): Promise<void> {
             if (!inputs || !inputs.length) return
             for (let i = 0; i < inputs.length; i++) {
@@ -322,6 +366,7 @@ function init() {
                 if (eid) injectedIds[eid] = true
                 try { input.setAttribute("data-seatags-tb", "1") } catch (_e) {}
 
+                // Placement anchors: ic (search container) and langRoot (the All Languages select)
                 let ic: any = null
                 try { ic = await input.getParent() } catch (_e) {}
                 let rowEl: any = null
@@ -330,41 +375,22 @@ function init() {
                 if (rowEl) { try { langRoot = await rowEl.query(".UI-Select__root") } catch (_e) {} }
                 const hasLang = !!(langRoot && langRoot.length)
 
-                let inputClass = ""
-                try { const c = await input.getAttribute("class"); inputClass = c ? String(c) : "" } catch (_e) {}
-                let boxClass = ""
-                if (hasLang) { try { const c = await langRoot[0].getAttribute("class"); boxClass = c ? String(c) : "" } catch (_e) {} }
+                // Class strings are stable across tabs — read once, then reuse
+                if (!cachedInputClass) { try { const c = await input.getAttribute("class"); cachedInputClass = c ? String(c) : "" } catch (_e) {} }
+                const inputClass = cachedInputClass
+                let boxClass = cachedBoxClass
+                if (!boxClass && hasLang) { try { const c = await langRoot[0].getAttribute("class"); boxClass = c ? String(c) : ""; if (boxClass) cachedBoxClass = boxClass } catch (_e) {} }
                 if (!boxClass) boxClass = inputClass
 
-                const statusEl = await buildStatusDropdown(boxClass)
-
-                let author: any = null
-                if (inputClass) {
-                    // Replicate the search box: container > absolute person icon > input (keeps pl-10)
-                    try { author = await ctx.dom.createElement("div") } catch (_e) {}
-                    if (author) {
-                        try { author.setCssText("position:relative;display:flex;align-items:center;flex:none;width:220px;max-width:220px;box-sizing:border-box") } catch (_e) {}
-                        try { author.setInnerHTML('<span class="' + ICON_CLASS + '" style="z-index:1">' + PERSON_SVG + '</span><input type="text" placeholder="Search by author..." class="' + esc(inputClass) + '" />') } catch (_e) {}
-                        let ains: any[] = []
-                        try { ains = await author.query("input") } catch (_e) {}
-                        if (ains && ains.length) {
-                            const ainput = ains[0]
-                            try { ainput.setProperty("value", authorState.get()) } catch (_e) {}
-                            try { ainput.addEventListener("input", () => { onAuthorInput(ainput) }) } catch (_e) {}
-                            try { ainput.addEventListener("keyup", () => { onAuthorInput(ainput) }) } catch (_e) {}
-                        }
-                    }
-                } else {
-                    try { author = await ctx.dom.createElement("input") } catch (_e) {}
-                    if (author) {
-                        try { author.setAttribute("type", "text") } catch (_e) {}
-                        try { author.setAttribute("placeholder", "Search by author...") } catch (_e) {}
-                        try { author.setCssText(CTL_INPUT_CSS) } catch (_e) {}
-                        try { author.setProperty("value", authorState.get()) } catch (_e) {}
-                        try { author.addEventListener("input", () => { onAuthorInput(author) }) } catch (_e) {}
-                        try { author.addEventListener("keyup", () => { onAuthorInput(author) }) } catch (_e) {}
-                    }
-                }
+                // Build status dropdown + author input concurrently
+                let statusEl: any = null, author: any = null
+                try {
+                    const built = await Promise.all([
+                        buildStatusDropdown(boxClass).catch(() => null),
+                        buildAuthorInput(inputClass).catch(() => null),
+                    ])
+                    statusEl = built[0]; author = built[1]
+                } catch (_e) {}
 
                 if (hasLang) {
                     // Marketplace row: [Status][All Languages][Author][Search] — pure insertion, no node moves
