@@ -354,9 +354,19 @@ function init() {
             return author
         }
 
+        // Resolves placement anchors: ic (search container) + langRoot (the All Languages select). Dependent chain.
+        async function resolveAnchors(input: any): Promise<any> {
+            let ic: any = null
+            try { ic = await input.getParent() } catch (_e) {}
+            let rowEl: any = null
+            if (ic) { try { rowEl = await ic.getParent() } catch (_e) {} }
+            let langRoot: any[] = []
+            if (rowEl) { try { langRoot = await rowEl.query(".UI-Select__root") } catch (_e) {} }
+            return { ic: ic, langRoot: langRoot || [], hasLang: !!(langRoot && langRoot.length) }
+        }
+
         const injectedIds: { [k: string]: boolean } = {}
         let cachedInputClass = ""
-        let cachedBoxClass = ""
         async function injectControls(inputs: any[]): Promise<void> {
             if (!inputs || !inputs.length) return
             for (let i = 0; i < inputs.length; i++) {
@@ -366,31 +376,24 @@ function init() {
                 if (eid) injectedIds[eid] = true
                 try { input.setAttribute("data-seatags-tb", "1") } catch (_e) {}
 
-                // Placement anchors: ic (search container) and langRoot (the All Languages select)
-                let ic: any = null
-                try { ic = await input.getParent() } catch (_e) {}
-                let rowEl: any = null
-                if (ic) { try { rowEl = await ic.getParent() } catch (_e) {} }
-                let langRoot: any[] = []
-                if (rowEl) { try { langRoot = await rowEl.query(".UI-Select__root") } catch (_e) {} }
-                const hasLang = !!(langRoot && langRoot.length)
-
-                // Class strings are stable across tabs — read once, then reuse
+                // The search input's class is the InputAnatomy box (same box the language Select uses) — read once.
                 if (!cachedInputClass) { try { const c = await input.getAttribute("class"); cachedInputClass = c ? String(c) : "" } catch (_e) {} }
-                const inputClass = cachedInputClass
-                let boxClass = cachedBoxClass
-                if (!boxClass && hasLang) { try { const c = await langRoot[0].getAttribute("class"); boxClass = c ? String(c) : ""; if (boxClass) cachedBoxClass = boxClass } catch (_e) {} }
-                if (!boxClass) boxClass = inputClass
+                const cls = cachedInputClass
 
-                // Build status dropdown + author input concurrently
+                // Resolve anchors AND build both controls concurrently (builds don't depend on anchors)
+                let anchors: any = { ic: null, langRoot: [], hasLang: false }
                 let statusEl: any = null, author: any = null
                 try {
-                    const built = await Promise.all([
-                        buildStatusDropdown(boxClass).catch(() => null),
-                        buildAuthorInput(inputClass).catch(() => null),
+                    const r = await Promise.all([
+                        resolveAnchors(input),
+                        buildStatusDropdown(cls).catch(() => null),
+                        buildAuthorInput(cls).catch(() => null),
                     ])
-                    statusEl = built[0]; author = built[1]
+                    anchors = r[0]; statusEl = r[1]; author = r[2]
                 } catch (_e) {}
+                const ic = anchors.ic
+                const langRoot = anchors.langRoot
+                const hasLang = anchors.hasLang
 
                 if (hasLang) {
                     // Marketplace row: [Status][All Languages][Author][Search] — pure insertion, no node moves
