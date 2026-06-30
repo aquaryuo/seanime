@@ -66,7 +66,9 @@ function init() {
         const CTL_TRIGGER_CSS = "display:inline-flex;align-items:center;justify-content:space-between;gap:8px;height:40px;border-radius:12px;border:1px solid rgba(255,255,255,0.12);background-color:#0b0b0b;color:#d1d1d1;font-size:14px;padding:0 12px;min-width:160px;cursor:pointer;box-sizing:border-box;font-family:inherit"
         const SEL_CONTENT_CLASS = "UI-Select__content w-full overflow-hidden rounded-[--radius] shadow-md bg-[--paper] border leading-none z-[100]"
         const SEL_VIEWPORT_CLASS = "UI-Select__viewport p-1"
-        const SEL_ITEM_CLASS = "UI-Select__item seatags-status-item text-base leading-none rounded-[--radius] flex items-center h-8 px-3 relative select-none"
+        const SEL_ITEM_CLASS = "UI-Select__item seatags-status-item text-base leading-none rounded-[--radius] flex items-center h-8 pr-2 pl-8 relative select-none"
+        const CHECK_ICON_CLASS = "UI-Select__checkIcon absolute left-2 w-4 inline-flex items-center justify-center"
+        const CHECK_SVG = "<svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='20 6 9 17 4 12'></polyline></svg>"
         const CHEVRON_SVG = "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'></path></svg>"
         const PERSON_SVG = "<svg width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2'></path><circle cx='12' cy='7' r='4'></circle></svg>"
         const ICON_CLASS = "UI-Input__addons--icon pointer-events-none absolute inset-y-0 left-0 w-12 grid place-content-center text-gray-500 dark:text-gray-300"
@@ -218,7 +220,15 @@ function init() {
             } catch (_e) {}
         }
 
-        type Menu = { open: boolean; cancel: any; content: any; body: any }
+        type Menu = { open: boolean; cancel: any; content: any; body: any; checks: any[] }
+        function updateChecks(st: Menu): void {
+            if (!st.checks) return
+            const v = filterState.get()
+            for (let i = 0; i < st.checks.length; i++) {
+                const c = st.checks[i]
+                if (c && c.el) { try { c.el.setStyle("display", c.val === v ? "inline-flex" : "none") } catch (_e) {} }
+            }
+        }
         function closeMenu(st: Menu): void {
             try { st.content.setStyle("display", "none") } catch (_e) {}
             st.open = false
@@ -227,6 +237,7 @@ function init() {
         function openMenu(st: Menu): void {
             const idx = selIndex(filterState.get())
             try { st.content.setStyle("top", (-(1 + idx * ITEM_H)) + "px") } catch (_e) {}
+            updateChecks(st)
             try { st.content.setStyle("display", "block") } catch (_e) {}
             st.open = true
             if (st.body) { try { st.cancel = st.body.addEventListener("click", () => { closeMenu(st) }) } catch (_e) {} }
@@ -283,13 +294,13 @@ function init() {
             try { content = await ctx.dom.createElement("div") } catch (_e) {}
             if (!content) return null
             try { content.setAttribute("class", SEL_CONTENT_CLASS) } catch (_e) {}
-            try { content.setCssText("position:absolute;top:0;left:0;width:100%;min-width:170px;display:none") } catch (_e) {}
+            try { content.setCssText("position:absolute;top:0;left:-24px;width:224px;box-sizing:border-box;display:none") } catch (_e) {}
 
             let vp: any = null
             try { vp = await ctx.dom.createElement("div") } catch (_e) {}
             if (vp) { try { vp.setAttribute("class", SEL_VIEWPORT_CLASS) } catch (_e) {} ; try { content.append(vp) } catch (_e) {} }
 
-            const st: Menu = { open: false, cancel: null, content: content, body: body }
+            const st: Menu = { open: false, cancel: null, content: content, body: body, checks: [] }
 
             for (let i = 0; i < STATUS_OPTS.length; i++) {
                 const val = STATUS_OPTS[i][0]
@@ -299,8 +310,19 @@ function init() {
                 if (!it) continue
                 try { it.setAttribute("class", SEL_ITEM_CLASS) } catch (_e) {}
                 try { it.setStyle("cursor", "pointer") } catch (_e) {}
-                try { it.setText(lbl) } catch (_e) {}
-                try { it.addEventListener("click", () => { filterState.set(val); if (label) { try { label.setText(lbl) } catch (_e) {} } applyFilter().catch(() => {}); closeMenu(st) }) } catch (_e) {}
+                let chk: any = null
+                try { chk = await ctx.dom.createElement("span") } catch (_e) {}
+                if (chk) {
+                    try { chk.setAttribute("class", CHECK_ICON_CLASS) } catch (_e) {}
+                    try { chk.setInnerHTML(CHECK_SVG) } catch (_e) {}
+                    try { chk.setStyle("display", val === filterState.get() ? "inline-flex" : "none") } catch (_e) {}
+                    try { it.append(chk) } catch (_e) {}
+                    st.checks.push({ val: val, el: chk })
+                }
+                let txt: any = null
+                try { txt = await ctx.dom.createElement("span") } catch (_e) {}
+                if (txt) { try { txt.setText(lbl) } catch (_e) {} ; try { it.append(txt) } catch (_e) {} }
+                try { it.addEventListener("click", () => { filterState.set(val); if (label) { try { label.setText(lbl) } catch (_e) {} } updateChecks(st); applyFilter().catch(() => {}); closeMenu(st) }) } catch (_e) {}
                 if (vp) { try { vp.append(it) } catch (_e) {} }
             }
 
