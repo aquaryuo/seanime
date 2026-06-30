@@ -46,5 +46,17 @@
     "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/main/plugins/aquatils/icon.png",
     "website": "https://github.com/aquaryuo/seanime",
     "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/plugins/aquatils/manifest.json"
+  },
+  {
+    "id": "aq-seatags",
+    "name": "SeaTags",
+    "description": "Tags Seanime's own Extensions cards (Installed & Marketplace) with their community status (Working / Broken / Deprecated) and adds an Extension Status dropdown and author search to the Extensions toolbar — pulled from the Seanime-Marketplace tag list.",
+    "author": "aquaryuo",
+    "type": "plugin",
+    "language": "typescript",
+    "lang": "multi",
+    "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/main/plugins/seatags/icon.png",
+    "website": "https://github.com/aquaryuo/seanime",
+    "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/plugins/seatags/manifest.json"
   }
 ]
