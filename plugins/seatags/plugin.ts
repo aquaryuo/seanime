@@ -63,7 +63,8 @@ function init() {
 
         const CTL_INPUT_CSS = "height:40px;border-radius:12px;border:1px solid rgba(255,255,255,0.12);background:#0b0b0b;color:#d1d1d1;font-size:14px;outline:none;font-family:inherit;box-sizing:border-box;padding:0 12px;min-width:180px"
         const CTL_WRAP_CSS = "display:flex;flex-direction:row;flex-wrap:wrap;gap:8px;align-items:center;flex:1 1 auto;min-width:0"
-        const CTL_TRIGGER_CSS = "display:inline-flex;align-items:center;justify-content:space-between;gap:8px;height:40px;border-radius:12px;border:1px solid rgba(255,255,255,0.12);background-color:#0b0b0b;color:#d1d1d1;font-size:14px;padding:0 12px;min-width:160px;cursor:pointer;box-sizing:border-box;font-family:inherit"
+        const CTL_TRIGGER_CSS = "height:40px;border-radius:12px;border:1px solid rgba(255,255,255,0.12);background-color:#0b0b0b;color:#d1d1d1;font-size:14px;font-family:inherit"
+        const TRIGGER_OVERRIDE_CSS = "display:flex;align-items:center;justify-content:space-between;padding-left:0.75rem;padding-right:0.75rem;width:100%;box-sizing:border-box;cursor:pointer"
         const SEL_CONTENT_CLASS = "UI-Select__content w-full overflow-hidden rounded-[--radius] shadow-md bg-[--paper] border leading-none z-[100]"
         const SEL_VIEWPORT_CLASS = "UI-Select__viewport p-1"
         const SEL_ITEM_CLASS = "UI-Select__item seatags-status-item text-base leading-none rounded-[--radius] flex items-center h-8 pr-2 pl-8 relative select-none"
@@ -244,7 +245,8 @@ function init() {
         }
         function toggleMenu(st: Menu): void { if (st.open) closeMenu(st); else openMenu(st) }
 
-        // Builds a div-based dropdown that reuses Seanime's own Select classes (looks identical)
+        // Builds a div-based dropdown that reuses Seanime's own Select classes (looks identical).
+        // Batches DOM construction via setInnerHTML + one query per ref to minimize async round-trips.
         async function buildStatusDropdown(boxClass: string): Promise<any> {
             await ensureHoverStyle()
             let body: any = null
@@ -258,76 +260,54 @@ function init() {
             let trigger: any = null
             try { trigger = await ctx.dom.createElement("div") } catch (_e) {}
             if (!trigger) return null
-            if (boxClass) { try { trigger.setAttribute("class", boxClass) } catch (_e) {} }
-            else { try { trigger.setCssText(CTL_TRIGGER_CSS) } catch (_e) {} }
-            try { trigger.addClass("inline-flex", "items-center", "justify-between") } catch (_e) {}
-            try { trigger.setStyle("display", "flex") } catch (_e) {}
-            try { trigger.setStyle("align-items", "center") } catch (_e) {}
-            try { trigger.setStyle("justify-content", "space-between") } catch (_e) {}
-            try { trigger.setStyle("padding-left", "0.75rem") } catch (_e) {}
-            try { trigger.setStyle("padding-right", "0.75rem") } catch (_e) {}
-            try { trigger.setStyle("width", "100%") } catch (_e) {}
-            try { trigger.setStyle("box-sizing", "border-box") } catch (_e) {}
-            try { trigger.setStyle("cursor", "default") } catch (_e) {}
-
-            let label: any = null
-            try { label = await ctx.dom.createElement("span") } catch (_e) {}
-            if (label) {
-                try { label.setText(statusLabel(filterState.get())) } catch (_e) {}
-                try { label.setStyle("flex", "1") } catch (_e) {}
-                try { label.setStyle("text-align", "left") } catch (_e) {}
-                try { label.setStyle("overflow", "hidden") } catch (_e) {}
-                try { label.setStyle("text-overflow", "ellipsis") } catch (_e) {}
-                try { label.setStyle("white-space", "nowrap") } catch (_e) {}
-                try { trigger.append(label) } catch (_e) {}
+            if (boxClass) {
+                try { trigger.setAttribute("class", boxClass) } catch (_e) {}
+                try { trigger.setCssText(TRIGGER_OVERRIDE_CSS) } catch (_e) {}
+            } else {
+                try { trigger.setCssText(CTL_TRIGGER_CSS + ";" + TRIGGER_OVERRIDE_CSS) } catch (_e) {}
             }
-
-            let chev: any = null
-            try { chev = await ctx.dom.createElement("span") } catch (_e) {}
-            if (chev) {
-                try { chev.setAttribute("class", "UI-Combobox__chevronIcon ml-2 h-4 w-4 shrink-0 opacity-50") } catch (_e) {}
-                try { chev.setInnerHTML(CHEVRON_SVG) } catch (_e) {}
-                try { trigger.append(chev) } catch (_e) {}
-            }
+            const labelStyle = "flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+            try { trigger.setInnerHTML('<span class="seatags-label" style="' + labelStyle + '">' + esc(statusLabel(filterState.get())) + '</span><span class="UI-Combobox__chevronIcon ml-2 h-4 w-4 shrink-0 opacity-50">' + CHEVRON_SVG + '</span>') } catch (_e) {}
 
             let content: any = null
             try { content = await ctx.dom.createElement("div") } catch (_e) {}
             if (!content) return null
             try { content.setAttribute("class", SEL_CONTENT_CLASS) } catch (_e) {}
             try { content.setCssText("position:absolute;top:0;left:-24px;width:224px;box-sizing:border-box;display:none") } catch (_e) {}
-
-            let vp: any = null
-            try { vp = await ctx.dom.createElement("div") } catch (_e) {}
-            if (vp) { try { vp.setAttribute("class", SEL_VIEWPORT_CLASS) } catch (_e) {} ; try { content.append(vp) } catch (_e) {} }
-
-            const st: Menu = { open: false, cancel: null, content: content, body: body, checks: [] }
-
+            let itemsHtml = '<div class="' + SEL_VIEWPORT_CLASS + '">'
             for (let i = 0; i < STATUS_OPTS.length; i++) {
-                const val = STATUS_OPTS[i][0]
-                const lbl = STATUS_OPTS[i][1]
-                let it: any = null
-                try { it = await ctx.dom.createElement("div") } catch (_e) {}
-                if (!it) continue
-                try { it.setAttribute("class", SEL_ITEM_CLASS) } catch (_e) {}
-                try { it.setStyle("cursor", "default") } catch (_e) {}
-                let chk: any = null
-                try { chk = await ctx.dom.createElement("span") } catch (_e) {}
-                if (chk) {
-                    try { chk.setAttribute("class", CHECK_ICON_CLASS) } catch (_e) {}
-                    try { chk.setInnerHTML(CHECK_SVG) } catch (_e) {}
-                    try { chk.setStyle("display", val === filterState.get() ? "inline-flex" : "none") } catch (_e) {}
-                    try { it.append(chk) } catch (_e) {}
-                    st.checks.push({ val: val, el: chk })
-                }
-                let txt: any = null
-                try { txt = await ctx.dom.createElement("span") } catch (_e) {}
-                if (txt) { try { txt.setText(lbl) } catch (_e) {} ; try { it.append(txt) } catch (_e) {} }
-                try { it.addEventListener("click", () => { filterState.set(val); if (label) { try { label.setText(lbl) } catch (_e) {} } updateChecks(st); applyFilter().catch(() => {}); closeMenu(st) }) } catch (_e) {}
-                if (vp) { try { vp.append(it) } catch (_e) {} }
+                const cdisp = STATUS_OPTS[i][0] === filterState.get() ? "inline-flex" : "none"
+                itemsHtml += '<div class="' + SEL_ITEM_CLASS + '" style="cursor:default">'
+                itemsHtml += '<span class="' + CHECK_ICON_CLASS + ' seatags-check" style="display:' + cdisp + '">' + CHECK_SVG + '</span>'
+                itemsHtml += '<span>' + esc(STATUS_OPTS[i][1]) + '</span></div>'
             }
+            itemsHtml += '</div>'
+            try { content.setInnerHTML(itemsHtml) } catch (_e) {}
 
             try { container.append(trigger) } catch (_e) {}
             try { container.append(content) } catch (_e) {}
+
+            let label: any = null
+            try { const ls = await trigger.query(".seatags-label"); if (ls && ls.length) label = ls[0] } catch (_e) {}
+            let items: any[] = []
+            try { items = await content.query(".seatags-status-item") } catch (_e) {}
+            let checks: any[] = []
+            try { checks = await content.query(".seatags-check") } catch (_e) {}
+
+            const st: Menu = { open: false, cancel: null, content: content, body: body, checks: [] }
+            if (checks) {
+                for (let i = 0; i < checks.length && i < STATUS_OPTS.length; i++) {
+                    if (checks[i]) st.checks.push({ val: STATUS_OPTS[i][0], el: checks[i] })
+                }
+            }
+            if (items) {
+                for (let i = 0; i < items.length && i < STATUS_OPTS.length; i++) {
+                    const val = STATUS_OPTS[i][0]
+                    const lbl = STATUS_OPTS[i][1]
+                    const it = items[i]
+                    if (it) { try { it.addEventListener("click", () => { filterState.set(val); if (label) { try { label.setText(lbl) } catch (_e) {} } updateChecks(st); applyFilter().catch(() => {}); closeMenu(st) }) } catch (_e) {} }
+                }
+            }
             try { trigger.addEventListener("click", () => { toggleMenu(st) }) } catch (_e) {}
             return container
         }
@@ -363,24 +343,15 @@ function init() {
                     // Replicate the search box: container > absolute person icon > input (keeps pl-10)
                     try { author = await ctx.dom.createElement("div") } catch (_e) {}
                     if (author) {
-                        try { author.setCssText("position:relative;display:flex;align-items:center;flex:none;width:220px;max-width:220px") } catch (_e) {}
-                        let aicon: any = null
-                        try { aicon = await ctx.dom.createElement("span") } catch (_e) {}
-                        if (aicon) {
-                            try { aicon.setAttribute("class", ICON_CLASS) } catch (_e) {}
-                            try { aicon.setStyle("z-index", "1") } catch (_e) {}
-                            try { aicon.setInnerHTML(PERSON_SVG) } catch (_e) {}
-                            try { author.append(aicon) } catch (_e) {}
-                        }
-                        let ainput: any = null
-                        try { ainput = await ctx.dom.createElement("input") } catch (_e) {}
-                        if (ainput) {
-                            try { ainput.setAttribute("type", "text") } catch (_e) {}
-                            try { ainput.setAttribute("placeholder", "Search by author...") } catch (_e) {}
-                            try { ainput.setAttribute("class", inputClass) } catch (_e) {}
+                        try { author.setCssText("position:relative;display:flex;align-items:center;flex:none;width:220px;max-width:220px;box-sizing:border-box") } catch (_e) {}
+                        try { author.setInnerHTML('<span class="' + ICON_CLASS + '" style="z-index:1">' + PERSON_SVG + '</span><input type="text" placeholder="Search by author..." class="' + esc(inputClass) + '" />') } catch (_e) {}
+                        let ains: any[] = []
+                        try { ains = await author.query("input") } catch (_e) {}
+                        if (ains && ains.length) {
+                            const ainput = ains[0]
                             try { ainput.setProperty("value", authorState.get()) } catch (_e) {}
                             try { ainput.addEventListener("input", () => { onAuthorInput(ainput) }) } catch (_e) {}
-                            try { author.append(ainput) } catch (_e) {}
+                            try { ainput.addEventListener("keyup", () => { onAuthorInput(ainput) }) } catch (_e) {}
                         }
                     }
                 } else {
@@ -391,6 +362,7 @@ function init() {
                         try { author.setCssText(CTL_INPUT_CSS) } catch (_e) {}
                         try { author.setProperty("value", authorState.get()) } catch (_e) {}
                         try { author.addEventListener("input", () => { onAuthorInput(author) }) } catch (_e) {}
+                        try { author.addEventListener("keyup", () => { onAuthorInput(author) }) } catch (_e) {}
                     }
                 }
 
