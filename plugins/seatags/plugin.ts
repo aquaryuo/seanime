@@ -56,9 +56,9 @@ function init() {
         rebuildMaps()
 
         let dErr = ""
-        let started = false
-        let controlsStarted = false
         let domReady = false
+        let controlsCancel: any = null
+        let cardsCancel: any = null
         let filterStyle: any = null
 
         const CTL_INPUT_CSS = "height:40px;border-radius:12px;border:1px solid rgba(255,255,255,0.12);background:#0b0b0b;color:#d1d1d1;font-size:14px;outline:none;font-family:inherit;box-sizing:border-box;padding:0 12px;min-width:180px"
@@ -400,41 +400,45 @@ function init() {
                     if (statusEl) { try { langRoot[0].before(statusEl) } catch (e) { dErr = "place" } }
                     if (author && ic) { try { ic.before(author) } catch (_e) {} }
                 } else if (ic) {
-                    // Installed (no language dropdown): wrap into a flex row → [Status][Author][Search]
+                    // Installed (no language dropdown): insert a [Status][Author] row BEFORE the search.
+                    // Never move Seanime's own nodes — moving a React-managed node breaks its reconciliation.
                     let wrap: any = null
                     try { wrap = await ctx.dom.createElement("div") } catch (_e) {}
                     if (wrap) {
-                        try { wrap.setCssText(CTL_WRAP_CSS) } catch (_e) {}
-                        try { ic.before(wrap) } catch (e) { dErr = "place" }
-                        try { ic.setStyle("flex", "1 1 220px") } catch (_e) {}
+                        try { wrap.setCssText(CTL_WRAP_CSS + ";flex:none;margin-bottom:8px") } catch (_e) {}
                         if (statusEl) { try { wrap.append(statusEl) } catch (_e) {} }
                         if (author) { try { wrap.append(author) } catch (_e) {} }
-                        try { wrap.append(ic) } catch (e) { dErr = "move" }
+                        try { ic.before(wrap) } catch (e) { dErr = "place" }
                     }
                 }
             }
         }
 
         // ---------- startup ----------
+        // Observers are (re-)armed on every ready/navigate. On a client reload the server-side plugin
+        // persists, so we cancel the stale observer and register a fresh one for the new client.
         function startControls(): void {
-            if (!domReady || controlsStarted) return
-            controlsStarted = true
+            if (!domReady) return
+            if (controlsCancel) { try { controlsCancel() } catch (_e) {} controlsCancel = null }
             try {
-                ctx.dom.observe('input[placeholder*="extensions"]:not([data-seatags-tb])', injectControls)
-            } catch (e) { dErr = "obs-ctl"; controlsStarted = false }
+                const r: any = ctx.dom.observe('input[placeholder*="extensions"]:not([data-seatags-tb])', injectControls)
+                controlsCancel = (r && r.length) ? r[0] : null
+            } catch (e) { dErr = "obs-ctl" }
         }
         function startCards(): void {
-            if (!domReady || started) return
+            if (!domReady) return
             if (entriesState.get().length === 0) return
-            started = true
+            if (cardsCancel) { try { cardsCancel() } catch (_e) {} cardsCancel = null }
             try {
-                ctx.dom.observe('[class*="extension-card"]:not([data-seatags])', decorateCards, { withInnerHTML: true })
-            } catch (e) { dErr = "obs-cards"; started = false }
+                const r: any = ctx.dom.observe('[class*="extension-card"]:not([data-seatags])', decorateCards, { withInnerHTML: true })
+                cardsCancel = (r && r.length) ? r[0] : null
+            } catch (e) { dErr = "obs-cards" }
             applyFilter().catch(() => {})
         }
         function onDomReady(): void {
             domReady = true
             startControls()
+            startCards()
             load(false).catch(() => {})
         }
         try { ctx.dom.onReady(() => { onDomReady() }) } catch (_e) {}
