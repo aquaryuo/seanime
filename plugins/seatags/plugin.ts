@@ -365,7 +365,7 @@ function init() {
             return { ic: ic, langRoot: langRoot || [], hasLang: !!(langRoot && langRoot.length) }
         }
 
-        const injectedIds: { [k: string]: boolean } = {}
+        let injectedIds: { [k: string]: boolean } = {}
         let cachedInputClass = ""
         async function injectControls(inputs: any[]): Promise<void> {
             if (!inputs || !inputs.length) return
@@ -439,14 +439,24 @@ function init() {
             } catch (e) { dErr = "obs-cards" }
             applyFilter().catch(() => {})
         }
+        function resetForReady(): void {
+            // A client reload resets the frontend's element-id counter, so our persisted handles and the
+            // injected-id cache go stale and can collide with new elements (e.g. the filter <style> handle
+            // lands on a visible element, or a recycled input id gets wrongly skipped). Drop them all so
+            // everything is recreated fresh for the new client. Removing the old styles first avoids stacking.
+            if (filterStyle) { try { filterStyle.remove() } catch (_e) {} filterStyle = null }
+            if (hoverStyle) { try { hoverStyle.remove() } catch (_e) {} hoverStyle = null }
+            cachedBody = null
+            injectedIds = {}
+        }
         function onDomReady(): void {
             domReady = true
             startControls()
             startCards()
             load(false).catch(() => {})
         }
-        try { ctx.dom.onReady(() => { onDomReady() }) } catch (_e) {}
-        try { ctx.dom.onMainTabReady(() => { onDomReady() }) } catch (_e) {}
+        try { ctx.dom.onReady(() => { resetForReady(); onDomReady() }) } catch (_e) {}
+        try { ctx.dom.onMainTabReady(() => { resetForReady(); onDomReady() }) } catch (_e) {}
         try { ctx.screen.onNavigate(() => { startControls(); startCards() }) } catch (_e) {}
 
         // ---------- load the marketplace tag list ----------
