@@ -56,9 +56,9 @@ function init() {
         rebuildMaps()
 
         let dErr = ""
-        let started = false
-        let controlsStarted = false
         let domReady = false
+        let controlsCancel: any = null
+        let cardsCancel: any = null
         let filterStyle: any = null
 
         const CTL_INPUT_CSS = "height:40px;border-radius:12px;border:1px solid rgba(255,255,255,0.12);background:#0b0b0b;color:#d1d1d1;font-size:14px;outline:none;font-family:inherit;box-sizing:border-box;padding:0 12px;min-width:180px"
@@ -126,14 +126,17 @@ function init() {
 
         // ---------- card decoration ----------
         async function rebuildBadges(card: any, info: Entry, tags: string[]): Promise<void> {
-            let row: any = null
+            let badges: any[] = [], block: any = null
             try {
-                const badges = await card.query(".UI-Badge__root")
-                if (badges && badges.length) row = await badges[0].getParent()
+                const r = await Promise.all([
+                    card.query(".UI-Badge__root").catch(() => []),
+                    ctx.dom.createElement("div").catch(() => null),
+                ])
+                badges = r[0] || []; block = r[1]
             } catch (e) { dErr = "findrow" }
-            let block: any = null
-            try { block = await ctx.dom.createElement("div") } catch (e) { dErr = "create" }
             if (!block) return
+            let row: any = null
+            if (badges.length) { try { row = await badges[0].getParent() } catch (_e) {} }
             try { block.setCssText("display:flex;flex-direction:column;gap:6px;margin-top:8px") } catch (_e) {}
             try { block.setInnerHTML(blockHtml(info, tags)) } catch (e) { dErr = "html" }
             if (row) {
@@ -160,7 +163,16 @@ function init() {
         }
         function decorateCards(cards: any[]): void {
             if (!cards) return
-            for (let i = 0; i < cards.length; i++) decorateOne(cards[i]).catch(() => {})
+            // Decorate in small chunks with a yield so a large marketplace (~200 cards) doesn't flood the
+            // op scheduler and delay the toolbar controls. The first (visible) cards finish immediately.
+            const CHUNK = 15
+            let i = 0
+            function step(): void {
+                const end = i + CHUNK < cards.length ? i + CHUNK : cards.length
+                for (; i < end; i++) decorateOne(cards[i]).catch(() => {})
+                if (i < cards.length) { try { ctx.setTimeout(step, 16) } catch (_e) {} }
+            }
+            step()
         }
 
         // ---------- injected stylesheets ----------
@@ -354,9 +366,19 @@ function init() {
             return author
         }
 
-        const injectedIds: { [k: string]: boolean } = {}
+        // Resolves placement anchors: ic (search container) + langRoot (the All Languages select). Dependent chain.
+        async function resolveAnchors(input: any): Promise<any> {
+            let ic: any = null
+            try { ic = await input.getParent() } catch (_e) {}
+            let rowEl: any = null
+            if (ic) { try { rowEl = await ic.getParent() } catch (_e) {} }
+            let langRoot: any[] = []
+            if (rowEl) { try { langRoot = await rowEl.query(".UI-Select__root") } catch (_e) {} }
+            return { ic: ic, langRoot: langRoot || [], hasLang: !!(langRoot && langRoot.length) }
+        }
+
+        let injectedIds: { [k: string]: boolean } = {}
         let cachedInputClass = ""
-        let cachedBoxClass = ""
         async function injectControls(inputs: any[]): Promise<void> {
             if (!inputs || !inputs.length) return
             for (let i = 0; i < inputs.length; i++) {
@@ -366,76 +388,87 @@ function init() {
                 if (eid) injectedIds[eid] = true
                 try { input.setAttribute("data-seatags-tb", "1") } catch (_e) {}
 
-                // Placement anchors: ic (search container) and langRoot (the All Languages select)
-                let ic: any = null
-                try { ic = await input.getParent() } catch (_e) {}
-                let rowEl: any = null
-                if (ic) { try { rowEl = await ic.getParent() } catch (_e) {} }
-                let langRoot: any[] = []
-                if (rowEl) { try { langRoot = await rowEl.query(".UI-Select__root") } catch (_e) {} }
-                const hasLang = !!(langRoot && langRoot.length)
-
-                // Class strings are stable across tabs — read once, then reuse
+                // The search input's class is the InputAnatomy box (same box the language Select uses) — read once.
                 if (!cachedInputClass) { try { const c = await input.getAttribute("class"); cachedInputClass = c ? String(c) : "" } catch (_e) {} }
-                const inputClass = cachedInputClass
-                let boxClass = cachedBoxClass
-                if (!boxClass && hasLang) { try { const c = await langRoot[0].getAttribute("class"); boxClass = c ? String(c) : ""; if (boxClass) cachedBoxClass = boxClass } catch (_e) {} }
-                if (!boxClass) boxClass = inputClass
+                const cls = cachedInputClass
 
-                // Build status dropdown + author input concurrently
+                // Resolve anchors AND build both controls concurrently (builds don't depend on anchors)
+                let anchors: any = { ic: null, langRoot: [], hasLang: false }
                 let statusEl: any = null, author: any = null
                 try {
-                    const built = await Promise.all([
-                        buildStatusDropdown(boxClass).catch(() => null),
-                        buildAuthorInput(inputClass).catch(() => null),
+                    const r = await Promise.all([
+                        resolveAnchors(input),
+                        buildStatusDropdown(cls).catch(() => null),
+                        buildAuthorInput(cls).catch(() => null),
                     ])
-                    statusEl = built[0]; author = built[1]
+                    anchors = r[0]; statusEl = r[1]; author = r[2]
                 } catch (_e) {}
+                const ic = anchors.ic
+                const langRoot = anchors.langRoot
+                const hasLang = anchors.hasLang
 
                 if (hasLang) {
                     // Marketplace row: [Status][All Languages][Author][Search] — pure insertion, no node moves
                     if (statusEl) { try { langRoot[0].before(statusEl) } catch (e) { dErr = "place" } }
                     if (author && ic) { try { ic.before(author) } catch (_e) {} }
                 } else if (ic) {
-                    // Installed (no language dropdown): wrap into a flex row → [Status][Author][Search]
+                    // Installed (no flex row): make the search inline and place [Status][Author] beside it.
+                    // Only INSERT our own node + set inline styles — never move Seanime's node (that breaks React).
                     let wrap: any = null
                     try { wrap = await ctx.dom.createElement("div") } catch (_e) {}
                     if (wrap) {
-                        try { wrap.setCssText(CTL_WRAP_CSS) } catch (_e) {}
-                        try { ic.before(wrap) } catch (e) { dErr = "place" }
-                        try { ic.setStyle("flex", "1 1 220px") } catch (_e) {}
+                        try { wrap.setCssText("display:inline-flex;vertical-align:top;flex-direction:row;flex-wrap:wrap;gap:8px;align-items:center;margin-right:8px") } catch (_e) {}
                         if (statusEl) { try { wrap.append(statusEl) } catch (_e) {} }
                         if (author) { try { wrap.append(author) } catch (_e) {} }
-                        try { wrap.append(ic) } catch (e) { dErr = "move" }
+                        try { ic.setStyle("display", "inline-flex") } catch (_e) {}
+                        try { ic.setStyle("vertical-align", "top") } catch (_e) {}
+                        try { ic.setStyle("width", "380px") } catch (_e) {}
+                        try { ic.setStyle("max-width", "100%") } catch (_e) {}
+                        try { ic.before(wrap) } catch (e) { dErr = "place" }
                     }
                 }
             }
         }
 
         // ---------- startup ----------
+        // Observers are (re-)armed on every ready/navigate. On a client reload the server-side plugin
+        // persists, so we cancel the stale observer and register a fresh one for the new client.
         function startControls(): void {
-            if (!domReady || controlsStarted) return
-            controlsStarted = true
+            if (!domReady) return
+            if (controlsCancel) { try { controlsCancel() } catch (_e) {} controlsCancel = null }
             try {
-                ctx.dom.observe('input[placeholder*="extensions"]:not([data-seatags-tb])', injectControls)
-            } catch (e) { dErr = "obs-ctl"; controlsStarted = false }
+                const r: any = ctx.dom.observe('input[placeholder*="extensions"]:not([data-seatags-tb])', injectControls)
+                controlsCancel = (r && r.length) ? r[0] : null
+            } catch (e) { dErr = "obs-ctl" }
         }
         function startCards(): void {
-            if (!domReady || started) return
+            if (!domReady) return
             if (entriesState.get().length === 0) return
-            started = true
+            if (cardsCancel) { try { cardsCancel() } catch (_e) {} cardsCancel = null }
             try {
-                ctx.dom.observe('[class*="extension-card"]:not([data-seatags])', decorateCards, { withInnerHTML: true })
-            } catch (e) { dErr = "obs-cards"; started = false }
+                const r: any = ctx.dom.observe('[class*="extension-card"]:not([data-seatags])', decorateCards, { withInnerHTML: true })
+                cardsCancel = (r && r.length) ? r[0] : null
+            } catch (e) { dErr = "obs-cards" }
             applyFilter().catch(() => {})
+        }
+        function resetForReady(): void {
+            // A client reload resets the frontend's element-id counter, so our persisted handles and the
+            // injected-id cache go stale and can collide with new elements (e.g. the filter <style> handle
+            // lands on a visible element, or a recycled input id gets wrongly skipped). Drop them all so
+            // everything is recreated fresh for the new client. Removing the old styles first avoids stacking.
+            if (filterStyle) { try { filterStyle.remove() } catch (_e) {} filterStyle = null }
+            if (hoverStyle) { try { hoverStyle.remove() } catch (_e) {} hoverStyle = null }
+            cachedBody = null
+            injectedIds = {}
         }
         function onDomReady(): void {
             domReady = true
             startControls()
+            startCards()
             load(false).catch(() => {})
         }
-        try { ctx.dom.onReady(() => { onDomReady() }) } catch (_e) {}
-        try { ctx.dom.onMainTabReady(() => { onDomReady() }) } catch (_e) {}
+        try { ctx.dom.onReady(() => { resetForReady(); onDomReady() }) } catch (_e) {}
+        try { ctx.dom.onMainTabReady(() => { resetForReady(); onDomReady() }) } catch (_e) {}
         try { ctx.screen.onNavigate(() => { startControls(); startCards() }) } catch (_e) {}
 
         // ---------- load the marketplace tag list ----------
