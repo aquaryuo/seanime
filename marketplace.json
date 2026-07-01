@@ -50,7 +50,7 @@
   {
     "id": "aq-seatags",
     "name": "SeaTags",
-    "description": "Tags your Extensions with community status (Working / Broken / Deprecated) and adds status + author filters.",
+    "description": "Plugin dedicated to displaying status of plugins/extensions within installed/marketplace pages; as well as filter based on author & show score",
     "author": "aquaryuo",
     "type": "plugin",
     "language": "typescript",
