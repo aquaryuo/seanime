@@ -400,14 +400,18 @@ function init() {
                     if (statusEl) { try { langRoot[0].before(statusEl) } catch (e) { dErr = "place" } }
                     if (author && ic) { try { ic.before(author) } catch (_e) {} }
                 } else if (ic) {
-                    // Installed (no language dropdown): insert a [Status][Author] row BEFORE the search.
-                    // Never move Seanime's own nodes — moving a React-managed node breaks its reconciliation.
+                    // Installed (no flex row): make the search inline and place [Status][Author] beside it.
+                    // Only INSERT our own node + set inline styles — never move Seanime's node (that breaks React).
                     let wrap: any = null
                     try { wrap = await ctx.dom.createElement("div") } catch (_e) {}
                     if (wrap) {
-                        try { wrap.setCssText(CTL_WRAP_CSS + ";flex:none;margin-bottom:8px") } catch (_e) {}
+                        try { wrap.setCssText("display:inline-flex;vertical-align:top;flex-direction:row;flex-wrap:wrap;gap:8px;align-items:center;margin-right:8px") } catch (_e) {}
                         if (statusEl) { try { wrap.append(statusEl) } catch (_e) {} }
                         if (author) { try { wrap.append(author) } catch (_e) {} }
+                        try { ic.setStyle("display", "inline-flex") } catch (_e) {}
+                        try { ic.setStyle("vertical-align", "top") } catch (_e) {}
+                        try { ic.setStyle("width", "380px") } catch (_e) {}
+                        try { ic.setStyle("max-width", "100%") } catch (_e) {}
                         try { ic.before(wrap) } catch (e) { dErr = "place" }
                     }
                 }
