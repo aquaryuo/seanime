@@ -1210,13 +1210,32 @@ function init() {
                     }
                     setNote("Extracting solver " + SOLVER_VERSION + "…")
                     tray.update()
+                    let extractOk = true
+                    let extractErr = ""
                     try {
                         if (pick.zip) $osExtra.unzip(archive, dir)
                         else $osExtra.unwrapAndMove(archive, dir)
-                    } catch (_e) {
+                    } catch (e) {
+                        extractOk = false
+                        extractErr = String(e)
+                        plog("extract via " + (pick.zip ? "unzip" : "unwrapAndMove") + " failed: " + extractErr)
+                    }
+                    if (!extractOk && !pick.zip && $os.platform !== "windows") {
+                        try {
+                            $os.cmd("sh", "-c", "tar -xzf '" + archive + "' -C '" + dir + "'").combinedOutput()
+                            if (solverBinExists()) { extractOk = true; plog("recovered via system tar") }
+                            else plog("system tar ran but the binary is still missing")
+                        } catch (e2) {
+                            plog("system tar fallback failed: " + String(e2))
+                        }
+                    }
+                    if (!extractOk) {
                         fsBusy = false
                         setStatus("down")
-                        setNote("Extraction failed.")
+                        try { $os.removeAll(dir) } catch (_e) {}
+                        try { $storage.set("fs.solverReady", "") } catch (_e) {}
+                        setErr("Couldn't extract the solver: " + extractErr + ". Press Start to retry; if it keeps failing, copy the diagnostics (Advanced) and report it.")
+                        setNote("Extraction failed - see logs.")
                         tray.update()
                         return
                     }
