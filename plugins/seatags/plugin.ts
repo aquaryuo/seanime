@@ -126,14 +126,17 @@ function init() {
 
         // ---------- card decoration ----------
         async function rebuildBadges(card: any, info: Entry, tags: string[]): Promise<void> {
-            let row: any = null
+            let badges: any[] = [], block: any = null
             try {
-                const badges = await card.query(".UI-Badge__root")
-                if (badges && badges.length) row = await badges[0].getParent()
+                const r = await Promise.all([
+                    card.query(".UI-Badge__root").catch(() => []),
+                    ctx.dom.createElement("div").catch(() => null),
+                ])
+                badges = r[0] || []; block = r[1]
             } catch (e) { dErr = "findrow" }
-            let block: any = null
-            try { block = await ctx.dom.createElement("div") } catch (e) { dErr = "create" }
             if (!block) return
+            let row: any = null
+            if (badges.length) { try { row = await badges[0].getParent() } catch (_e) {} }
             try { block.setCssText("display:flex;flex-direction:column;gap:6px;margin-top:8px") } catch (_e) {}
             try { block.setInnerHTML(blockHtml(info, tags)) } catch (e) { dErr = "html" }
             if (row) {
@@ -160,7 +163,16 @@ function init() {
         }
         function decorateCards(cards: any[]): void {
             if (!cards) return
-            for (let i = 0; i < cards.length; i++) decorateOne(cards[i]).catch(() => {})
+            // Decorate in small chunks with a yield so a large marketplace (~200 cards) doesn't flood the
+            // op scheduler and delay the toolbar controls. The first (visible) cards finish immediately.
+            const CHUNK = 15
+            let i = 0
+            function step(): void {
+                const end = i + CHUNK < cards.length ? i + CHUNK : cards.length
+                for (; i < end; i++) decorateOne(cards[i]).catch(() => {})
+                if (i < cards.length) { try { ctx.setTimeout(step, 16) } catch (_e) {} }
+            }
+            step()
         }
 
         // ---------- injected stylesheets ----------
