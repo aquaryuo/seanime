@@ -60,6 +60,7 @@ function init() {
         let controlsCancel: any = null
         let cardsCancel: any = null
         let filterStyle: any = null
+        let genToken = 0
 
         const CTL_INPUT_CSS = "height:40px;border-radius:12px;border:1px solid rgba(255,255,255,0.12);background:#0b0b0b;color:#d1d1d1;font-size:14px;outline:none;font-family:inherit;box-sizing:border-box;padding:0 12px;min-width:180px"
         const CTL_WRAP_CSS = "display:flex;flex-direction:row;flex-wrap:wrap;gap:8px;align-items:center;flex:1 1 auto;min-width:0"
@@ -233,7 +234,7 @@ function init() {
             } catch (_e) {}
         }
 
-        type Menu = { open: boolean; cancel: any; content: any; body: any; checks: any[] }
+        type Menu = { open: boolean; cancel: any; content: any; body: any; checks: any[]; gen: number }
         function updateChecks(st: Menu): void {
             if (!st.checks) return
             const v = filterState.get()
@@ -253,7 +254,7 @@ function init() {
             updateChecks(st)
             try { st.content.setStyle("display", "block") } catch (_e) {}
             st.open = true
-            if (st.body) { try { st.cancel = st.body.addEventListener("click", () => { closeMenu(st) }) } catch (_e) {} }
+            if (st.body) { try { st.cancel = st.body.addEventListener("click", () => { if (st.gen !== genToken) return; closeMenu(st) }) } catch (_e) {} }
         }
         function toggleMenu(st: Menu): void { if (st.open) closeMenu(st); else openMenu(st) }
 
@@ -266,7 +267,7 @@ function init() {
 
         // Builds a div-based dropdown that reuses Seanime's own Select classes (looks identical).
         // Parallelizes the blocking reads (createElement / query) to minimize insertion latency.
-        async function buildStatusDropdown(boxClass: string): Promise<any> {
+        async function buildStatusDropdown(boxClass: string, gen: number): Promise<any> {
             await ensureHoverStyle()
             const body = await getBody()
 
@@ -319,7 +320,7 @@ function init() {
                 checks = q[2] || []
             } catch (_e) {}
 
-            const st: Menu = { open: false, cancel: null, content: content, body: body, checks: [] }
+            const st: Menu = { open: false, cancel: null, content: content, body: body, checks: [], gen: gen }
             if (checks) {
                 for (let i = 0; i < checks.length && i < STATUS_OPTS.length; i++) {
                     if (checks[i]) st.checks.push({ val: STATUS_OPTS[i][0], el: checks[i] })
@@ -330,14 +331,14 @@ function init() {
                     const val = STATUS_OPTS[i][0]
                     const lbl = STATUS_OPTS[i][1]
                     const it = items[i]
-                    if (it) { try { it.addEventListener("click", () => { filterState.set(val); if (label) { try { label.setText(lbl) } catch (_e) {} } updateChecks(st); applyFilter().catch(() => {}); closeMenu(st) }) } catch (_e) {} }
+                    if (it) { try { it.addEventListener("click", () => { if (gen !== genToken) return; filterState.set(val); if (label) { try { label.setText(lbl) } catch (_e) {} } updateChecks(st); applyFilter().catch(() => {}); closeMenu(st) }) } catch (_e) {} }
                 }
             }
-            try { trigger.addEventListener("click", () => { toggleMenu(st) }) } catch (_e) {}
+            try { trigger.addEventListener("click", () => { if (gen !== genToken) return; toggleMenu(st) }) } catch (_e) {}
             return container
         }
 
-        async function buildAuthorInput(inputClass: string): Promise<any> {
+        async function buildAuthorInput(inputClass: string, gen: number): Promise<any> {
             if (inputClass) {
                 let author: any = null
                 try { author = await ctx.dom.createElement("div") } catch (_e) {}
@@ -349,8 +350,8 @@ function init() {
                 if (ains && ains.length) {
                     const ainput = ains[0]
                     try { ainput.setProperty("value", authorState.get()) } catch (_e) {}
-                    try { ainput.addEventListener("input", () => { onAuthorInput(ainput) }) } catch (_e) {}
-                    try { ainput.addEventListener("keyup", () => { onAuthorInput(ainput) }) } catch (_e) {}
+                    try { ainput.addEventListener("input", () => { if (gen !== genToken) return; onAuthorInput(ainput) }) } catch (_e) {}
+                    try { ainput.addEventListener("keyup", () => { if (gen !== genToken) return; onAuthorInput(ainput) }) } catch (_e) {}
                 }
                 return author
             }
@@ -361,8 +362,8 @@ function init() {
             try { author.setAttribute("placeholder", "Search by author...") } catch (_e) {}
             try { author.setCssText(CTL_INPUT_CSS) } catch (_e) {}
             try { author.setProperty("value", authorState.get()) } catch (_e) {}
-            try { author.addEventListener("input", () => { onAuthorInput(author) }) } catch (_e) {}
-            try { author.addEventListener("keyup", () => { onAuthorInput(author) }) } catch (_e) {}
+            try { author.addEventListener("input", () => { if (gen !== genToken) return; onAuthorInput(author) }) } catch (_e) {}
+            try { author.addEventListener("keyup", () => { if (gen !== genToken) return; onAuthorInput(author) }) } catch (_e) {}
             return author
         }
 
@@ -387,6 +388,7 @@ function init() {
                 if (eid && injectedIds[eid]) continue
                 if (eid) injectedIds[eid] = true
                 try { input.setAttribute("data-seatags-tb", "1") } catch (_e) {}
+                const gen = ++genToken
 
                 // The search input's class is the InputAnatomy box (same box the language Select uses) — read once.
                 if (!cachedInputClass) { try { const c = await input.getAttribute("class"); cachedInputClass = c ? String(c) : "" } catch (_e) {} }
@@ -398,8 +400,8 @@ function init() {
                 try {
                     const r = await Promise.all([
                         resolveAnchors(input),
-                        buildStatusDropdown(cls).catch(() => null),
-                        buildAuthorInput(cls).catch(() => null),
+                        buildStatusDropdown(cls, gen).catch(() => null),
+                        buildAuthorInput(cls, gen).catch(() => null),
                     ])
                     anchors = r[0]; statusEl = r[1]; author = r[2]
                 } catch (_e) {}
