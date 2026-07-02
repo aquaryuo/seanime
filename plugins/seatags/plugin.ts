@@ -49,6 +49,7 @@ function init() {
             const es = entriesState.get()
             for (let i = 0; i < es.length; i++) {
                 const e = es[i]
+                if (!e || typeof e !== "object") continue
                 if (e.id) byId[e.id] = e
                 if (e.name) byName[String(e.name).toLowerCase()] = e
             }
@@ -195,7 +196,7 @@ function init() {
             const f = filterState.get()
             const a = authorState.get().toLowerCase().replace(/["\\]/g, "")
             let css = ""
-            if (f && f !== "all") css += '[class*="extension-card"]:not([data-seatags~="' + f + '"]){display:none !important}'
+            if (f && f !== "all" && entriesState.get().length > 0) css += '[class*="extension-card"]:not([data-seatags~="' + f + '"]){display:none !important}'
             if (a) css += '[class*="extension-card"]:not([data-seatags-author*="' + a + '"]){display:none !important}'
             try { filterStyle.setText(css) } catch (e) { dErr = "filter" }
         }
@@ -484,11 +485,16 @@ function init() {
                 if (res.ok) {
                     const data = res.json<any>()
                     if (Array.isArray(data)) {
-                        entriesState.set(data as Entry[])
+                        const clean = (data as any[]).filter((e) => e && typeof e === "object")
+                        entriesState.set(clean as Entry[])
                         rebuildMaps()
-                        lastAt = now()
-                        try { $storage.set(CACHE_KEY, { at: lastAt, data: data }) } catch (_e) {}
+                        try { $storage.set(CACHE_KEY, { at: now(), data: clean }) } catch (_e) {}
+                    } else {
+                        dErr = "shape"
                     }
+                    lastAt = now()
+                } else {
+                    dErr = "http"
                 }
             } catch (_e) {
                 dErr = "fetch"
