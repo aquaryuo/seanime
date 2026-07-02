@@ -376,7 +376,7 @@ function init() {
             if (ic) { try { rowEl = await ic.getParent() } catch (_e) {} }
             let langRoot: any[] = []
             if (rowEl) { try { langRoot = await rowEl.query(".UI-Select__root") } catch (_e) {} }
-            return { ic: ic, langRoot: langRoot || [], hasLang: !!(langRoot && langRoot.length) }
+            return { ic: ic, rowEl: rowEl, langRoot: langRoot || [], hasLang: !!(langRoot && langRoot.length) }
         }
 
         let injectedIds: { [k: string]: boolean } = {}
@@ -407,6 +407,7 @@ function init() {
                     anchors = r[0]; statusEl = r[1]; author = r[2]
                 } catch (_e) {}
                 const ic = anchors.ic
+                const rowEl = anchors.rowEl
                 const langRoot = anchors.langRoot
                 const hasLang = anchors.hasLang
 
@@ -415,20 +416,16 @@ function init() {
                     if (statusEl) { try { langRoot[0].before(statusEl) } catch (e) { dErr = "place" } }
                     if (author && ic) { try { ic.before(author) } catch (_e) {} }
                 } else if (ic) {
-                    // Installed (no flex row): make the search inline and place [Status][Author] beside it.
-                    // Only INSERT our own node + set inline styles — never move Seanime's node (that breaks React).
-                    let wrap: any = null
-                    try { wrap = await ctx.dom.createElement("div") } catch (_e) {}
-                    if (wrap) {
-                        try { wrap.setCssText("display:inline-flex;vertical-align:top;flex-direction:row;flex-wrap:wrap;gap:8px;align-items:center;margin-right:8px") } catch (_e) {}
-                        if (statusEl) { try { wrap.append(statusEl) } catch (_e) {} }
-                        if (author) { try { wrap.append(author) } catch (_e) {} }
-                        try { ic.setStyle("display", "inline-flex") } catch (_e) {}
-                        try { ic.setStyle("vertical-align", "top") } catch (_e) {}
-                        try { ic.setStyle("width", "380px") } catch (_e) {}
-                        try { ic.setStyle("max-width", "100%") } catch (_e) {}
-                        try { ic.before(wrap) } catch (e) { dErr = "place" }
+                    if (rowEl) {
+                        try { rowEl.setStyle("display", "flex") } catch (_e) {}
+                        try { rowEl.setStyle("align-items", "center") } catch (_e) {}
+                        try { rowEl.setStyle("gap", "8px") } catch (_e) {}
+                        try { rowEl.setStyle("flex-wrap", "wrap") } catch (_e) {}
                     }
+                    if (statusEl) { try { ic.before(statusEl) } catch (e) { dErr = "place" } }
+                    if (author) { try { ic.before(author) } catch (_e) {} }
+                    try { ic.setStyle("flex", "1 1 320px") } catch (_e) {}
+                    try { ic.setStyle("max-width", "100%") } catch (_e) {}
                 }
             }
         }
