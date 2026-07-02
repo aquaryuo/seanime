@@ -4,7 +4,6 @@ class Provider {
     private baseUrl = "{{baseUrl}}"
     private mirrors = ["https://animepahe.pw", "https://animepahe.com", "https://animepahe.org"]
     private solverUrl = ("{{solverUrl}}" as string)
-    private solverDown = false
     private lastResp: { url: string; status: number; statusText: string; ct: string; len: number; redirected: boolean; finalUrl: string; snippet: string; hit: string } | undefined = undefined
     private lastSolver: { ran: boolean; http: number; snippet: string; reason: string } | undefined = undefined
     private cookieTtl = 10800000
@@ -508,10 +507,8 @@ class Provider {
                 noCloudflareBypass: true,
             })
             if (!res.ok) return undefined
-            this.solverDown = false
             return res.json<any>()
         } catch (_e) {
-            this.solverDown = true
             return undefined
         }
     }
@@ -520,8 +517,10 @@ class Provider {
         const ep = this.solverEndpoint()
         if (!ep) { this.lastSolver = { ran: false, http: 0, snippet: "", reason: "" }; return undefined }
         const data = await this.solverPost(ep, { cmd: "request.get", url, maxTimeout: 32000 })
-        const body = data && data.solution ? data.solution.response : undefined
-        const http = data && data.solution && typeof data.solution.status === "number" ? data.solution.status : 0
+        const sol = data && data.solution ? data.solution : undefined
+        if (sol) this.absorbSolution(sol)
+        const body = sol ? sol.response : undefined
+        const http = sol && typeof sol.status === "number" ? sol.status : 0
         const reason = data && data.message ? String(data.message) : ""
         this.lastSolver = { ran: true, http: http, snippet: this.snip(body || ""), reason: reason }
         if (body && !this.bodyIsChallenge(body)) return body
@@ -622,12 +621,19 @@ class Provider {
         )
     }
 
+    private solvedUa(): string {
+        try { return $store.get<string>("apahe:ua") || "" } catch (_e) { return "" }
+    }
+
     private browserHeaders(): { [key: string]: string } {
-        return {
+        const h: { [key: string]: string } = {
             Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
             Referer: `${this.baseUrl}/`,
         }
+        const ua = this.solvedUa()
+        if (ua) h["User-Agent"] = ua
+        return h
     }
 
     private apiHeaders(cookie: string, extra?: { [k: string]: string }): { [key: string]: string } {
@@ -635,6 +641,8 @@ class Provider {
             "Accept-Language": "en-US,en;q=0.9",
         }
         if (cookie) h.Cookie = cookie
+        const ua = this.solvedUa()
+        if (ua) h["User-Agent"] = ua
         if (extra) for (const k in extra) h[k] = extra[k]
         return h
     }
@@ -673,6 +681,20 @@ class Provider {
         const base = cached && cached.map ? cached.map : {}
         const map = this.mergeCookieMap(base, fresh)
         $store.set("apahe:ck", { at: this.now(), map })
+    }
+
+    private absorbSolution(sol: { userAgent?: string; cookies?: { name: string; value: string }[] }): void {
+        if (!sol) return
+        if (Array.isArray(sol.cookies) && sol.cookies.length) {
+            const fresh: { [k: string]: string } = {}
+            for (const c of sol.cookies) { if (c && c.name && c.value) fresh[c.name] = c.value }
+            if (this.mapSize(fresh) > 0) {
+                const cached = $store.get<{ at: number; map: { [k: string]: string } }>("apahe:ck")
+                const base = cached && cached.map ? cached.map : {}
+                $store.set("apahe:ck", { at: this.now(), map: this.mergeCookieMap(base, fresh) })
+            }
+        }
+        if (sol.userAgent) { try { $store.set("apahe:ua", sol.userAgent) } catch (_e) {} }
     }
 
     private mergeCookieMap(base: { [k: string]: string }, add: { [k: string]: string }): { [k: string]: string } {
