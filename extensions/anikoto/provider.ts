@@ -109,6 +109,7 @@ class Provider {
         const wantDub = opts.dub
         const audio = wantDub ? "dub" : "sub"
         const sq = this.searchQueries(opts)
+        let challenged = false
 
         for (const base of this.candidateBases()) {
             this.baseUrl = base
@@ -123,8 +124,13 @@ class Provider {
                         headers: this.pageHeaders(),
                     })
                     if (res.ok) {
-                        anyOk = true
-                        html = res.text()
+                        const body = res.text()
+                        if (this.bodyIsChallenge(body)) {
+                            challenged = true
+                        } else {
+                            anyOk = true
+                            html = body
+                        }
                     }
                 } catch (_e) {
                     html = ""
@@ -140,6 +146,7 @@ class Provider {
         }
 
         this.invalidateBase()
+        if (challenged) throw this.fail("search", "search blocked by the site's anti-bot challenge on all mirrors — enable the custom solver in settings, or retry later")
         throw this.fail("search", "search failed (site unreachable)")
     }
 
@@ -640,7 +647,7 @@ class Provider {
 
     private solverEndpoint(): string {
         const u = (this.solverUrl || "").trim()
-        if (u.indexOf("http") !== 0) return ""
+        if (!/^https?:\/\/[^\s/]+/i.test(u)) return ""
         const base = u.replace(/\/+$/, "")
         return /\/v1$/.test(base) ? base : `${base}/v1`
     }
@@ -664,7 +671,7 @@ class Provider {
             if (!sol || !Array.isArray(sol.cookies)) return undefined
             const parts: string[] = []
             for (const c of sol.cookies) {
-                if (c && c.name && /cf_clearance|^__cf|^cf_/i.test(c.name)) parts.push(`${c.name}=${c.value}`)
+                if (c && c.name && /cf_clearance|^__cf|^cf_|^__ddg/i.test(c.name)) parts.push(`${c.name}=${c.value}`)
             }
             if (parts.length === 0) return undefined
             return { cookie: parts.join("; "), ua: sol.userAgent || "" }
@@ -680,7 +687,7 @@ class Provider {
         const kept: string[] = []
         for (const part of (out.Cookie || "").split(";")) {
             const p = part.trim()
-            if (p && !/^(cf_clearance|__cf|cf_)/i.test(p)) kept.push(p)
+            if (p && !/^(cf_clearance|__cf|cf_|__ddg)/i.test(p)) kept.push(p)
         }
         kept.push(cl.cookie)
         out.Cookie = kept.join("; ")
