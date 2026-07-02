@@ -134,8 +134,11 @@ function init() {
         function matchTrack(list: any[], want: any): number {
             const lang = String(want.language || "").toLowerCase()
             const label = String(want.label || "").toLowerCase()
+            if (label) {
+                for (let i = 0; i < list.length; i++) if (lang && String(list[i].label || "").toLowerCase() === label && String(list[i].language || "").toLowerCase() === lang) return list[i].number
+                for (let i = 0; i < list.length; i++) if (String(list[i].label || "").toLowerCase() === label) return list[i].number
+            }
             for (let i = 0; i < list.length; i++) if (lang && String(list[i].language || "").toLowerCase() === lang) return list[i].number
-            for (let i = 0; i < list.length; i++) if (label && String(list[i].label || "").toLowerCase() === label) return list[i].number
             return -2
         }
         function matchByLabel(list: any[], label: string): any {
@@ -245,7 +248,7 @@ function init() {
                 const label = String(txt || "").trim()
                 if (!label) { log("· click: could not read label"); done(); return }
                 log("· you picked '" + label + "' (" + (lastMenu || "?") + ")")
-                if (/^off$/i.test(label)) { const key = writeKey(); recordTo(key, { sub: { off: true }, cap: null }); log("✓ saved sub=off @ " + key); done(); return }
+                if (/^off$/i.test(label)) { const key = writeKey(); recordTo(key, { sub: { off: true }, cap: { off: true } }); log("✓ saved off @ " + key); done(); return }
                 VC.getTextTracks().then((tracks) => {
                     const subs = (tracks || []).filter((t) => t.type === "subtitles")
                     const caps = (tracks || []).filter((t) => t.type === "captions")
