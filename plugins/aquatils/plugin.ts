@@ -10,7 +10,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.54"
+        const SOLVER_VERSION = "0.1.55"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -40,7 +40,7 @@ function init() {
         const fsWantChromium = ctx.state<boolean>(sget<boolean>("fs.wantChromium", false))
         const fsAutoUpdate = ctx.state<boolean>(sget<boolean>("fs.autoUpdate", false))
         const fsBrowserMode = ctx.state<string>(sget<string>("fs.browserMode", "headless"))
-        const fsEngine = ctx.state<string>(sget<string>("fs.engine", "webview2"))
+        const fsEngine = ctx.state<string>(((): string => { const e = sget<string>("fs.engine", "webview2"); return e === "edge" ? "chrome" : e })())
         const fsWv2Warm = ctx.state<boolean>(sget<boolean>("fs.wv2warm", true))
         const fsWv2Refresh = ctx.state<boolean>(sget<boolean>("fs.wv2refresh", false))
         const fsWv2Utls = ctx.state<boolean>(sget<boolean>("fs.wv2utls", false))
@@ -531,7 +531,7 @@ function init() {
                             setNote("Solver stopped — auto-restarting…")
                             fsStart()
                         } else if (fsDownStreak === 2 && !fsManualStop && fsMode.get() !== "remote" && (fsAvBlocked || solverQuarantined())) {
-                            notifyOnce("av", "Aqua's Utils: antivirus removed the solver. Add an exclusion for %LOCALAPPDATA%\\aquatils, then Start.")
+                            notifyOnce("av", "Aqua's Utils: antivirus removed the solver. Add an exclusion for %LOCALAPPDATA%\\aquatils-beta, then Start.")
                         } else if (fsDownStreak === 2 && !fsManualStop && fsMode.get() !== "remote") {
                             notifyOnce("down", "Aqua's Utils: the solver isn't running. Open the tray to start it.")
                         }
@@ -887,11 +887,11 @@ function init() {
             const port = fsPort.get() || FS_DEFAULT_PORT
             const fsDir = $filepath.join($os.cacheDir(), "aquatils-beta", FS_VERSION, FS_CONTAINER)
             const chrDir = $filepath.join($os.cacheDir(), "aquatils-beta", "chromium")
-            const prep = "xattr -dr com.apple.quarantine '" + fsDir + "' 2>/dev/null; chmod -R 755 '" + fsDir + "'; "
-                + (chromiumOverride ? "xattr -dr com.apple.quarantine '" + chrDir + "' 2>/dev/null; chmod -R 755 '" + chrDir + "'; " : "")
+            const prep = "xattr -dr com.apple.quarantine " + shq(fsDir) + " 2>/dev/null; chmod -R 755 " + shq(fsDir) + "; "
+                + (chromiumOverride ? "xattr -dr com.apple.quarantine " + shq(chrDir) + " 2>/dev/null; chmod -R 755 " + shq(chrDir) + "; " : "")
             const ac = $os.platform === "windows"
                 ? $osExtra.asyncCmd("cmd", "/c", binPath)
-                : $osExtra.asyncCmd("sh", "-c", prep + "exec '" + binPath + "'")
+                : $osExtra.asyncCmd("sh", "-c", prep + "exec " + shq(binPath))
             const c = ac.getCommand()
             try {
                 const env = c.environ()
@@ -901,7 +901,7 @@ function init() {
                 if (logPath) env.push("LOG_FILE=" + logPath)
                 if (chromiumOverride) env.push("SOLVER_CHROME=" + chromiumOverride)
                 env.push("SOLVER_BROWSER_MODE=" + (fsBrowserMode.get() || "headless"))
-                if (fsEngine.get() && fsEngine.get() !== "chrome") env.push("SOLVER_BROWSER_ENGINE=" + fsEngine.get())
+                if ($os.platform === "windows" && fsEngine.get() && fsEngine.get() !== "chrome") env.push("SOLVER_BROWSER_ENGINE=" + fsEngine.get())
                 if (!fsWv2Warm.get()) env.push("SOLVER_WV2_WARM=0")
                 if (fsWv2Refresh.get()) env.push("SOLVER_WV2_REFRESH=1")
                 if (fsWv2Utls.get()) env.push("SOLVER_WV2_UTLS=1")
@@ -937,10 +937,10 @@ function init() {
                         try { $storage.set("fs.avBlocked", true) } catch (_e) {}
                         plog("antivirus removed the solver (binary quarantined while running)")
                         setErr("Antivirus (e.g. Windows Defender) removed the solver while it was running — it flags the solver as suspicious because it automates a background browser.")
-                        fsHint.set("Add a Windows Security exclusion for the aquatils folder (%LOCALAPPDATA%\\aquatils), then press Start.")
+                        fsHint.set("Add a Windows Security exclusion for the aquatils-beta folder (%LOCALAPPDATA%\\aquatils-beta), then press Start.")
                         setNote("Removed by antivirus — add an exclusion for the aquatils folder, then Start.")
                         ctx.toast.error("Antivirus removed the solver — add an exclusion for the aquatils folder.")
-                        notifyOnce("av", "Aqua's Utils: antivirus removed the solver. Add an exclusion for %LOCALAPPDATA%\\aquatils, then Start.")
+                        notifyOnce("av", "Aqua's Utils: antivirus removed the solver. Add an exclusion for %LOCALAPPDATA%\\aquatils-beta, then Start.")
                     } else if (wasUp) {
                         setNote("Solver stopped (code " + code + ").")
                         if (!fsManualStop) notifyOnce("down", "Aqua's Utils: the solver stopped (code " + code + ").")
@@ -953,10 +953,10 @@ function init() {
                             try { $storage.set("fs.avBlocked", true) } catch (_e) {}
                             plog("antivirus blocked the solver" + (binGone ? " (binary quarantined/removed while running)" : " (execution blocked)"))
                             setErr("Antivirus (e.g. Windows Defender) " + (binGone ? "removed" : "blocked") + " the solver — it flags the solver as suspicious because it automates a background browser.")
-                            fsHint.set("Add a Windows Security exclusion for the aquatils folder (%LOCALAPPDATA%\\aquatils), then press Start.")
+                            fsHint.set("Add a Windows Security exclusion for the aquatils-beta folder (%LOCALAPPDATA%\\aquatils-beta), then press Start.")
                             setNote("Blocked by antivirus — add an exclusion for the aquatils folder, then Start.")
                             ctx.toast.error("Antivirus blocked the solver — add an exclusion for the aquatils folder.")
-                            notifyOnce("av", "Aqua's Utils: antivirus blocked the solver. Add an exclusion for %LOCALAPPDATA%\\aquatils, then Start.")
+                            notifyOnce("av", "Aqua's Utils: antivirus blocked the solver. Add an exclusion for %LOCALAPPDATA%\\aquatils-beta, then Start.")
                         } else {
                             plog("solver exited (code " + code + ")" + (why ? " after producing output" : "; no output captured"))
                             if (!why) {
@@ -1024,7 +1024,7 @@ function init() {
 
         function reapOurChrome(done?: () => void): void {
             if (typeof $os === "undefined" || $os.platform !== "windows" || typeof $osExtra === "undefined") { if (done) done(); return }
-            const ps = "$ErrorActionPreference='SilentlyContinue';foreach($p in Get-CimInstance Win32_Process){if($p.Name -eq 'chrome.exe' -and $p.CommandLine -like '*aquatils\\chromium\\*'){Stop-Process -Id $p.ProcessId -Force}}"
+            const ps = "$ErrorActionPreference='SilentlyContinue';foreach($p in Get-CimInstance Win32_Process){if($p.Name -eq 'chrome.exe' -and $p.CommandLine -like '*aquatils-beta\\chromium\\*'){Stop-Process -Id $p.ProcessId -Force}}"
             try {
                 $osExtra.asyncCmd("cmd", "/c", "powershell", "-NoProfile", "-NonInteractive", "-Command", ps).run((_d, _e, code) => {
                     if (code === undefined) return
@@ -1037,6 +1037,12 @@ function init() {
 
         function aquatilsDir(): string {
             return $filepath.join($os.cacheDir(), "aquatils-beta")
+        }
+
+        // POSIX single-quote escaper: a cache path containing a quote (a "'" in
+        // HOME/XDG_CACHE_HOME) would otherwise break out of the sh -c string.
+        function shq(s: string): string {
+            return "'" + String(s).replace(/'/g, "'\\''") + "'"
         }
 
         function dirExists(p: string): boolean {
@@ -1143,6 +1149,17 @@ function init() {
                     return
                 }
             } catch (_e) {}
+            // A download+exec is about to happen. Require consent here — not just
+            // on the first-run button — so autostart and the anime-page Solver
+            // button can't fetch+run a binary the user never agreed to. An
+            // already-present binary launched above needs no re-consent.
+            if (!fsConsent.get()) {
+                setStatus("down")
+                setNote("Tick the consent box in Aqua's Utils before the solver is downloaded and run.")
+                ctx.toast.warning(fsNote.get())
+                tray.update()
+                return
+            }
             try {
                 $os.mkdirAll(dir, 493)
             } catch (_e) {}
@@ -1222,7 +1239,7 @@ function init() {
                     }
                     if (!extractOk && !pick.zip && $os.platform !== "windows") {
                         try {
-                            $os.cmd("sh", "-c", "tar -xzf '" + archive + "' -C '" + dir + "'").combinedOutput()
+                            $os.cmd("sh", "-c", "tar -xzf " + shq(archive) + " -C " + shq(dir)).combinedOutput()
                             if (solverBinExists()) { extractOk = true; plog("recovered via system tar") }
                             else plog("system tar ran but the binary is still missing")
                         } catch (e2) {
@@ -1448,15 +1465,16 @@ function init() {
             fsPersist()
             applySolverEnvChange("Browser solver window: " + fsBrowserMode.get())
         })
-        ;["chrome", "edge", "webview2"].forEach((e) => {
+        ;["chrome", "webview2"].forEach((e) => {
             ctx.registerEventHandler("fs-engine-set-" + e, () => {
                 fsEngine.set(e)
+                if (e === "chrome" && !fsWantChromium.get()) fsWantChromium.set(true)
                 fsPersist()
-                const label = e === "webview2" ? "WebView2" : (e === "edge" ? "Edge" : "Chrome")
+                const label = e === "webview2" ? "WebView2" : "Chromium"
                 applySolverEnvChange("Browser engine: " + label)
             })
         })
-        ctx.registerEventHandler("fs-help-engine", () => ctx.toast.info("Browser solver engine. Chrome (default) and Edge drive your installed browser. WebView2 is experimental: it runs a hidden, off-screen Edge WebView2 window with no taskbar button, reusing the Edge WebView2 Runtime present on virtually all Windows 11 machines. Switch to Chrome or Edge if a solve fails on WebView2."))
+        ctx.registerEventHandler("fs-help-engine", () => ctx.toast.info("Browser solver engine. WebView2 (default) runs a hidden, off-screen window reusing the Edge WebView2 Runtime present on virtually all Windows 11 machines — no taskbar button, no install. Chromium drives a private copy this plugin downloads into its own cache over CDP; it never touches your installed Chrome or Edge. Switch to Chromium if a solve fails on WebView2."))
         ctx.registerEventHandler("fs-wv2warm-toggle", () => {
             fsWv2Warm.set(!fsWv2Warm.get())
             fsPersist()
@@ -1711,7 +1729,7 @@ function init() {
             rows.push(toggleRow(fsAutoUpdate.get(), "fs-autoupdate-toggle", "Auto-update solver & Chromium"))
             rows.push(divider())
             rows.push(heading("Solver"))
-            rows.push(dim("Browser solver — the real browser (WebView2/Chrome/Edge) that clears the hard JS & interactive challenges (Cloudflare JS, Turnstile, DDoS-Guard) the fast uTLS path can't. Below: how its window stays hidden."))
+            rows.push(dim("Browser solver — the real browser (WebView2, or a Chromium this plugin downloads) that clears the hard JS & interactive challenges (Cloudflare JS, Turnstile, DDoS-Guard) the fast uTLS path can't. Below: how its window stays hidden."))
             rows.push(tray.button({
                 label: "Browser solver window: " + (fsBrowserMode.get() === "offscreen" ? "Off-screen (max stealth)" : "Invisible (headless)"),
                 onClick: "fs-browsermode-toggle",
@@ -1887,8 +1905,8 @@ function init() {
                     }))
                 } else if (needsDownload) {
                     rows.push(dim("aquatils-solver runs locally to get blocked sources (Cloudflare / DDoS-Guard) loading. It's downloaded from GitHub and only contacts the sites you stream."))
-                    rows.push(dim("Hard JS challenges (interactive Turnstile) need a Chromium browser. If you have Chrome or Edge, leave the box below off. If you don't, tick it to also fetch a minimal Chromium (~80 MB) into the plugin's cache."))
-                    rows.push(toggleRow(fsWantChromium.get(), "fs-chromium-toggle", "I have no Chrome/Edge — fetch a minimal Chromium"))
+                    rows.push(dim("Hard JS challenges (interactive Turnstile) need a real browser. On Windows the default WebView2 engine needs nothing extra. The Chromium engine instead drives a private copy this plugin downloads (~80 MB) into its own cache — it never uses your installed Chrome or Edge. Tick below to fetch it."))
+                    rows.push(toggleRow(fsWantChromium.get(), "fs-chromium-toggle", "Fetch a minimal Chromium for the browser solver"))
                     rows.push(toggleRow(fsConsent.get(), "fs-consent-toggle", "I understand — tap to confirm"))
                     rows.push(tray.flex({
                         items: [
@@ -2017,7 +2035,7 @@ function init() {
                     gap: 2,
                     style: { alignItems: "center" },
                 }))
-                const engineOpts: [string, string][] = [["webview2", "WebView2"], ["chrome", "Chrome"], ["edge", "Edge"]]
+                const engineOpts: [string, string][] = [["webview2", "WebView2"], ["chrome", "Chromium"]]
                 rows.push(tray.flex({
                     items: engineOpts.map((o) => tray.button({ label: o[1], onClick: "fs-engine-set-" + o[0], intent: "gray-subtle", size: "sm", style: fsEngine.get() === o[0] ? ACCENT_SUBTLE : {} })),
                     gap: 2,
