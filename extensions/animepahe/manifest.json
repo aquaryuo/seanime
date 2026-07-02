@@ -1,7 +1,7 @@
 {
   "id": "aq-animepahe-beta",
   "name": "AnimePahe - BETA",
-  "version": "0.2.22",
+  "version": "0.2.23",
   "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/animepahe/manifest.json",
   "language": "typescript",
   "type": "onlinestream-provider",
@@ -31,6 +31,12 @@
         "name": "solverUrl",
         "label": "[!] Solver endpoint — run it via Aqua's Utils",
         "default": "http://127.0.0.1:8191/v1"
+      },
+      {
+        "type": "text",
+        "name": "solverSession",
+        "label": "Solver session — must match Aqua's Utils (default: seanime)",
+        "default": "seanime"
       }
     ]
   }

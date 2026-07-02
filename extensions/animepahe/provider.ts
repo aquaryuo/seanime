@@ -4,6 +4,7 @@ class Provider {
     private baseUrl = "{{baseUrl}}"
     private mirrors = ["https://animepahe.pw", "https://animepahe.com", "https://animepahe.org"]
     private solverUrl = ("{{solverUrl}}" as string)
+    private solverSession = ("{{solverSession}}" as string)
     private lastResp: { url: string; status: number; statusText: string; ct: string; len: number; redirected: boolean; finalUrl: string; snippet: string; hit: string } | undefined = undefined
     private lastSolver: { ran: boolean; http: number; snippet: string; reason: string } | undefined = undefined
     private cookieTtl = 10800000
@@ -490,6 +491,17 @@ class Provider {
         return /\/v1$/.test(base) ? base : `${base}/v1`
     }
 
+    // Must match Aqua's Utils' session (default "seanime") so the solver's
+    // keep-warm and its Test button validate the very jar this provider uses,
+    // instead of leaving production on the solver's unmanaged __default jar.
+    private sessionName(): string {
+        const s = (this.solverSession || "").trim()
+        // Fall back to the default if the field is empty or left as an
+        // unsubstituted template (older saved config without this field).
+        if (!s || s.indexOf("{{") !== -1) return "seanime"
+        return s
+    }
+
     private proxyM3u8(m3u8: string, referer: string): string {
         const ep = this.solverEndpoint()
         if (!ep) return m3u8
@@ -516,7 +528,7 @@ class Provider {
     private async solveGet(url: string): Promise<string | undefined> {
         const ep = this.solverEndpoint()
         if (!ep) { this.lastSolver = { ran: false, http: 0, snippet: "", reason: "" }; return undefined }
-        const data = await this.solverPost(ep, { cmd: "request.get", url, maxTimeout: 32000 })
+        const data = await this.solverPost(ep, { cmd: "request.get", url, maxTimeout: 32000, session: this.sessionName() })
         const sol = data && data.solution ? data.solution : undefined
         if (sol) this.absorbSolution(sol)
         const body = sol ? sol.response : undefined
@@ -548,7 +560,11 @@ class Provider {
     private isBlocked(res: FetchResponse): boolean {
         if (!res) return true
         if (res.status === 403 || res.status === 429 || res.status === 503) return true
-        if (res.ok && this.bodyIsChallenge(res.text())) return true
+        // Never scan a JSON API body for challenge tokens: a legitimate 200 JSON
+        // payload (e.g. an episode titled "Just a Moment") would otherwise be
+        // misread as a challenge. Interstitials are always HTML.
+        const ct = (res.contentType || "").toLowerCase()
+        if (res.ok && ct.indexOf("application/json") === -1 && this.bodyIsChallenge(res.text())) return true
         return false
     }
 
