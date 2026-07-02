@@ -101,7 +101,6 @@ class Provider {
                 const bare = scored.filter((x) => this.yearOf(x.r.title) === 0)
                 if (bare.length > 0) return bare
             }
-            return []
         }
         if (season < 2 && part < 2) return scored
         return scored.filter((x) => {
@@ -223,17 +222,19 @@ class Provider {
         const alId = this.alOf(episode.id)
         const audio = this.audioOf(episode.id)
         const cacheKey = `anizone:src:${shortid}:${n}`
-        let html = this.readCache<string>(cacheKey, this.srcCacheTtl)
-        if (!html) {
+        let cached = this.readCache<{ m3u8: string; subs: { origin: string; lang: string; ext: string }[] }>(cacheKey, this.srcCacheTtl)
+        if (!cached || !cached.m3u8) {
             const res = await fetch(`${this.normBase()}/anime/${shortid}/${n}`, { headers: this.pageHeaders(), timeout: 14 })
             if (!res.ok) throw `anizone: episode page failed (status ${res.status})`
-            html = res.text()
-            if (html.indexOf("master.m3u8") !== -1) this.writeCache(cacheKey, html)
+            const html = res.text()
+            const found = this.firstMatch(html, /https?:\/\/[^"'\s]+\/master\.m3u8/)
+            if (!found) throw "anizone: no stream found for this episode"
+            cached = { m3u8: found, subs: this.extractSubs(html) }
+            this.writeCache(cacheKey, cached)
         }
-        const m3u8 = this.firstMatch(html, /https?:\/\/[^"'\s]+\/master\.m3u8/)
-        if (!m3u8) throw "anizone: no stream found for this episode"
+        const m3u8 = cached.m3u8
         if (audio === "dub" && !(await this.hasEnglishAudio(m3u8, shortid, n))) throw "anizone: no dub available for this episode"
-        const subtitles = await this.buildSubs(html, alId, parseInt(n, 10) || episode.number)
+        const subtitles = await this.buildSubs(cached.subs, alId, parseInt(n, 10) || episode.number)
         return {
             server: server === "Auto" || server === "default" || !server ? "Auto" : server,
             headers: { Referer: `${this.normBase()}/` },
@@ -376,18 +377,26 @@ class Provider {
         return titles[0]
     }
 
-    private async buildSubs(html: string, anilistId: number, episode: number): Promise<VideoSubtitle[]> {
-        const out: VideoSubtitle[] = []
+    private extractSubs(html: string): { origin: string; lang: string; ext: string }[] {
+        const out: { origin: string; lang: string; ext: string }[] = []
         const re = /https?:\/\/[^"'\s]+\/subtitles\/[0-9]+_([a-z-]+)\.(ass|srt)/g
+        let m: RegExpExecArray | null
+        while ((m = re.exec(html)) !== null) {
+            out.push({ origin: m[0], lang: m[1] || "en", ext: m[2] || "ass" })
+        }
+        return out
+    }
+
+    private async buildSubs(subs: { origin: string; lang: string; ext: string }[], anilistId: number, episode: number): Promise<VideoSubtitle[]> {
+        const out: VideoSubtitle[] = []
         const wantSite = this.subtitleSource === "subryuo" && anilistId > 0 && episode > 0
         const viaSite = wantSite && (await this.subUp())
         const seen: { [key: string]: boolean } = {}
         let englishIdx = -1
-        let m: RegExpExecArray | null
-        while ((m = re.exec(html)) !== null) {
-            const origin = m[0]
-            const lang = (m[1] || "en").toLowerCase().split("-")[0]
-            const ext = (m[2] || "ass").toLowerCase()
+        for (const s of subs) {
+            const origin = s.origin
+            const lang = (s.lang || "en").toLowerCase().split("-")[0]
+            const ext = (s.ext || "ass").toLowerCase()
             if (seen[lang]) continue
             seen[lang] = true
             const idx = out.length
@@ -439,7 +448,7 @@ class Provider {
             const res = await fetch(m3u8, { headers: this.pageHeaders(), timeout: 8 })
             if (res.ok) {
                 const body = res.text()
-                ok = /#EXT-X-MEDIA:TYPE=AUDIO[^\n]*LANGUAGE="en"/i.test(body) || /#EXT-X-MEDIA:TYPE=AUDIO[^\n]*(?:english|\bdub\b)/i.test(body)
+                ok = /#EXT-X-MEDIA:TYPE=AUDIO[^\n]*LANGUAGE="(?:en|eng|en-[a-z]+)"/i.test(body) || /#EXT-X-MEDIA:TYPE=AUDIO[^\n]*(?:english|\bdub\b)/i.test(body)
             }
         } catch (_e) {}
         this.writeCache(key, ok)
