@@ -49,6 +49,7 @@ function init() {
             const es = entriesState.get()
             for (let i = 0; i < es.length; i++) {
                 const e = es[i]
+                if (!e || typeof e !== "object") continue
                 if (e.id) byId[e.id] = e
                 if (e.name) byName[String(e.name).toLowerCase()] = e
             }
@@ -127,17 +128,20 @@ function init() {
 
         // ---------- card decoration ----------
         async function rebuildBadges(card: any, info: Entry, tags: string[]): Promise<void> {
-            let badges: any[] = [], block: any = null
+            let badges: any[] = [], block: any = null, existing: any[] = []
             try {
                 const r = await Promise.all([
                     card.query(".UI-Badge__root").catch(() => []),
                     ctx.dom.createElement("div").catch(() => null),
+                    card.query(".seatags-block").catch(() => []),
                 ])
-                badges = r[0] || []; block = r[1]
+                badges = r[0] || []; block = r[1]; existing = r[2] || []
             } catch (e) { dErr = "findrow" }
+            for (let i = 0; i < existing.length; i++) { try { existing[i].remove() } catch (_e) {} }
             if (!block) return
             let row: any = null
             if (badges.length) { try { row = await badges[0].getParent() } catch (_e) {} }
+            try { block.setAttribute("class", "seatags-block") } catch (_e) {}
             try { block.setCssText("display:flex;flex-direction:column;gap:6px;margin-top:8px") } catch (_e) {}
             try { block.setInnerHTML(blockHtml(info, tags)) } catch (e) { dErr = "html" }
             if (row) {
@@ -148,19 +152,26 @@ function init() {
             }
         }
 
+        const decorating: { [k: string]: boolean } = {}
         async function decorateOne(card: any): Promise<void> {
-            const html = (card && card.innerHTML) ? String(card.innerHTML) : ""
-            const id = extractId(html)
-            let info: Entry | null = (id && byId[id]) ? byId[id] : null
-            if (!info) {
-                const nm = extractName(html)
-                if (nm && byName[nm.toLowerCase()]) info = byName[nm.toLowerCase()]
+            const cid = card && card.id ? String(card.id) : ""
+            if (cid) { if (decorating[cid]) return; decorating[cid] = true }
+            try {
+                const html = (card && card.innerHTML) ? String(card.innerHTML) : ""
+                const id = extractId(html)
+                let info: Entry | null = (id && byId[id]) ? byId[id] : null
+                if (!info) {
+                    const nm = extractName(html)
+                    if (nm && byName[nm.toLowerCase()]) info = byName[nm.toLowerCase()]
+                }
+                const tags = info ? tagsOf(info) : []
+                const author = info && info.author ? String(info.author).toLowerCase() : ""
+                try { card.setAttribute("data-seatags", tags.length ? tags.join(" ") : "untagged") } catch (e) { dErr = "attr" }
+                try { card.setAttribute("data-seatags-author", author) } catch (_e) {}
+                if (info) await rebuildBadges(card, info, tags)
+            } finally {
+                if (cid) delete decorating[cid]
             }
-            const tags = info ? tagsOf(info) : []
-            const author = info && info.author ? String(info.author).toLowerCase() : ""
-            try { card.setAttribute("data-seatags", tags.length ? tags.join(" ") : "untagged") } catch (e) { dErr = "attr" }
-            try { card.setAttribute("data-seatags-author", author) } catch (_e) {}
-            if (info) await rebuildBadges(card, info, tags)
         }
         function decorateCards(cards: any[]): void {
             if (!cards) return
@@ -195,7 +206,7 @@ function init() {
             const f = filterState.get()
             const a = authorState.get().toLowerCase().replace(/["\\]/g, "")
             let css = ""
-            if (f && f !== "all") css += '[class*="extension-card"]:not([data-seatags~="' + f + '"]){display:none !important}'
+            if (f && f !== "all" && entriesState.get().length > 0) css += '[class*="extension-card"]:not([data-seatags~="' + f + '"]){display:none !important}'
             if (a) css += '[class*="extension-card"]:not([data-seatags-author*="' + a + '"]){display:none !important}'
             try { filterStyle.setText(css) } catch (e) { dErr = "filter" }
         }
@@ -375,7 +386,7 @@ function init() {
             if (ic) { try { rowEl = await ic.getParent() } catch (_e) {} }
             let langRoot: any[] = []
             if (rowEl) { try { langRoot = await rowEl.query(".UI-Select__root") } catch (_e) {} }
-            return { ic: ic, langRoot: langRoot || [], hasLang: !!(langRoot && langRoot.length) }
+            return { ic: ic, rowEl: rowEl, langRoot: langRoot || [], hasLang: !!(langRoot && langRoot.length) }
         }
 
         let injectedIds: { [k: string]: boolean } = {}
@@ -406,6 +417,7 @@ function init() {
                     anchors = r[0]; statusEl = r[1]; author = r[2]
                 } catch (_e) {}
                 const ic = anchors.ic
+                const rowEl = anchors.rowEl
                 const langRoot = anchors.langRoot
                 const hasLang = anchors.hasLang
 
@@ -414,20 +426,16 @@ function init() {
                     if (statusEl) { try { langRoot[0].before(statusEl) } catch (e) { dErr = "place" } }
                     if (author && ic) { try { ic.before(author) } catch (_e) {} }
                 } else if (ic) {
-                    // Installed (no flex row): make the search inline and place [Status][Author] beside it.
-                    // Only INSERT our own node + set inline styles — never move Seanime's node (that breaks React).
-                    let wrap: any = null
-                    try { wrap = await ctx.dom.createElement("div") } catch (_e) {}
-                    if (wrap) {
-                        try { wrap.setCssText("display:inline-flex;vertical-align:top;flex-direction:row;flex-wrap:wrap;gap:8px;align-items:center;margin-right:8px") } catch (_e) {}
-                        if (statusEl) { try { wrap.append(statusEl) } catch (_e) {} }
-                        if (author) { try { wrap.append(author) } catch (_e) {} }
-                        try { ic.setStyle("display", "inline-flex") } catch (_e) {}
-                        try { ic.setStyle("vertical-align", "top") } catch (_e) {}
-                        try { ic.setStyle("width", "380px") } catch (_e) {}
-                        try { ic.setStyle("max-width", "100%") } catch (_e) {}
-                        try { ic.before(wrap) } catch (e) { dErr = "place" }
+                    if (rowEl) {
+                        try { rowEl.setStyle("display", "flex") } catch (_e) {}
+                        try { rowEl.setStyle("align-items", "center") } catch (_e) {}
+                        try { rowEl.setStyle("gap", "8px") } catch (_e) {}
+                        try { rowEl.setStyle("flex-wrap", "wrap") } catch (_e) {}
                     }
+                    if (statusEl) { try { ic.before(statusEl) } catch (e) { dErr = "place" } }
+                    if (author) { try { ic.before(author) } catch (_e) {} }
+                    try { ic.setStyle("flex", "1 1 320px") } catch (_e) {}
+                    try { ic.setStyle("max-width", "100%") } catch (_e) {}
                 }
             }
         }
@@ -484,11 +492,16 @@ function init() {
                 if (res.ok) {
                     const data = res.json<any>()
                     if (Array.isArray(data)) {
-                        entriesState.set(data as Entry[])
+                        const clean = (data as any[]).filter((e) => e && typeof e === "object")
+                        entriesState.set(clean as Entry[])
                         rebuildMaps()
-                        lastAt = now()
-                        try { $storage.set(CACHE_KEY, { at: lastAt, data: data }) } catch (_e) {}
+                        try { $storage.set(CACHE_KEY, { at: now(), data: clean }) } catch (_e) {}
+                    } else {
+                        dErr = "shape"
                     }
+                    lastAt = now()
+                } else {
+                    dErr = "http"
                 }
             } catch (_e) {
                 dErr = "fetch"
