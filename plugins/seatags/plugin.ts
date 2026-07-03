@@ -128,17 +128,20 @@ function init() {
 
         // ---------- card decoration ----------
         async function rebuildBadges(card: any, info: Entry, tags: string[]): Promise<void> {
-            let badges: any[] = [], block: any = null
+            let badges: any[] = [], block: any = null, existing: any[] = []
             try {
                 const r = await Promise.all([
                     card.query(".UI-Badge__root").catch(() => []),
                     ctx.dom.createElement("div").catch(() => null),
+                    card.query(".seatags-block").catch(() => []),
                 ])
-                badges = r[0] || []; block = r[1]
+                badges = r[0] || []; block = r[1]; existing = r[2] || []
             } catch (e) { dErr = "findrow" }
+            for (let i = 0; i < existing.length; i++) { try { existing[i].remove() } catch (_e) {} }
             if (!block) return
             let row: any = null
             if (badges.length) { try { row = await badges[0].getParent() } catch (_e) {} }
+            try { block.setAttribute("class", "seatags-block") } catch (_e) {}
             try { block.setCssText("display:flex;flex-direction:column;gap:6px;margin-top:8px") } catch (_e) {}
             try { block.setInnerHTML(blockHtml(info, tags)) } catch (e) { dErr = "html" }
             if (row) {
@@ -149,19 +152,26 @@ function init() {
             }
         }
 
+        const decorating: { [k: string]: boolean } = {}
         async function decorateOne(card: any): Promise<void> {
-            const html = (card && card.innerHTML) ? String(card.innerHTML) : ""
-            const id = extractId(html)
-            let info: Entry | null = (id && byId[id]) ? byId[id] : null
-            if (!info) {
-                const nm = extractName(html)
-                if (nm && byName[nm.toLowerCase()]) info = byName[nm.toLowerCase()]
+            const cid = card && card.id ? String(card.id) : ""
+            if (cid) { if (decorating[cid]) return; decorating[cid] = true }
+            try {
+                const html = (card && card.innerHTML) ? String(card.innerHTML) : ""
+                const id = extractId(html)
+                let info: Entry | null = (id && byId[id]) ? byId[id] : null
+                if (!info) {
+                    const nm = extractName(html)
+                    if (nm && byName[nm.toLowerCase()]) info = byName[nm.toLowerCase()]
+                }
+                const tags = info ? tagsOf(info) : []
+                const author = info && info.author ? String(info.author).toLowerCase() : ""
+                try { card.setAttribute("data-seatags", tags.length ? tags.join(" ") : "untagged") } catch (e) { dErr = "attr" }
+                try { card.setAttribute("data-seatags-author", author) } catch (_e) {}
+                if (info) await rebuildBadges(card, info, tags)
+            } finally {
+                if (cid) delete decorating[cid]
             }
-            const tags = info ? tagsOf(info) : []
-            const author = info && info.author ? String(info.author).toLowerCase() : ""
-            try { card.setAttribute("data-seatags", tags.length ? tags.join(" ") : "untagged") } catch (e) { dErr = "attr" }
-            try { card.setAttribute("data-seatags-author", author) } catch (_e) {}
-            if (info) await rebuildBadges(card, info, tags)
         }
         function decorateCards(cards: any[]): void {
             if (!cards) return
