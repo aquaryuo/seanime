@@ -378,15 +378,16 @@ function init() {
             return author
         }
 
-        // Resolves placement anchors: ic (search container) + langRoot (the All Languages select). Dependent chain.
         async function resolveAnchors(input: any): Promise<any> {
             let ic: any = null
             try { ic = await input.getParent() } catch (_e) {}
             let rowEl: any = null
             if (ic) { try { rowEl = await ic.getParent() } catch (_e) {} }
+            let toolbar: any = null
+            if (rowEl) { try { toolbar = await rowEl.getParent() } catch (_e) {} }
             let langRoot: any[] = []
-            if (rowEl) { try { langRoot = await rowEl.query(".UI-Select__root") } catch (_e) {} }
-            return { ic: ic, rowEl: rowEl, langRoot: langRoot || [], hasLang: !!(langRoot && langRoot.length) }
+            if (toolbar) { try { langRoot = await toolbar.query(".UI-Select__root") } catch (_e) {} }
+            return { ic: ic, rowEl: rowEl, toolbar: toolbar, langRoot: langRoot || [], hasLang: !!(langRoot && langRoot.length) }
         }
 
         let injectedIds: { [k: string]: boolean } = {}
@@ -418,19 +419,20 @@ function init() {
                 } catch (_e) {}
                 const ic = anchors.ic
                 const rowEl = anchors.rowEl
-                const langRoot = anchors.langRoot
+                const toolbar = anchors.toolbar
                 const hasLang = anchors.hasLang
 
                 if (hasLang) {
-                    if (rowEl) {
-                        try { rowEl.setStyle("display", "flex") } catch (_e) {}
-                        try { rowEl.setStyle("align-items", "center") } catch (_e) {}
-                        try { rowEl.setStyle("flex-wrap", "wrap") } catch (_e) {}
+                    if (toolbar) {
+                        try { toolbar.setStyle("align-items", "center") } catch (_e) {}
+                        try { toolbar.setStyle("flex-wrap", "wrap") } catch (_e) {}
                     }
-                    if (statusEl) { try { langRoot[0].before(statusEl) } catch (e) { dErr = "place" } }
-                    if (author && ic) { try { ic.before(author) } catch (_e) {} }
-                    try { ic.setStyle("flex", "1 1 200px") } catch (_e) {}
-                    try { ic.setStyle("max-width", "100%") } catch (_e) {}
+                    if (statusEl && rowEl) { try { rowEl.before(statusEl) } catch (e) { dErr = "place" } }
+                    if (author && rowEl) { try { rowEl.before(author) } catch (_e) {} }
+                    if (rowEl) {
+                        try { rowEl.setStyle("flex", "1 1 200px") } catch (_e) {}
+                        try { rowEl.setStyle("max-width", "100%") } catch (_e) {}
+                    }
                 } else if (ic) {
                     if (rowEl) {
                         try { rowEl.setStyle("display", "flex") } catch (_e) {}
