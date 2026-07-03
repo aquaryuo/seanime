@@ -422,9 +422,15 @@ function init() {
                 const hasLang = anchors.hasLang
 
                 if (hasLang) {
-                    // Marketplace row: [Status][All Languages][Author][Search] — pure insertion, no node moves
+                    if (rowEl) {
+                        try { rowEl.setStyle("display", "flex") } catch (_e) {}
+                        try { rowEl.setStyle("align-items", "center") } catch (_e) {}
+                        try { rowEl.setStyle("flex-wrap", "wrap") } catch (_e) {}
+                    }
                     if (statusEl) { try { langRoot[0].before(statusEl) } catch (e) { dErr = "place" } }
                     if (author && ic) { try { ic.before(author) } catch (_e) {} }
+                    try { ic.setStyle("flex", "1 1 200px") } catch (_e) {}
+                    try { ic.setStyle("max-width", "100%") } catch (_e) {}
                 } else if (ic) {
                     if (rowEl) {
                         try { rowEl.setStyle("display", "flex") } catch (_e) {}
