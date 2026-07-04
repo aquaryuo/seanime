@@ -156,10 +156,17 @@ class Provider {
         if (candidates.length === 0) throw this.fail("server", audio === "dub" ? "no dub source for this episode" : "no source found for this episode")
 
         const sources: EpisodeServer["videoSources"] = []
+        // Only route playback through the solver's /m3u8 proxy when the solver is
+        // actually reachable (the ping is 30s-cached). solverUrl is set by
+        // default, so wrapping unconditionally would point the player at a dead
+        // port for anyone whose residential IP reaches kwik directly and never
+        // needed the solver — the raw m3u8 + Referer/Origin headers below play
+        // fine in that case.
+        const useProxy = !!this.solverEndpoint() && (await this.solverPing()).up
         for (const c of candidates) {
             try {
                 const m3u8 = await this.resolveKwik(c.url, playUrl)
-                if (m3u8) sources.push({ url: this.proxyM3u8(m3u8, c.url), type: "m3u8", quality: c.label, subtitles: [] })
+                if (m3u8) sources.push({ url: useProxy ? this.proxyM3u8(m3u8, c.url) : m3u8, type: "m3u8", quality: c.label, subtitles: [] })
             } catch (_e) {}
         }
         if (sources.length === 0) throw this.fail("server", "could not resolve any source")
