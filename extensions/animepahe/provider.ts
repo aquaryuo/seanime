@@ -530,7 +530,14 @@ class Provider {
         if (!ep) { this.lastSolver = { ran: false, http: 0, snippet: "", reason: "" }; return undefined }
         const data = await this.solverPost(ep, { cmd: "request.get", url, maxTimeout: 32000, session: this.sessionName() })
         const sol = data && data.solution ? data.solution : undefined
-        if (sol) this.absorbSolution(sol)
+        // Only merge cookies harvested for an animepahe URL into the animepahe
+        // jar. solveGet is also used for the kwik.si embed; kwik and animepahe
+        // are the same Laravel operator, so a kwik solve returns same-named
+        // cookies (laravel_session/XSRF-TOKEN, cf_clearance) that would silently
+        // overwrite animepahe's session in the flat, un-domain-scoped store and
+        // make the next direct animepahe request 419/403. The UA is host-neutral
+        // and always safe to keep.
+        if (sol) this.absorbSolution(sol, /animepahe/i.test(url))
         const body = sol ? sol.response : undefined
         const http = sol && typeof sol.status === "number" ? sol.status : 0
         const reason = data && data.message ? String(data.message) : ""
@@ -699,9 +706,9 @@ class Provider {
         $store.set("apahe:ck", { at: this.now(), map })
     }
 
-    private absorbSolution(sol: { userAgent?: string; cookies?: { name: string; value: string }[] }): void {
+    private absorbSolution(sol: { userAgent?: string; cookies?: { name: string; value: string }[] }, mergeCookies: boolean): void {
         if (!sol) return
-        if (Array.isArray(sol.cookies) && sol.cookies.length) {
+        if (mergeCookies && Array.isArray(sol.cookies) && sol.cookies.length) {
             const fresh: { [k: string]: string } = {}
             for (const c of sol.cookies) { if (c && c.name && c.value) fresh[c.name] = c.value }
             if (this.mapSize(fresh) > 0) {
