@@ -151,14 +151,15 @@ function init() {
             "libwayland-client": "libwayland-client0", "libwayland-server": "libwayland-server0", "libwayland-egl": "libwayland-egl1",
         }
 
+        const CHROME_DEPS = "ca-certificates fonts-liberation libasound2 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 libcairo2 libcups2 libdbus-1-3 libdrm2 libexpat1 libfontconfig1 libgbm1 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxkbcommon0 libxrandr2 libxrender1 libxshmfence1 libxss1 libxtst6"
+
+        function chromeDepsCmd(): string {
+            return "sudo apt-get update && sudo apt-get install -y " + CHROME_DEPS
+        }
+
         function libToPkg(soname: string): string {
             const base = soname.split(".so")[0]
             return LIB_PKG[base] || soname
-        }
-
-        function isKnownPkg(p: string): boolean {
-            for (const k in LIB_PKG) { if (LIB_PKG[k] === p) return true }
-            return false
         }
 
         function mergeDepPkgs(pkgs: string[]): void {
@@ -172,7 +173,7 @@ function init() {
             }
             out.sort()
             fsDepsPkgs.set(out)
-            fsDepsCmd.set("sudo apt-get update && sudo apt-get install -y " + out.join(" "))
+            fsDepsCmd.set(chromeDepsCmd())
         }
 
         function checkChromiumDeps(force?: boolean): void {
@@ -204,21 +205,13 @@ function init() {
         function installChromiumDeps(): void {
             if (typeof $os === "undefined" || typeof $osExtra === "undefined" || $os.platform !== "linux") return
             if (fsDepsInstalling.get()) return
-            const all = fsDepsPkgs.get() || []
-            const list: string[] = []
-            for (let i = 0; i < all.length; i++) { if (isKnownPkg(all[i])) list.push(all[i]) }
-            if (!list.length) {
-                fsDepsInstallMsg.set("Couldn't determine installable package names automatically - use Copy command and run it yourself.")
-                tray.update()
-                return
-            }
+            if (!(fsDepsPkgs.get() || []).length) return
             fsDepsInstalling.set(true)
-            fsDepsInstallMsg.set("Installing " + list.length + " system package(s)... this can take a minute.")
-            plog("installing Chromium system packages: " + list.join(" "))
+            fsDepsInstallMsg.set("Installing the Chromium dependency set in one step... this can take a minute.")
+            plog("installing the Chromium dependency set")
             tray.update()
-            const pkgs = list.join(" ")
-            const root = "DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y " + pkgs
-            const nonRoot = "sudo -n env DEBIAN_FRONTEND=noninteractive apt-get update && sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y " + pkgs
+            const root = "DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y " + CHROME_DEPS
+            const nonRoot = "sudo -n env DEBIAN_FRONTEND=noninteractive apt-get update && sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y " + CHROME_DEPS
             const cmd = "if [ \"$(id -u)\" = 0 ]; then " + root + "; else " + nonRoot + "; fi"
             let tail = ""
             try {
@@ -2048,7 +2041,7 @@ function init() {
             if ((fsDepsPkgs.get() || []).length) {
                 const pkgs = fsDepsPkgs.get() || []
                 const items: any[] = [
-                    tray.text("The browser solver's Chromium needs system packages that aren't installed on this Linux host. uTLS still works, but hard Cloudflare/Turnstile challenges won't clear until they're installed. Install them below (it uses the shell access you already granted), then the solver restarts automatically.", { style: { fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5", color: "rgba(255,255,255,0.85)" } }),
+                    tray.text("The browser solver's Chromium needs system packages that aren't installed on this Linux host. uTLS still works, but hard Cloudflare/Turnstile challenges won't clear until they're installed. Install installs the whole Chromium dependency set in one step (using the shell access you already granted), then the solver restarts automatically.", { style: { fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5", color: "rgba(255,255,255,0.85)" } }),
                     tray.text("Missing: " + pkgs.join(", "), { style: { fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5", marginTop: "6px", color: "rgba(255,255,255,0.7)" } }),
                 ]
                 if (fsDepsInstallMsg.get()) {
@@ -2060,7 +2053,7 @@ function init() {
                 }))
                 rows.push(tray.flex({
                     items: [
-                        tray.button({ label: fsDepsInstalling.get() ? "Installing…" : "Install missing packages", onClick: "fs-install-deps", intent: "success", size: "sm", style: ACCENT_STYLE, disabled: fsDepsInstalling.get() }),
+                        tray.button({ label: fsDepsInstalling.get() ? "Installing…" : "Install all dependencies", onClick: "fs-install-deps", intent: "success", size: "sm", style: ACCENT_STYLE, disabled: fsDepsInstalling.get() }),
                         tray.button({ label: "Copy command", onClick: "fs-copy-deps", intent: "gray-subtle", size: "sm", style: ACCENT_SUBTLE }),
                     ],
                     gap: 2,
