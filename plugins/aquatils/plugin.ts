@@ -1073,11 +1073,23 @@ function init() {
                     return
                 } catch (_e) {}
             }
-            if (proc && typeof $os !== "undefined" && $os.platform !== "windows") {
-                waitPortFree(fsPort.get() || FS_DEFAULT_PORT, guardedDone)
+            if (typeof $osExtra !== "undefined" && typeof $os !== "undefined" && $os.platform !== "windows") {
+                reapOrphanSolvers(() => waitPortFree(fsPort.get() || FS_DEFAULT_PORT, guardedDone))
                 return
             }
             guardedDone()
+        }
+
+        function reapOrphanSolvers(done?: () => void): void {
+            if (typeof $os === "undefined" || typeof $osExtra === "undefined" || $os.platform === "windows") { if (done) done(); return }
+            try {
+                $osExtra.asyncCmd("sh", "-c", "pkill -9 -f '[a]quatils-beta/.*/solver/solver' 2>/dev/null; exit 0").run((_d, _e, code) => {
+                    if (code === undefined) return
+                    if (done) done()
+                })
+                return
+            } catch (_e) {}
+            if (done) done()
         }
 
         function reapOurChrome(done?: () => void): void {
