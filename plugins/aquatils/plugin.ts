@@ -87,6 +87,8 @@ function init() {
         const fsHint = ctx.state<string>("")
         const fsDepsCmd = ctx.state<string>("")
         const fsDepsPkgs = ctx.state<string[]>([])
+        const fsDepsInstalling = ctx.state<boolean>(false)
+        const fsDepsInstallMsg = ctx.state<string>("")
         let fsDepsChecked = false
         const fsVersion = ctx.state<string>("")
         const fsTest = ctx.state<string>("")
@@ -154,6 +156,11 @@ function init() {
             return LIB_PKG[base] || soname
         }
 
+        function isKnownPkg(p: string): boolean {
+            for (const k in LIB_PKG) { if (LIB_PKG[k] === p) return true }
+            return false
+        }
+
         function mergeDepPkgs(pkgs: string[]): void {
             if (!pkgs.length) return
             const seen: { [k: string]: boolean } = {}
@@ -188,10 +195,59 @@ function init() {
                     if (!pkgs.length) return
                     mergeDepPkgs(pkgs)
                     plog("browser solver: Chromium is missing " + (fsDepsPkgs.get() || []).length + " system package(s) - see the tray")
-                    notifyOnce("chromedeps", "Aqua's Utils: the browser solver's Chromium needs system packages that aren't installed. Open the tray for the list and the install command.")
+                    notifyOnce("chromedeps", "Aqua's Utils: the browser solver's Chromium needs system packages that aren't installed. Open the tray to install them in one click.")
                     tray.update()
                 })
             } catch (_e) {}
+        }
+
+        function installChromiumDeps(): void {
+            if (typeof $os === "undefined" || typeof $osExtra === "undefined" || $os.platform !== "linux") return
+            if (fsDepsInstalling.get()) return
+            const all = fsDepsPkgs.get() || []
+            const list: string[] = []
+            for (let i = 0; i < all.length; i++) { if (isKnownPkg(all[i])) list.push(all[i]) }
+            if (!list.length) {
+                fsDepsInstallMsg.set("Couldn't determine installable package names automatically - use Copy command and run it yourself.")
+                tray.update()
+                return
+            }
+            fsDepsInstalling.set(true)
+            fsDepsInstallMsg.set("Installing " + list.length + " system package(s)... this can take a minute.")
+            plog("installing Chromium system packages: " + list.join(" "))
+            tray.update()
+            const pkgs = list.join(" ")
+            const root = "DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y " + pkgs
+            const nonRoot = "sudo -n env DEBIAN_FRONTEND=noninteractive apt-get update && sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y " + pkgs
+            const cmd = "if [ \"$(id -u)\" = 0 ]; then " + root + "; else " + nonRoot + "; fi"
+            let tail = ""
+            try {
+                $osExtra.asyncCmd("sh", "-c", cmd + " 2>&1").run((data, _e, code) => {
+                    if (data) { try { tail = (tail + $toString(data)).slice(-1200) } catch (_e) {} }
+                    if (code === undefined) return
+                    fsDepsInstalling.set(false)
+                    if (code === 0) {
+                        plog("Chromium system packages installed - restarting the solver")
+                        fsDepsPkgs.set([])
+                        fsDepsCmd.set("")
+                        fsDepsInstallMsg.set("")
+                        fsDepsChecked = false
+                        fsNotified["chromedeps"] = false
+                        try { ctx.toast.success("System packages installed - restarting the solver.") } catch (_e) {}
+                        fsStart()
+                    } else {
+                        const why = cleanTail(tail)
+                        fsDepsInstallMsg.set("Automatic install failed (exit " + code + ")" + (why ? ": " + why : "") + ". You likely need root or passwordless sudo - use Copy command to run it yourself.")
+                        plog("Chromium deps install failed (exit " + code + ")")
+                        try { ctx.toast.error("Automatic install failed - see the tray for the command to run yourself.") } catch (_e) {}
+                    }
+                    tray.update()
+                })
+            } catch (e) {
+                fsDepsInstalling.set(false)
+                fsDepsInstallMsg.set("Couldn't launch the installer: " + String(e))
+                tray.update()
+            }
         }
 
         function scanChromeDeps(chunk: string): void {
@@ -201,7 +257,7 @@ function init() {
             if (!m) return
             mergeDepPkgs([libToPkg(m[1])])
             checkChromiumDeps(true)
-            notifyOnce("chromedeps", "Aqua's Utils: the browser solver's Chromium needs system packages that aren't installed. Open the tray for the list and the install command.")
+            notifyOnce("chromedeps", "Aqua's Utils: the browser solver's Chromium needs system packages that aren't installed. Open the tray to install them in one click.")
         }
 
         function pushLog(chunk: string): void {
@@ -1749,6 +1805,7 @@ function init() {
                 ctx.toast.error("Couldn't copy to clipboard")
             }
         })
+        ctx.registerEventHandler("fs-install-deps", () => installChromiumDeps())
         ctx.registerEventHandler("fs-copy-deps", () => {
             const cmd = fsDepsCmd.get()
             if (!cmd) return
@@ -1990,14 +2047,24 @@ function init() {
             }
             if ((fsDepsPkgs.get() || []).length) {
                 const pkgs = fsDepsPkgs.get() || []
+                const items: any[] = [
+                    tray.text("The browser solver's Chromium needs system packages that aren't installed on this Linux host. uTLS still works, but hard Cloudflare/Turnstile challenges won't clear until they're installed. Install them below (it uses the shell access you already granted), then the solver restarts automatically.", { style: { fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5", color: "rgba(255,255,255,0.85)" } }),
+                    tray.text("Missing: " + pkgs.join(", "), { style: { fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5", marginTop: "6px", color: "rgba(255,255,255,0.7)" } }),
+                ]
+                if (fsDepsInstallMsg.get()) {
+                    items.push(tray.text(fsDepsInstallMsg.get(), { style: { fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5", marginTop: "6px", color: "rgba(255,255,255,0.85)" } }))
+                }
                 rows.push(tray.div({
-                    items: [
-                        tray.text("The browser solver's Chromium needs system packages that aren't installed on this Linux host. uTLS still works, but hard Cloudflare/Turnstile challenges won't clear until you install them and restart the solver.", { style: { fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5", color: "rgba(255,255,255,0.85)" } }),
-                        tray.text("Missing: " + pkgs.join(", "), { style: { fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5", marginTop: "6px", color: "rgba(255,255,255,0.7)" } }),
-                    ],
+                    items: items,
                     style: { background: "rgba(90,150,255,0.09)", borderLeft: "2px solid rgba(90,150,255,0.6)", borderRadius: "8px", padding: "10px 12px" },
                 }))
-                rows.push(tray.flex({ items: [tray.button({ label: "Copy install command", onClick: "fs-copy-deps", intent: "gray-subtle", size: "sm", style: ACCENT_SUBTLE })], gap: 2 }))
+                rows.push(tray.flex({
+                    items: [
+                        tray.button({ label: fsDepsInstalling.get() ? "Installing…" : "Install missing packages", onClick: "fs-install-deps", intent: "success", size: "sm", style: ACCENT_STYLE, disabled: fsDepsInstalling.get() }),
+                        tray.button({ label: "Copy command", onClick: "fs-copy-deps", intent: "gray-subtle", size: "sm", style: ACCENT_SUBTLE }),
+                    ],
+                    gap: 2,
+                }))
             }
             if (fsErr.get()) {
                 rows.push(tray.div({
