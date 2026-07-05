@@ -10,7 +10,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.64"
+        const SOLVER_VERSION = "0.1.65"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -71,6 +71,9 @@ function init() {
         let fsRestarting = false
         let fsUpSince = 0
         let fsDownStreak = 0
+        let fsAutoRestarts = 0
+        let fsLastAutoRestart = 0
+        let fsChromiumBusy = false
         let fsTesting = false
         let fsTestUntil = 0
         let fsLastLiveUpdate = 0
@@ -202,6 +205,7 @@ function init() {
                 setErr("")
                 fsRestarting = false
                 fsBadStarts = 0
+                markInstalled()
                 fsAvBlocked = false
                 try { $storage.set("fs.avBlocked", false) } catch (_e) {}
                 if (!fsUpSince) fsUpSince = nowMs()
@@ -472,6 +476,7 @@ function init() {
                 if (p.version) fsVersion.set(p.version)
                 setStatus("up")
                 fsDownStreak = 0
+                if (fsUpSince && nowMs() - fsUpSince >= 30000) fsAutoRestarts = 0
                 if (uiMode.get() === "advanced" && view.get() === "cf" && fsMode.get() !== "remote") {
                     const mr = await fsApi("metrics", {}, 8)
                     if (mr && mr.metrics) fsMetrics.set(mr.metrics)
@@ -496,6 +501,8 @@ function init() {
                     }
                 }
                 if (fsAutoUpdate.get() && fsMode.get() !== "remote") maybeAutoUpdateChromium()
+            } else if (fsChromiumBusy) {
+                setNote("Fetching a minimal Chromium…")
             } else {
                 if (fsStatus.get() === "starting") {
                     if (fsMode.get() === "binary" && !fsDownloadId) {
@@ -512,9 +519,19 @@ function init() {
                     if (fsDownStreak >= 2) {
                         setStatus("down")
                         fsSessions.set([])
-                        if (fsDownStreak === 2 && fsAutoStart.get() && !fsManualStop && fsMode.get() !== "remote" && !fsAvBlocked && !solverQuarantined()) {
-                            setNote("Solver stopped — auto-restarting…")
-                            fsStart()
+                        if (fsAutoStart.get() && !fsManualStop && fsMode.get() !== "remote" && !fsAvBlocked && !solverQuarantined()) {
+                            const backoff = Math.min(fsAutoRestarts, 4) * 5000
+                            if (fsAutoRestarts >= 5) {
+                                setNote("Solver keeps stopping - auto-restart paused. Open the tray and press Start.")
+                                notifyOnce("restart-cap", "Aqua's Utils: the solver keeps stopping - auto-restart paused. Open the tray to start it.")
+                            } else if (nowMs() - fsLastAutoRestart >= backoff) {
+                                fsAutoRestarts++
+                                fsLastAutoRestart = nowMs()
+                                setNote("Solver stopped - auto-restarting... (" + fsAutoRestarts + ")")
+                                fsStart()
+                            } else if (fsDownStreak === 2) {
+                                setNote("Solver stopped - waiting before the next auto-restart...")
+                            }
                         } else if (fsDownStreak === 2 && !fsManualStop && fsMode.get() !== "remote" && (fsAvBlocked || solverQuarantined())) {
                             notifyOnce("av", "Aqua's Utils: antivirus removed the solver. Add an exclusion for %LOCALAPPDATA%\\aquatils-beta, then Start.")
                         } else if (fsDownStreak === 2 && !fsManualStop && fsMode.get() !== "remote") {
@@ -626,10 +643,10 @@ function init() {
 
         function binaryAsset(): { asset: string; zip: boolean; bin: string } | null {
             const p = "solver-browser_"
-            if ($os.platform === "linux" && $os.arch === "amd64") return { asset: p + "linux_x64.tar.gz", zip: false, bin: "solver" }
-            if ($os.platform === "linux" && $os.arch === "arm64") return { asset: p + "linux_arm64.tar.gz", zip: false, bin: "solver" }
-            if ($os.platform === "darwin" && $os.arch === "amd64") return { asset: p + "darwin_x64.tar.gz", zip: false, bin: "solver" }
-            if ($os.platform === "darwin" && $os.arch === "arm64") return { asset: p + "darwin_arm64.tar.gz", zip: false, bin: "solver" }
+            if ($os.platform === "linux" && $os.arch === "amd64") return { asset: p + "linux_x64.zip", zip: true, bin: "solver" }
+            if ($os.platform === "linux" && $os.arch === "arm64") return { asset: p + "linux_arm64.zip", zip: true, bin: "solver" }
+            if ($os.platform === "darwin" && $os.arch === "amd64") return { asset: p + "darwin_x64.zip", zip: true, bin: "solver" }
+            if ($os.platform === "darwin" && $os.arch === "arm64") return { asset: p + "darwin_arm64.zip", zip: true, bin: "solver" }
             if ($os.platform === "windows" && $os.arch === "amd64") return { asset: p + "windows_x64.zip", zip: true, bin: "solver.exe" }
             return null
         }
@@ -657,6 +674,19 @@ function init() {
 
         function solverPrevInstalled(): boolean {
             try { const v = ($storage.get<string>("fs.solverReady") || "").trim(); return v !== "" && v !== FS_VERSION } catch (_e) { return false }
+        }
+
+        function priorInstall(): boolean {
+            try { return $storage.get<boolean>("fs.everInstalled") === true } catch (_e) { return false }
+        }
+
+        function markInstalled(): void {
+            try { $storage.set("fs.everInstalled", true) } catch (_e) {}
+        }
+
+        function fsResetRestartCap(): void {
+            fsAutoRestarts = 0
+            fsLastAutoRestart = 0
         }
 
         function solverQuarantined(): boolean {
@@ -817,9 +847,15 @@ function init() {
             if (!downloaderReady()) { cb(""); return }
             setNote("Fetching a minimal Chromium…")
             tray.update()
+            fsChromiumBusy = true
             void chromiumStable(plt).then((st) => {
-                if (!st.url) { setErr("Couldn't find a Chromium download for this platform (" + plt + ") in the release feed; starting without the browser solver."); tray.update(); cb(""); return }
-                downloadChromium(st, (ok) => cb(ok ? chromiumCachedPath() : ""))
+                if (!st.url) { fsChromiumBusy = false; setErr("Couldn't find a Chromium download for this platform (" + plt + ") in the release feed; starting without the browser solver."); tray.update(); cb(""); return }
+                downloadChromium(st, (ok) => { fsChromiumBusy = false; cb(ok ? chromiumCachedPath() : "") })
+            }).catch((e) => {
+                fsChromiumBusy = false
+                setErr("Couldn't reach the Chromium release feed (" + String(e) + ") - starting without the browser solver.")
+                tray.update()
+                cb("")
             })
         }
 
@@ -861,6 +897,7 @@ function init() {
         }
 
         function binaryLaunch(binPath: string): void {
+            setStatus("starting")
             binaryStop(() => {
                 pruneOldSolverVersions()
                 const gen = fsBinaryGen
@@ -937,9 +974,14 @@ function init() {
                         if (!fsManualStop) notifyOnce("down", "Aqua's Utils: the solver stopped (code " + code + ").")
                     } else {
                         const why = cleanTail(fsLastOut) || readLogTail(logPath)
+                        const bindRace = /address already in use|bind:\s|EADDRINUSE/i.test(fsLastOut)
                         const execBlocked = /cannot execute the specified program|not a valid win32 application|is not recognized as an internal|exec format error|access is denied|contains a virus|operation did not complete successfully/i.test(fsLastOut)
                         const binGone = !solverBinExists()
-                        if ((execBlocked || binGone) && $os.platform === "windows") {
+                        if (bindRace) {
+                            plog("solver couldn't bind port " + port + " yet (a previous instance is still releasing it) - it will retry")
+                            setErr("The previous solver is still shutting down (port " + port + " busy) - retrying shortly.")
+                            setNote("Port " + port + " busy - retrying shortly.")
+                        } else if ((execBlocked || binGone) && $os.platform === "windows") {
                             fsAvBlocked = true
                             try { $storage.set("fs.avBlocked", true) } catch (_e) {}
                             plog("antivirus blocked the solver" + (binGone ? " (binary quarantined/removed while running)" : " (execution blocked)"))
@@ -986,18 +1028,39 @@ function init() {
             tray.update()
         }
 
+        function waitPortFree(port: string, done?: () => void): void {
+            let fired = false
+            const fire = (): void => { if (!fired) { fired = true; if (done) done() } }
+            if (typeof $osExtra === "undefined") { fire(); return }
+            const wait = "P=" + shq(port) + "; for i in $(seq 1 32); do "
+                + "if command -v ss >/dev/null 2>&1; then ss -ltn 2>/dev/null | grep -qE \"[:.]${P}([^0-9]|$)\" || exit 0; "
+                + "elif command -v lsof >/dev/null 2>&1; then lsof -iTCP:\"${P}\" -sTCP:LISTEN -nP 2>/dev/null | grep -q . || exit 0; "
+                + "else sleep 1; exit 0; fi; sleep 0.25; done"
+            try {
+                $osExtra.asyncCmd("sh", "-c", wait).run((_d, _e, code) => {
+                    if (code === undefined) return
+                    fire()
+                })
+            } catch (_e) {
+                fire()
+            }
+        }
+
         function binaryStop(done?: () => void): void {
             fsBusy = false
             fsBinaryGen++
+            const stopGen = fsBinaryGen
+            const guardedDone = (): void => { if (stopGen === fsBinaryGen && done) done() }
             if (dl && fsDownloadId) {
                 try {
                     dl.cancel(fsDownloadId)
                 } catch (_e) {}
                 fsDownloadId = ""
             }
-            if (fsBinary && fsBinary.process) {
+            const proc = fsBinary && fsBinary.process ? fsBinary.process : null
+            if (proc) {
                 try {
-                    fsBinary.process.kill()
+                    proc.kill()
                 } catch (_e) {}
             }
             fsBinary = null
@@ -1005,12 +1068,16 @@ function init() {
                 try {
                     $osExtra.asyncCmd("cmd", "/c", "taskkill", "/F", "/T", "/IM", "solver.exe").run((_d, _e, code) => {
                         if (code === undefined) return
-                        reapOurChrome(done)
+                        reapOurChrome(guardedDone)
                     })
                     return
                 } catch (_e) {}
             }
-            if (done) done()
+            if (proc && typeof $os !== "undefined" && $os.platform !== "windows") {
+                waitPortFree(fsPort.get() || FS_DEFAULT_PORT, guardedDone)
+                return
+            }
+            guardedDone()
         }
 
         function reapOurChrome(done?: () => void): void {
@@ -1140,7 +1207,7 @@ function init() {
                     return
                 }
             } catch (_e) {}
-            if (!fsConsent.get()) {
+            if (!fsConsent.get() && !priorInstall()) {
                 setStatus("down")
                 setNote("Tick the consent box in Aqua's Utils before the solver is downloaded and run.")
                 ctx.toast.warning(fsNote.get())
@@ -1250,7 +1317,7 @@ function init() {
                         const stb = $os.stat(binPath)
                         if (stb) { exeOk = true; try { exeSize = stb.size() } catch (_e) { exeSize = -1 } }
                     } catch (_e) {}
-                    plog("extracted solver.exe " + (exeSize >= 0 ? fmtSize(exeSize) : "size?") + " (archive " + fmtSize(archiveSize) + (expected ? " of " + fmtSize(expected) : "") + ")")
+                    plog("extracted " + pick.bin + " " + (exeSize >= 0 ? fmtSize(exeSize) : "size?") + " (archive " + fmtSize(archiveSize) + (expected ? " of " + fmtSize(expected) : "") + ")")
                     const okBin = exeOk && (exeSize < 0 || (exeSize >= 1024 && (archiveSize === 0 || exeSize >= archiveSize)))
                     if (!okBin) {
                         fsBusy = false
@@ -1263,6 +1330,7 @@ function init() {
                         return
                     }
                     try { $storage.set("fs.solverReady", FS_VERSION) } catch (_e) {}
+                    markInstalled()
                     fsBusy = false
                     binaryLaunch(binPath)
                 } else if (p.status === "error") {
@@ -1292,6 +1360,7 @@ function init() {
 
         function fsStop(): void {
             fsManualStop = true
+            fsResetRestartCap()
             try { $storage.set("fs.manualStop", true) } catch (_e) {}
             if (fsMode.get() === "remote") {
                 setNote("Remote mode: stop the solver on its host.")
@@ -1365,10 +1434,11 @@ function init() {
             void sehPoll()
         })
 
-        ctx.registerEventHandler("fs-start", () => fsStart())
+        ctx.registerEventHandler("fs-start", () => { fsResetRestartCap(); fsStart() })
         ctx.registerEventHandler("fs-stop", () => fsStop())
         ctx.registerEventHandler("fs-restart", () => {
             plog("restart requested")
+            fsResetRestartCap()
             fsBusy = false
             fsRestarting = true
             setNote("Restarting…")
@@ -1523,6 +1593,7 @@ function init() {
         })
         ctx.registerEventHandler("fs-simple-start", () => {
             fsManualStop = false
+            fsResetRestartCap()
             setStatus("starting")
             setNote("Starting solver…")
             tray.update()
