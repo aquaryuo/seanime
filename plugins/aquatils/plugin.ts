@@ -10,7 +10,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.63"
+        const SOLVER_VERSION = "0.1.64"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -806,7 +806,15 @@ function init() {
             if (cached) { cb(cached); return }
             if (!fsWantChromium.get()) { cb(""); return }
             const plt = chromiumCfTPlatform()
-            if (!plt || !downloaderReady()) { cb(""); return }
+            if (!plt) {
+                if ($os.platform === "linux" && $os.arch === "arm64") {
+                    setErr("Hard-challenge browser solving isn't available on ARM Linux — Google ships no Chromium build for this architecture. The fast uTLS path still works; for Stage B install a system Chromium and point SOLVER_CHROME at it.")
+                } else {
+                    setErr("Browser solving isn't available on this OS/architecture (uTLS-only).")
+                }
+                tray.update(); cb(""); return
+            }
+            if (!downloaderReady()) { cb(""); return }
             setNote("Fetching a minimal Chromium…")
             tray.update()
             void chromiumStable(plt).then((st) => {
@@ -915,7 +923,7 @@ function init() {
                     setStatus("down")
                     fsStartTicks = 0
                     fsRestarting = false
-                    if (wasUp && !solverBinExists()) {
+                    if (wasUp && !solverBinExists() && $os.platform === "windows") {
                         fsAvBlocked = true
                         try { $storage.set("fs.avBlocked", true) } catch (_e) {}
                         plog("antivirus removed the solver (binary quarantined while running)")
@@ -931,7 +939,7 @@ function init() {
                         const why = cleanTail(fsLastOut) || readLogTail(logPath)
                         const execBlocked = /cannot execute the specified program|not a valid win32 application|is not recognized as an internal|exec format error|access is denied|contains a virus|operation did not complete successfully/i.test(fsLastOut)
                         const binGone = !solverBinExists()
-                        if (execBlocked || binGone) {
+                        if ((execBlocked || binGone) && $os.platform === "windows") {
                             fsAvBlocked = true
                             try { $storage.set("fs.avBlocked", true) } catch (_e) {}
                             plog("antivirus blocked the solver" + (binGone ? " (binary quarantined/removed while running)" : " (execution blocked)"))
@@ -1006,13 +1014,20 @@ function init() {
         }
 
         function reapOurChrome(done?: () => void): void {
-            if (typeof $os === "undefined" || $os.platform !== "windows" || typeof $osExtra === "undefined") { if (done) done(); return }
-            const ps = "$ErrorActionPreference='SilentlyContinue';foreach($p in Get-CimInstance Win32_Process){if($p.Name -eq 'chrome.exe' -and $p.CommandLine -like '*aquatils-beta\\chromium\\*'){Stop-Process -Id $p.ProcessId -Force}}"
+            if (typeof $os === "undefined" || typeof $osExtra === "undefined") { if (done) done(); return }
             try {
-                $osExtra.asyncCmd("cmd", "/c", "powershell", "-NoProfile", "-NonInteractive", "-Command", ps).run((_d, _e, code) => {
-                    if (code === undefined) return
-                    if (done) done()
-                })
+                if ($os.platform === "windows") {
+                    const ps = "$ErrorActionPreference='SilentlyContinue';foreach($p in Get-CimInstance Win32_Process){if($p.Name -eq 'chrome.exe' -and $p.CommandLine -like '*aquatils-beta\\chromium\\*'){Stop-Process -Id $p.ProcessId -Force}}"
+                    $osExtra.asyncCmd("cmd", "/c", "powershell", "-NoProfile", "-NonInteractive", "-Command", ps).run((_d, _e, code) => {
+                        if (code === undefined) return
+                        if (done) done()
+                    })
+                } else {
+                    $osExtra.asyncCmd("sh", "-c", "pkill -f aquatils-beta/chromium 2>/dev/null; exit 0").run((_d, _e, code) => {
+                        if (code === undefined) return
+                        if (done) done()
+                    })
+                }
                 return
             } catch (_e) {}
             if (done) done()
