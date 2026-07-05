@@ -39,7 +39,7 @@ function init() {
         const fsAutoStart = ctx.state<boolean>(sget<boolean>("fs.autoStart", false))
         const fsWantChromium = ctx.state<boolean>(sget<boolean>("fs.wantChromium", false))
         const fsAutoUpdate = ctx.state<boolean>(sget<boolean>("fs.autoUpdate", false))
-        const fsBrowserMode = ctx.state<string>(sget<string>("fs.browserMode", "headless"))
+        const fsBrowserMode = ctx.state<string>(sget<string>("fs.browserMode", "offscreen"))
         const fsEngine = ctx.state<string>(((): string => { const e = sget<string>("fs.engine", "webview2"); return e === "edge" ? "chrome" : e })())
         const fsWv2Warm = ctx.state<boolean>(sget<boolean>("fs.wv2warm", true))
         const fsWv2Refresh = ctx.state<boolean>(sget<boolean>("fs.wv2refresh", false))
@@ -183,19 +183,30 @@ function init() {
             try { chrome = chromiumCachedPath() } catch (_e) {}
             if (!chrome) return
             fsDepsChecked = true
+            const script = "c=" + shq(chrome) + "; "
+                + "if ldd \"$c\" 2>/dev/null | grep -q 'not found'; then echo BROKEN; "
+                + "for p in " + CHROME_DEPS + "; do dpkg-query -W -f='${Status}' \"$p\" 2>/dev/null | grep -q 'install ok installed' || echo \"$p\"; done; "
+                + "else echo OK; fi"
             try {
-                $osExtra.asyncCmd("sh", "-c", "ldd " + shq(chrome) + " 2>/dev/null | grep 'not found'").run((data, _e, code) => {
+                $osExtra.asyncCmd("sh", "-c", script).run((data, _e, code) => {
                     if (code === undefined) return
                     const out = data ? $toString(data) : ""
+                    if (out.indexOf("BROKEN") < 0) {
+                        if (out.indexOf("OK") >= 0) { fsDepsPkgs.set([]); fsDepsCmd.set("") }
+                        return
+                    }
                     const lines = out.split("\n")
                     const pkgs: string[] = []
+                    const seen: { [k: string]: boolean } = {}
                     for (let i = 0; i < lines.length; i++) {
-                        const mm = /^\s*(\S+\.so[.0-9]*)\s*=>\s*not found/.exec(lines[i])
-                        if (mm) pkgs.push(libToPkg(mm[1]))
+                        const t = lines[i].replace(/\s+/g, "")
+                        if (/^[a-z0-9][a-z0-9+.-]*$/.test(t) && !seen[t]) { seen[t] = true; pkgs.push(t) }
                     }
                     if (!pkgs.length) return
-                    mergeDepPkgs(pkgs)
-                    plog("browser solver: Chromium is missing " + (fsDepsPkgs.get() || []).length + " system package(s) - see the tray")
+                    pkgs.sort()
+                    fsDepsPkgs.set(pkgs)
+                    fsDepsCmd.set(chromeDepsCmd())
+                    plog("browser solver: Chromium is missing " + pkgs.length + " system package(s) - see the tray")
                     notifyOnce("chromedeps", "Aqua's Utils: the browser solver's Chromium needs system packages that aren't installed. Open the tray to install them in one click.")
                     tray.update()
                 })
@@ -1070,7 +1081,7 @@ function init() {
                 env.push("LOG_LEVEL=" + (fsVerbose.get() ? "debug" : "info"))
                 if (logPath) env.push("LOG_FILE=" + logPath)
                 if (chromiumOverride) env.push("SOLVER_CHROME=" + chromiumOverride)
-                env.push("SOLVER_BROWSER_MODE=" + (fsBrowserMode.get() || "headless"))
+                env.push("SOLVER_BROWSER_MODE=" + (fsBrowserMode.get() === "headed" ? "headed" : "offscreen"))
                 if ($os.platform === "windows" && fsEngine.get() && fsEngine.get() !== "chrome") env.push("SOLVER_BROWSER_ENGINE=" + fsEngine.get())
                 if (!fsWv2Warm.get()) env.push("SOLVER_WV2_WARM=0")
                 if (fsWv2Refresh.get()) env.push("SOLVER_WV2_REFRESH=1")
@@ -1684,11 +1695,6 @@ function init() {
                 ctx.toast.info(note)
             }
         }
-        ctx.registerEventHandler("fs-browsermode-toggle", () => {
-            fsBrowserMode.set(fsBrowserMode.get() === "offscreen" ? "headless" : "offscreen")
-            fsPersist()
-            applySolverEnvChange("Browser solver window: " + fsBrowserMode.get())
-        })
         ;["chrome", "webview2"].forEach((e) => {
             ctx.registerEventHandler("fs-engine-set-" + e, () => {
                 fsEngine.set(e)
@@ -1965,14 +1971,7 @@ function init() {
             rows.push(toggleRow(fsAutoUpdate.get(), "fs-autoupdate-toggle", "Auto-update solver & Chromium"))
             rows.push(divider())
             rows.push(heading("Solver"))
-            rows.push(dim("Browser solver — the real browser (WebView2, or a Chromium this plugin downloads) that clears the hard JS & interactive challenges (Cloudflare JS, Turnstile, DDoS-Guard) the fast uTLS path can't. Below: how its window stays hidden."))
-            rows.push(tray.button({
-                label: "Browser solver window: " + (fsBrowserMode.get() === "offscreen" ? "Off-screen (max stealth)" : "Invisible (headless)"),
-                onClick: "fs-browsermode-toggle",
-                intent: "gray-subtle",
-                size: "sm",
-                style: ACCENT_SUBTLE,
-            }))
+            rows.push(dim("Browser solver — a real browser (WebView2, or a downloaded Chromium) that clears the hard challenges (Cloudflare JS, Turnstile) uTLS can't. Runs in a hidden off-screen window."))
             rows.push(toggleRow(fsCustomTls.get(), "fs-customtls-toggle", "Custom TLS fingerprint", "fs-help-customtls"))
             rows.push(toggleRow(fsPacing.get(), "fs-pacing-toggle", "Adaptive rate-limit pacing", "fs-help-pacing"))
             rows.push(divider())
@@ -2041,7 +2040,7 @@ function init() {
             if ((fsDepsPkgs.get() || []).length) {
                 const pkgs = fsDepsPkgs.get() || []
                 const items: any[] = [
-                    tray.text("The browser solver's Chromium needs system packages that aren't installed on this Linux host. uTLS still works, but hard Cloudflare/Turnstile challenges won't clear until they're installed. Install installs the whole Chromium dependency set in one step (using the shell access you already granted), then the solver restarts automatically.", { style: { fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5", color: "rgba(255,255,255,0.85)" } }),
+                    tray.text("Chromium is missing system packages, so hard Cloudflare challenges can't clear (uTLS still works). Install adds them all and restarts the solver.", { style: { fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5", color: "rgba(255,255,255,0.85)" } }),
                     tray.text("Missing: " + pkgs.join(", "), { style: { fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5", marginTop: "6px", color: "rgba(255,255,255,0.7)" } }),
                 ]
                 if (fsDepsInstallMsg.get()) {
