@@ -85,6 +85,7 @@ function init() {
         const dl = (ctx as any).downloader
         const fsErr = ctx.state<string>("")
         const fsHint = ctx.state<string>("")
+        const fsDepsCmd = ctx.state<string>("")
         const fsVersion = ctx.state<string>("")
         const fsTest = ctx.state<string>("")
         const fsLogFilter = ctx.state<boolean>(true)
@@ -127,8 +128,23 @@ function init() {
             return false
         }
 
+        function scanChromeDeps(chunk: string): void {
+            if (typeof $os === "undefined" || $os.platform !== "linux") return
+            if (fsNotified["chromedeps"]) return
+            const m = /error while loading shared libraries:\s*([^\s:]+)/i.exec(chunk)
+            if (!m) return
+            const lib = m[1]
+            const apt = "sudo apt-get update && sudo apt-get install -y libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 libasound2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libxshmfence1 libpango-1.0-0 libcairo2 libatspi2.0-0 libgtk-3-0 libx11-6 libx11-xcb1 libxcb1 libxext6 libxrender1 libxi6 libxtst6 libxcursor1 libxss1 libdbus-1-3 libexpat1 libfontconfig1 libglib2.0-0 fonts-liberation"
+            fsDepsCmd.set(apt)
+            plog("browser solver: Chromium missing system libs (" + lib + ") - install Chromium deps (see the tray)")
+            try { ctx.toast.warning("Browser solver needs Chromium system libraries (missing " + lib + ") - open the tray to copy the install command.") } catch (_e) {}
+            notifyOnce("chromedeps", "Aqua's Utils: the browser solver needs system libraries (missing " + lib + "). Open the tray for the install command.")
+            tray.update()
+        }
+
         function pushLog(chunk: string): void {
             if (!chunk) return
+            scanChromeDeps(chunk)
             const c = scrubLog(chunk)
             fsLastOut = logAppend(fsLastOut, c)
             const lines = c.split("\n")
@@ -1381,6 +1397,8 @@ function init() {
 
         function fsStart(): void {
             fsManualStop = false
+            fsDepsCmd.set("")
+            fsNotified["chromedeps"] = false
             try { $storage.set("fs.manualStop", false) } catch (_e) {}
             fsAvBlocked = false
             try { $storage.set("fs.avBlocked", false) } catch (_e) {}
@@ -1666,6 +1684,16 @@ function init() {
                 ctx.toast.error("Couldn't copy to clipboard")
             }
         })
+        ctx.registerEventHandler("fs-copy-deps", () => {
+            const cmd = fsDepsCmd.get()
+            if (!cmd) return
+            try {
+                ctx.dom.clipboard.write(cmd)
+                ctx.toast.success("Install command copied — run it, then restart the solver.")
+            } catch (_e) {
+                ctx.toast.error("Couldn't copy to clipboard")
+            }
+        })
         ctx.registerEventHandler("fs-copy-cache-path", () => {
             try {
                 const p = aquatilsDir()
@@ -1894,6 +1922,13 @@ function init() {
                     description: "A newer solver (v" + SOLVER_VERSION + ") is bundled; you're running v" + fsVersion.get() + ".",
                 }))
                 rows.push(tray.button({ label: "Restart to update", onClick: "fs-restart-update", intent: "primary", size: "sm", style: ACCENT_STYLE }))
+            }
+            if (fsDepsCmd.get()) {
+                rows.push(tray.div({
+                    items: [tray.text("The browser solver's Chromium needs system libraries that aren't installed on this Linux host (uTLS still works, but hard Cloudflare/Turnstile challenges won't clear). Install them, then restart the solver.", { style: { fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5", color: "rgba(255,255,255,0.85)" } })],
+                    style: { background: "rgba(90,150,255,0.09)", borderLeft: "2px solid rgba(90,150,255,0.6)", borderRadius: "8px", padding: "10px 12px" },
+                }))
+                rows.push(tray.flex({ items: [tray.button({ label: "Copy Linux install command", onClick: "fs-copy-deps", intent: "gray-subtle", size: "sm", style: ACCENT_SUBTLE })], gap: 2 }))
             }
             if (fsErr.get()) {
                 rows.push(tray.div({
