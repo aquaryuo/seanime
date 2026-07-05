@@ -74,6 +74,7 @@ function init() {
         let fsAutoRestarts = 0
         let fsLastAutoRestart = 0
         let fsChromiumBusy = false
+        let fsLeftoverKillAt = 0
         let fsTesting = false
         let fsTestUntil = 0
         let fsLastLiveUpdate = 0
@@ -473,6 +474,19 @@ function init() {
             if (fsTesting && nowMs() < fsTestUntil) return
             const p = await fsProbe()
             if (p.up) {
+                if (fsManualStop && fsMode.get() !== "remote") {
+                    setStatus("down")
+                    setNote("Stopped. Clearing a leftover solver that was still listening...")
+                    if (nowMs() - fsLeftoverKillAt >= 15000) {
+                        fsLeftoverKillAt = nowMs()
+                        plog("solver still listening after stop - killing the leftover")
+                        reapOrphanSolvers()
+                    }
+                    refreshTrayBadge()
+                    refreshAnimeBtn()
+                    tray.update()
+                    return
+                }
                 if (p.version) fsVersion.set(p.version)
                 setStatus("up")
                 fsDownStreak = 0
@@ -1082,8 +1096,17 @@ function init() {
 
         function reapOrphanSolvers(done?: () => void): void {
             if (typeof $os === "undefined" || typeof $osExtra === "undefined" || $os.platform === "windows") { if (done) done(); return }
+            const raw = fsPort.get() || FS_DEFAULT_PORT
+            const port = /^[0-9]{1,5}$/.test(raw) ? raw : ""
+            let cmd = "pkill -9 -f '[a]quatils-beta/.*/solver/solver' 2>/dev/null; "
+            if (port) {
+                cmd += "if command -v fuser >/dev/null 2>&1; then fuser -k " + port + "/tcp 2>/dev/null; "
+                    + "elif command -v lsof >/dev/null 2>&1; then lsof -tiTCP:" + port + " -sTCP:LISTEN 2>/dev/null | xargs -r kill -9 2>/dev/null; "
+                    + "elif command -v ss >/dev/null 2>&1; then P=$(ss -H -ltnp 2>/dev/null | grep -E '[:.]" + port + " ' | grep -oE 'pid=[0-9]+' | head -n1 | cut -d= -f2); [ -n \"$P\" ] && kill -9 \"$P\" 2>/dev/null; fi; "
+            }
+            cmd += "exit 0"
             try {
-                $osExtra.asyncCmd("sh", "-c", "pkill -9 -f '[a]quatils-beta/.*/solver/solver' 2>/dev/null; exit 0").run((_d, _e, code) => {
+                $osExtra.asyncCmd("sh", "-c", cmd).run((_d, _e, code) => {
                     if (code === undefined) return
                     if (done) done()
                 })
