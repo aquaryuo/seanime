@@ -102,7 +102,7 @@ class Provider {
         const audio = parts[1] === "dub" ? "dub" : "sub"
         if (!animeSession) throw this.fail("episodes", "invalid anime id")
 
-        const cacheKey = `apahe:eps:${animeSession}:${audio}`
+        const cacheKey = `apahe:eps2:${animeSession}:${audio}`
         const cached = this.readCache<EpisodeDetails[]>(cacheKey, this.epCacheTtl)
         if (cached && cached.length > 0) return cached
 
