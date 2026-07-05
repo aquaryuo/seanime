@@ -86,6 +86,8 @@ function init() {
         const fsErr = ctx.state<string>("")
         const fsHint = ctx.state<string>("")
         const fsDepsCmd = ctx.state<string>("")
+        const fsDepsPkgs = ctx.state<string[]>([])
+        let fsDepsChecked = false
         const fsVersion = ctx.state<string>("")
         const fsTest = ctx.state<string>("")
         const fsLogFilter = ctx.state<boolean>(true)
@@ -128,18 +130,78 @@ function init() {
             return false
         }
 
+        const LIB_PKG: { [k: string]: string } = {
+            "libnspr4": "libnspr4",
+            "libnss3": "libnss3", "libnssutil3": "libnss3", "libsmime3": "libnss3", "libssl3": "libnss3", "libplc4": "libnspr4", "libplds4": "libnspr4",
+            "libatk-1.0": "libatk1.0-0", "libatk-bridge-2.0": "libatk-bridge2.0-0",
+            "libcups": "libcups2", "libcupsimage": "libcups2",
+            "libdrm": "libdrm2", "libgbm": "libgbm1",
+            "libasound": "libasound2", "libxkbcommon": "libxkbcommon0",
+            "libXcomposite": "libxcomposite1", "libXdamage": "libxdamage1", "libXfixes": "libxfixes3", "libXrandr": "libxrandr2",
+            "libgtk-3": "libgtk-3-0", "libgdk-3": "libgtk-3-0",
+            "libpango-1.0": "libpango-1.0-0", "libpangocairo-1.0": "libpango-1.0-0", "libcairo": "libcairo2", "libcairo-gobject": "libcairo2",
+            "libatspi": "libatspi2.0-0",
+            "libXrender": "libxrender1", "libXext": "libxext6", "libXtst": "libxtst6", "libXi": "libxi6", "libXcursor": "libxcursor1",
+            "libXss": "libxss1", "libXScrnSaver": "libxss1",
+            "libdbus-1": "libdbus-1-3", "libexpat": "libexpat1", "libfontconfig": "libfontconfig1",
+            "libglib-2.0": "libglib2.0-0", "libgio-2.0": "libglib2.0-0", "libgobject-2.0": "libglib2.0-0", "libgmodule-2.0": "libglib2.0-0",
+            "libX11": "libx11-6", "libX11-xcb": "libx11-xcb1", "libxcb": "libxcb1", "libxshmfence": "libxshmfence1",
+            "libwayland-client": "libwayland-client0", "libwayland-server": "libwayland-server0", "libwayland-egl": "libwayland-egl1",
+        }
+
+        function libToPkg(soname: string): string {
+            const base = soname.split(".so")[0]
+            return LIB_PKG[base] || soname
+        }
+
+        function mergeDepPkgs(pkgs: string[]): void {
+            if (!pkgs.length) return
+            const seen: { [k: string]: boolean } = {}
+            const out: string[] = []
+            const all = (fsDepsPkgs.get() || []).concat(pkgs)
+            for (let i = 0; i < all.length; i++) {
+                const p = all[i]
+                if (p && !seen[p]) { seen[p] = true; out.push(p) }
+            }
+            out.sort()
+            fsDepsPkgs.set(out)
+            fsDepsCmd.set("sudo apt-get update && sudo apt-get install -y " + out.join(" "))
+        }
+
+        function checkChromiumDeps(force?: boolean): void {
+            if (typeof $os === "undefined" || typeof $osExtra === "undefined" || $os.platform !== "linux") return
+            if (fsDepsChecked && !force) return
+            let chrome = ""
+            try { chrome = chromiumCachedPath() } catch (_e) {}
+            if (!chrome) return
+            fsDepsChecked = true
+            try {
+                $osExtra.asyncCmd("sh", "-c", "ldd " + shq(chrome) + " 2>/dev/null | grep 'not found'").run((data, _e, code) => {
+                    if (code === undefined) return
+                    const out = data ? $toString(data) : ""
+                    const lines = out.split("\n")
+                    const pkgs: string[] = []
+                    for (let i = 0; i < lines.length; i++) {
+                        const mm = /^\s*(\S+\.so[.0-9]*)\s*=>\s*not found/.exec(lines[i])
+                        if (mm) pkgs.push(libToPkg(mm[1]))
+                    }
+                    if (!pkgs.length) return
+                    mergeDepPkgs(pkgs)
+                    plog("browser solver: Chromium is missing " + (fsDepsPkgs.get() || []).length + " system package(s) - see the tray")
+                    notifyOnce("chromedeps", "Aqua's Utils: the browser solver's Chromium needs system packages that aren't installed. Open the tray for the list and the install command.")
+                    tray.update()
+                })
+            } catch (_e) {}
+        }
+
         function scanChromeDeps(chunk: string): void {
             if (typeof $os === "undefined" || $os.platform !== "linux") return
-            if (fsNotified["chromedeps"]) return
+            if ((fsDepsPkgs.get() || []).length) return
             const m = /error while loading shared libraries:\s*([^\s:]+)/i.exec(chunk)
             if (!m) return
-            const lib = m[1]
-            const apt = "sudo apt-get update && sudo apt-get install -y libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 libasound2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libxshmfence1 libpango-1.0-0 libcairo2 libatspi2.0-0 libgtk-3-0 libx11-6 libx11-xcb1 libxcb1 libxext6 libxrender1 libxi6 libxtst6 libxcursor1 libxss1 libdbus-1-3 libexpat1 libfontconfig1 libglib2.0-0 fonts-liberation"
-            fsDepsCmd.set(apt)
-            plog("browser solver: Chromium missing system libs (" + lib + ") - install Chromium deps (see the tray)")
-            try { ctx.toast.warning("Browser solver needs Chromium system libraries (missing " + lib + ") - open the tray to copy the install command.") } catch (_e) {}
-            notifyOnce("chromedeps", "Aqua's Utils: the browser solver needs system libraries (missing " + lib + "). Open the tray for the install command.")
-            tray.update()
+            mergeDepPkgs([libToPkg(m[1])])
+            checkChromiumDeps(true)
+            notifyOnce("chromedeps", "Aqua's Utils: the browser solver's Chromium needs system packages that aren't installed. Open the tray for the list and the install command.")
         }
 
         function pushLog(chunk: string): void {
@@ -488,6 +550,7 @@ function init() {
 
         async function fsRefresh(): Promise<void> {
             if (fsTesting && nowMs() < fsTestUntil) return
+            if (!fsDepsChecked) checkChromiumDeps()
             const p = await fsProbe()
             if (p.up) {
                 if (fsManualStop && fsMode.get() !== "remote") {
@@ -880,7 +943,7 @@ function init() {
             fsChromiumBusy = true
             void chromiumStable(plt).then((st) => {
                 if (!st.url) { fsChromiumBusy = false; setErr("Couldn't find a Chromium download for this platform (" + plt + ") in the release feed; starting without the browser solver."); tray.update(); cb(""); return }
-                downloadChromium(st, (ok) => { fsChromiumBusy = false; cb(ok ? chromiumCachedPath() : "") })
+                downloadChromium(st, (ok) => { fsChromiumBusy = false; if (ok) checkChromiumDeps(true); cb(ok ? chromiumCachedPath() : "") })
             }).catch((e) => {
                 fsChromiumBusy = false
                 setErr("Couldn't reach the Chromium release feed (" + String(e) + ") - starting without the browser solver.")
@@ -1398,6 +1461,8 @@ function init() {
         function fsStart(): void {
             fsManualStop = false
             fsDepsCmd.set("")
+            fsDepsPkgs.set([])
+            fsDepsChecked = false
             fsNotified["chromedeps"] = false
             try { $storage.set("fs.manualStop", false) } catch (_e) {}
             fsAvBlocked = false
@@ -1923,12 +1988,16 @@ function init() {
                 }))
                 rows.push(tray.button({ label: "Restart to update", onClick: "fs-restart-update", intent: "primary", size: "sm", style: ACCENT_STYLE }))
             }
-            if (fsDepsCmd.get()) {
+            if ((fsDepsPkgs.get() || []).length) {
+                const pkgs = fsDepsPkgs.get() || []
                 rows.push(tray.div({
-                    items: [tray.text("The browser solver's Chromium needs system libraries that aren't installed on this Linux host (uTLS still works, but hard Cloudflare/Turnstile challenges won't clear). Install them, then restart the solver.", { style: { fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5", color: "rgba(255,255,255,0.85)" } })],
+                    items: [
+                        tray.text("The browser solver's Chromium needs system packages that aren't installed on this Linux host. uTLS still works, but hard Cloudflare/Turnstile challenges won't clear until you install them and restart the solver.", { style: { fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5", color: "rgba(255,255,255,0.85)" } }),
+                        tray.text("Missing: " + pkgs.join(", "), { style: { fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", lineHeight: "1.5", marginTop: "6px", color: "rgba(255,255,255,0.7)" } }),
+                    ],
                     style: { background: "rgba(90,150,255,0.09)", borderLeft: "2px solid rgba(90,150,255,0.6)", borderRadius: "8px", padding: "10px 12px" },
                 }))
-                rows.push(tray.flex({ items: [tray.button({ label: "Copy Linux install command", onClick: "fs-copy-deps", intent: "gray-subtle", size: "sm", style: ACCENT_SUBTLE })], gap: 2 }))
+                rows.push(tray.flex({ items: [tray.button({ label: "Copy install command", onClick: "fs-copy-deps", intent: "gray-subtle", size: "sm", style: ACCENT_SUBTLE })], gap: 2 }))
             }
             if (fsErr.get()) {
                 rows.push(tray.div({
