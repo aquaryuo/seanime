@@ -261,12 +261,8 @@ function init() {
             return out.join("\n")
         }
 
-        // Tall-but-detached floating modal: leaves a gap above and below so it reads as
-        // a floating panel on the side rather than a flush full-height drawer. Matches the
-        // fixed wrapper gaps below (4.5rem top + 4.5rem bottom = 9rem).
         const PANEL_FULL = "calc(100dvh - 9rem)"
         const PANEL_SIMPLE = "min(510px, calc(100dvh - 9rem))"
-        // Accent gradient matched to the plugin icon (warm orange -> gold sunburst).
         const ACCENT_GRAD = "linear-gradient(135deg, rgba(242,145,47,0.9), rgba(255,200,64,0.9))"
         const ACCENT_STYLE: Record<string, string> = { background: ACCENT_GRAD, border: "none", color: "#1c1407", fontWeight: "600" }
         const ACCENT_SUBTLE: Record<string, string> = { background: "rgba(255,200,64,0.16)", border: "none", color: "#FFD27A", fontWeight: "500" }
@@ -278,10 +274,6 @@ function init() {
             minHeight: PANEL_SIMPLE,
         })
 
-        // Seanime wraps plugin tray content in a div capped at max-h-[35rem] (560px) with
-        // its own scroll. tray.css is scoped to siblings/children so it can't reach that
-        // ancestor — use the DOM API to lift the cap to the panel height, and detach the
-        // popover from the edges so it floats.
         function styleEls(els: any[], pairs: [string, string][]): void {
             for (let i = 0; i < els.length; i++) {
                 for (let j = 0; j < pairs.length; j++) {
@@ -289,10 +281,6 @@ function init() {
                 }
             }
         }
-        // Pin the panel as a FIXED floating modal with explicit gaps. Margins on the
-        // content don't work — Radix sizes/positions a wrapper element (the content's
-        // parent), so we neutralise its transform and fix it in place. top/bottom are
-        // exact; LEFT is the sidebar width + gap (tune this one value if needed).
         const PANEL_TOP = "4.5rem", PANEL_BOTTOM = "4.5rem", PANEL_LEFT = "6rem"
         try {
             if (ctx.dom && ctx.dom.observe) {
@@ -300,9 +288,6 @@ function init() {
                     styleEls(els, [["max-height", PANEL_FULL], ["maxHeight", PANEL_FULL], ["padding", "0px"]])
                 })
                 ctx.dom.observe('[data-plugin-tray-popover-content="aq-aquatils-beta"]', (els) => {
-                    // bg-gray-950 here is opaque — it becomes the panel's backdrop, so the
-                    // blur shows solid gray instead of the app. Make it transparent so the
-                    // backdrop-filter actually frosts the page behind the modal.
                     styleEls(els, [["margin", "0"], ["max-height", "none"], ["maxHeight", "none"], ["background", "transparent"], ["box-shadow", "none"], ["boxShadow", "none"], ["border", "none"], ["border-width", "0"], ["borderWidth", "0"], ["outline", "none"]])
                     for (let i = 0; i < els.length; i++) {
                         try {
@@ -674,8 +659,6 @@ function init() {
             try { const v = ($storage.get<string>("fs.solverReady") || "").trim(); return v !== "" && v !== FS_VERSION } catch (_e) { return false }
         }
 
-        // The current version was downloaded + verified (marker set) but the binary
-        // file is now gone — i.e. antivirus quarantined it, not a missing/old install.
         function solverQuarantined(): boolean {
             try { return $storage.get<string>("fs.solverReady") === FS_VERSION && !solverBinExists() } catch (_e) { return false }
         }
@@ -1039,8 +1022,6 @@ function init() {
             return $filepath.join($os.cacheDir(), "aquatils-beta")
         }
 
-        // POSIX single-quote escaper: a cache path containing a quote (a "'" in
-        // HOME/XDG_CACHE_HOME) would otherwise break out of the sh -c string.
         function shq(s: string): string {
             return "'" + String(s).replace(/'/g, "'\\''") + "'"
         }
@@ -1049,8 +1030,6 @@ function init() {
             try { return !!$os.stat(p) } catch (_e) { return false }
         }
 
-        // chromiumDownloadedHere: a Chromium WE fetched into the cache is present
-        // (distinct from a system-installed browser, which we never remove).
         function chromiumDownloadedHere(): boolean {
             try { return chromiumCachedPath() !== "" } catch (_e) { return false }
         }
@@ -1059,9 +1038,6 @@ function init() {
             try { return dirExists($filepath.join(aquatilsDir(), "chromium")) } catch (_e) { return false }
         }
 
-        // removeSolverDownloads deletes every downloaded solver version (but not
-        // Chromium). Seanime's plugin-uninstall leaves these on disk, so this is
-        // how the user reclaims the space.
         function removeSolverDownloads(): void {
             fsManualStop = true
             try { $storage.set("fs.manualStop", true) } catch (_e) {}
@@ -1149,10 +1125,6 @@ function init() {
                     return
                 }
             } catch (_e) {}
-            // A download+exec is about to happen. Require consent here — not just
-            // on the first-run button — so autostart and the anime-page Solver
-            // button can't fetch+run a binary the user never agreed to. An
-            // already-present binary launched above needs no re-consent.
             if (!fsConsent.get()) {
                 setStatus("down")
                 setNote("Tick the consent box in Aqua's Utils before the solver is downloaded and run.")

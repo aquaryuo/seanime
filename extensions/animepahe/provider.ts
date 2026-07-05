@@ -121,23 +121,33 @@ class Provider {
             } catch (_e) { pageFail = true }
         }
 
-        const episodes: EpisodeDetails[] = []
+        const collected: { session: string; num: number; title?: string }[] = []
         const seen: { [key: string]: boolean } = {}
+        let minNum = 0
+        let haveMin = false
         for (const d of all) {
             if (!d || !d.session) continue
             const num = typeof d.episode === "number" ? d.episode : parseFloat(String(d.episode))
             if (isNaN(num) || !this.isWhole(num)) continue
             if (seen[d.session]) continue
             seen[d.session] = true
-            episodes.push({
-                id: `${d.session}$${animeSession}$${audio}`,
-                number: num,
-                url: `${this.baseUrl}/play/${animeSession}/${d.session}`,
-                title: d.title && d.title.length > 0 ? d.title : `Episode ${num}`,
-            })
+            collected.push({ session: d.session, num: num, title: d.title })
+            if (!haveMin || num < minNum) { minNum = num; haveMin = true }
         }
 
-        if (episodes.length === 0) throw this.fail("episodes", "no episodes found")
+        if (collected.length === 0) throw this.fail("episodes", "no episodes found")
+        const offset = haveMin && minNum > 1 ? minNum - 1 : 0
+
+        const episodes: EpisodeDetails[] = collected.map((c) => {
+            const number = c.num - offset
+            return {
+                id: `${c.session}$${animeSession}$${audio}`,
+                number: number,
+                url: `${this.baseUrl}/play/${animeSession}/${c.session}`,
+                title: c.title && c.title.length > 0 ? c.title : `Episode ${number}`,
+            }
+        })
+
         episodes.sort((a, b) => a.number - b.number)
         if (!pageFail) this.writeCache(cacheKey, episodes)
         return episodes
@@ -156,12 +166,6 @@ class Provider {
         if (candidates.length === 0) throw this.fail("server", audio === "dub" ? "no dub source for this episode" : "no source found for this episode")
 
         const sources: EpisodeServer["videoSources"] = []
-        // Only route playback through the solver's /m3u8 proxy when the solver is
-        // actually reachable (the ping is 30s-cached). solverUrl is set by
-        // default, so wrapping unconditionally would point the player at a dead
-        // port for anyone whose residential IP reaches kwik directly and never
-        // needed the solver — the raw m3u8 + Referer/Origin headers below play
-        // fine in that case.
         const useProxy = !!this.solverEndpoint() && (await this.solverPing()).up
         for (const c of candidates) {
             try {
@@ -450,9 +454,6 @@ class Provider {
         const text = await this.getText(url, { Referer: `${this.baseUrl}/`, "X-Requested-With": "XMLHttpRequest", Accept: "application/json, text/javascript, */*; q=0.01" })
         let parsed = this.parseJson<T>(text)
         if (parsed !== undefined) return parsed
-        // A non-JSON body where JSON was expected is almost always a bot/ad
-        // interstitial that slipped past challenge detection (stale mirror or a
-        // flagged IP). Force the solver and re-parse before giving up.
         const solved = await this.solveGet(url)
         if (solved) {
             parsed = this.parseJson<T>(solved)
@@ -498,13 +499,8 @@ class Provider {
         return /\/v1$/.test(base) ? base : `${base}/v1`
     }
 
-    // Must match Aqua's Utils' session (default "seanime") so the solver's
-    // keep-warm and its Test button validate the very jar this provider uses,
-    // instead of leaving production on the solver's unmanaged __default jar.
     private sessionName(): string {
         const s = (this.solverSession || "").trim()
-        // Fall back to the default if the field is empty or left as an
-        // unsubstituted template (older saved config without this field).
         if (!s || s.indexOf("{{") !== -1) return "seanime"
         return s
     }
@@ -537,13 +533,6 @@ class Provider {
         if (!ep) { this.lastSolver = { ran: false, http: 0, snippet: "", reason: "" }; return undefined }
         const data = await this.solverPost(ep, { cmd: "request.get", url, maxTimeout: 32000, session: this.sessionName() })
         const sol = data && data.solution ? data.solution : undefined
-        // Only merge cookies harvested for an animepahe URL into the animepahe
-        // jar. solveGet is also used for the kwik.si embed; kwik and animepahe
-        // are the same Laravel operator, so a kwik solve returns same-named
-        // cookies (laravel_session/XSRF-TOKEN, cf_clearance) that would silently
-        // overwrite animepahe's session in the flat, un-domain-scoped store and
-        // make the next direct animepahe request 419/403. The UA is host-neutral
-        // and always safe to keep.
         if (sol) this.absorbSolution(sol, /animepahe/i.test(url))
         const body = sol ? sol.response : undefined
         const http = sol && typeof sol.status === "number" ? sol.status : 0
@@ -574,9 +563,6 @@ class Provider {
     private isBlocked(res: FetchResponse): boolean {
         if (!res) return true
         if (res.status === 403 || res.status === 429 || res.status === 503) return true
-        // Never scan a JSON API body for challenge tokens: a legitimate 200 JSON
-        // payload (e.g. an episode titled "Just a Moment") would otherwise be
-        // misread as a challenge. Interstitials are always HTML.
         const ct = (res.contentType || "").toLowerCase()
         if (res.ok && ct.indexOf("application/json") === -1 && this.bodyIsChallenge(res.text())) return true
         return false
