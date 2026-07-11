@@ -5,7 +5,8 @@ class Provider {
     private loadSubtitles = "{{loadSubtitles}}"
     private useCustomSolver = "{{useCustomSolver}}"
     private solverUrl = "{{solverUrl}}"
-    private solverDown = false
+    private solverDownUntil = 0
+    private solverCooldown = 90000
     private mirrors = ["https://anikototv.to", "https://anikoto.cz", "https://anikoto.me", "https://anikoto.net", "https://anikototv.se"]
     private cacheTtl = 900000
     private serverCacheTtl = 300000
@@ -125,7 +126,7 @@ class Provider {
                     })
                     if (res.ok) {
                         const body = res.text()
-                        if (this.bodyIsChallenge(body)) {
+                        if (this.bodyIsChallenge(body) && !this.bodyHasResults(body)) {
                             challenged = true
                         } else {
                             anyOk = true
@@ -146,7 +147,7 @@ class Provider {
         }
 
         this.invalidateBase()
-        if (challenged) throw this.fail("search", "search blocked by the site's anti-bot challenge on all mirrors — enable the custom solver in settings, or retry later")
+        if (challenged) throw this.fail("search", "search blocked by the site's anti-bot challenge on all mirrors — retry later or switch mirrors (the custom solver does not affect search)")
         throw this.fail("search", "search failed (site unreachable)")
     }
 
@@ -355,7 +356,7 @@ class Provider {
             if (m) seriesId = m[1]
         }
         if (!seriesId) {
-            if (this.bodyIsChallenge(pageHtml)) throw this.fail("episodes", "the site is showing an anti-bot challenge; enable the custom solver in this provider's settings (run it via Aqua's Utils) or retry later")
+            if (this.bodyIsChallenge(pageHtml)) throw this.fail("episodes", "the site is showing an anti-bot challenge on this mirror — retry later or switch mirrors")
             throw this.fail("episodes", "could not determine series id (site layout may have changed)")
         }
 
@@ -474,11 +475,13 @@ class Provider {
             const wantSubs = this.loadSubtitles !== "disabled"
             let firstResolved: EpisodeServer | undefined
             let playableNoSubs: EpisodeServer | undefined
+            const dubMismatchIds: { [key: string]: boolean } = {}
             for (const c of candidates) {
                 let resolved: EpisodeServer | undefined
                 try {
                     resolved = await this.resolveServer(c.linkId, c.name, ctx, audio)
-                } catch (_e) {
+                } catch (e) {
+                    if (audio === "dub" && this.isDubMismatch(e)) dubMismatchIds[c.linkId] = true
                     resolved = undefined
                 }
                 if (!resolved) continue
@@ -498,6 +501,7 @@ class Provider {
             }
             if (audio === "dub") {
                 for (const c of candidates) {
+                    if (dubMismatchIds[c.linkId]) continue
                     let r: EpisodeServer | undefined
                     try {
                         r = await this.resolveServer(c.linkId, c.name, ctx, audio, true)
@@ -510,6 +514,7 @@ class Provider {
                     if (cl) r.headers = this.withClearance(r.headers, cl)
                     return r
                 }
+                if (Object.keys(dubMismatchIds).length > 0) throw this.fail("server", "dub source resolved to the subbed (Japanese) track")
             }
             throw this.fail("server", "no playable server found for this episode" + (this.solverEnabled() ? "" : "; if sources are Cloudflare-protected, enable the custom solver in settings (run it via Aqua's Utils)"))
         }
@@ -520,7 +525,7 @@ class Provider {
         const $ = await this.serverListDoc(dataIds)
         const picked = this.collectServers($, [target.group]).filter((c) => c.name === target.name)[0]
         if (!picked) throw this.fail("server", "that server is not available for this episode")
-        const resolved = await this.resolveServer(picked.linkId, target.label, ctx, audio, true)
+        const resolved = await this.resolveServer(picked.linkId, target.label, ctx, audio)
         const cl = this.cachedClearance(this.hostOf(resolved.videoSources[0].url))
         if (cl) resolved.headers = this.withClearance(resolved.headers, cl)
         return resolved
@@ -580,6 +585,10 @@ class Provider {
                 },
             ],
         }
+    }
+
+    private isDubMismatch(e: unknown): boolean {
+        return e instanceof Error && e.message.indexOf("resolved to the subbed") !== -1
     }
 
     private async dubLooksWrong(
@@ -642,7 +651,7 @@ class Provider {
     }
 
     private solverEnabled(): boolean {
-        return (this.useCustomSolver || "").toLowerCase() === "on" && this.solverEndpoint() !== "" && !this.solverDown
+        return (this.useCustomSolver || "").toLowerCase() === "on" && this.solverEndpoint() !== "" && this.now() >= this.solverDownUntil
     }
 
     private solverEndpoint(): string {
@@ -663,9 +672,10 @@ class Provider {
                 timeout: 35,
             })
             if (!res.ok) {
-                this.solverDown = res.status === 0
+                if (res.status === 0) this.solverDownUntil = this.now() + this.solverCooldown
                 return undefined
             }
+            this.solverDownUntil = 0
             const data = res.json<{ solution?: { userAgent?: string; cookies?: { name: string; value: string }[] } }>()
             const sol = data && data.solution ? data.solution : undefined
             if (!sol || !Array.isArray(sol.cookies)) return undefined
@@ -676,7 +686,7 @@ class Provider {
             if (parts.length === 0) return undefined
             return { cookie: parts.join("; "), ua: sol.userAgent || "" }
         } catch (_e) {
-            this.solverDown = true
+            this.solverDownUntil = this.now() + this.solverCooldown
             return undefined
         }
     }
@@ -1005,13 +1015,22 @@ class Provider {
     private challengeToken(body: string): string {
         if (!body) return ""
         const b = body.toLowerCase()
-        const toks = ["just a moment", "checking your browser", "cf-mitigated", "cf-browser-verification", "enable javascript and cookies", "ddos-guard", "attention required"]
+        const toks = ["just a moment", "cf-mitigated", "cf-browser-verification", "ddos-guard", "attention required"]
         for (let i = 0; i < toks.length; i++) if (b.indexOf(toks[i]) !== -1) return toks[i]
         return ""
     }
 
     private bodyIsChallenge(body: string): boolean {
         return this.challengeToken(body) !== ""
+    }
+
+    private bodyHasResults(body: string): boolean {
+        if (!body) return false
+        try {
+            return LoadDoc(body)("div.item").length() > 0
+        } catch (_e) {
+            return false
+        }
     }
 
     private now(): number {
