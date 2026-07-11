@@ -2,6 +2,7 @@ class Provider {
     private baseUrl = "{{baseUrl}}"
     private cacheTtl = 900000
     private srcCacheTtl = 300000
+    private availFailTtl = 45000
 
     getSettings(): Settings {
         return { episodeServers: ["Auto"], supportsDub: true }
@@ -62,17 +63,20 @@ class Provider {
     }
 
     private async availability(anilistId: number, wantDub: boolean): Promise<{ exists: boolean; audio: string; subOrDub: SubOrDub }> {
-        const cacheKey = `animelok:avail:${anilistId}`
+        const cacheKey = `animelok:avail:${anilistId}:${wantDub ? "d" : "s"}`
         const cached = this.readCache<{ exists: boolean; audio: string; subOrDub: SubOrDub }>(cacheKey, this.cacheTtl)
         if (cached) return cached
+        const failKey = `animelok:availfail:${anilistId}`
+        const negativeCached = this.readCache<{ exists: boolean; audio: string; subOrDub: SubOrDub }>(failKey, this.availFailTtl)
+        if (negativeCached) return negativeCached
         const sub = await this.getVibe(anilistId, 1, "sub")
         const dub = await this.getVibe(anilistId, 1, "dub")
         const subOk = sub.status === "ok"
         const dubOk = dub.status === "ok"
-        const exists = sub.status !== "notfound" || dub.status !== "notfound"
+        const exists = subOk || dubOk
         let audio: string
         let subOrDub: SubOrDub
-        if (subOk || dubOk) {
+        if (exists) {
             audio = wantDub && dubOk ? "dub" : subOk ? "sub" : "dub"
             subOrDub = subOk && dubOk ? "both" : dubOk ? "dub" : "sub"
         } else {
@@ -80,7 +84,11 @@ class Provider {
             subOrDub = "both"
         }
         const result = { exists, audio, subOrDub }
-        if (subOk || dubOk || sub.status === "notfound" || dub.status === "notfound") this.writeCache(cacheKey, result)
+        if (exists || (sub.status === "notfound" && dub.status === "notfound")) {
+            this.writeCache(cacheKey, result)
+        } else {
+            this.writeCache(failKey, result)
+        }
         return result
     }
 
