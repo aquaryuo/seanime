@@ -100,6 +100,7 @@ class Provider {
             if (season < 2 && part < 2) {
                 const bare = scored.filter((x) => this.yearOf(x.r.title) === 0)
                 if (bare.length > 0) return bare
+                return []
             }
         }
         if (season < 2 && part < 2) return scored
@@ -227,7 +228,7 @@ class Provider {
             const res = await fetch(`${this.normBase()}/anime/${shortid}/${n}`, { headers: this.pageHeaders(), timeout: 14 })
             if (!res.ok) throw `anizone: episode page failed (status ${res.status})`
             const html = res.text()
-            const found = this.firstMatch(html, /https?:\/\/[^"'\s]+\/master\.m3u8/)
+            const found = this.firstMatch(html, /https?:\/\/[^"'\s]+\/master\.m3u8[^"'\s]*/)
             if (!found) throw "anizone: no stream found for this episode"
             cached = { m3u8: found, subs: this.extractSubs(html) }
             this.writeCache(cacheKey, cached)
@@ -379,7 +380,7 @@ class Provider {
 
     private extractSubs(html: string): { origin: string; lang: string; ext: string }[] {
         const out: { origin: string; lang: string; ext: string }[] = []
-        const re = /https?:\/\/[^"'\s]+\/subtitles\/[0-9]+_([a-z-]+)\.(ass|srt)/g
+        const re = /https?:\/\/[^"'\s]+\/subtitles\/[0-9]+_([A-Za-z-]+)\.(ass|srt)/g
         let m: RegExpExecArray | null
         while ((m = re.exec(html)) !== null) {
             out.push({ origin: m[0], lang: m[1] || "en", ext: m[2] || "ass" })
