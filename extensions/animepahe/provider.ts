@@ -358,24 +358,25 @@ class Provider {
 
     private async resolveBase(): Promise<string> {
         const all = [this.baseUrl].concat(this.mirrors).map((u) => u.replace(/\/+$/, ""))
-        const candidates = all.filter((u, i) => all.indexOf(u) === i)
+        const ranked = all.map((u) => this.preferredBase(u)).concat(all)
+        const candidates = ranked.filter((u, i) => ranked.indexOf(u) === i)
         const cached = $store.get<{ at: number; host: string }>("apahe:base2")
         const t = this.now()
         if (cached && cached.host && /animepahe/i.test(cached.host) && t > 0 && cached.at > 0 && t - cached.at < this.baseTtl) {
-            return this.preferredBase(cached.host)
+            return cached.host
         }
         let fallback = ""
         for (const c of candidates) {
             try {
                 const res = await fetch(`${c}/`, { headers: this.browserHeaders(), timeout: 10 })
                 if (res && res.ok) {
-                    const canon = this.preferredBase(this.canonicalOrigin(res.url, c))
+                    const canon = this.canonicalOrigin(res.url, c)
                     this.absorbCookies(res)
                     $store.set("apahe:base2", { at: this.now(), host: canon })
                     return canon
                 }
                 if (res && !fallback && (res.status === 403 || res.status === 503)) {
-                    fallback = this.preferredBase(this.canonicalOrigin(res.url, c))
+                    fallback = this.canonicalOrigin(res.url, c)
                     this.absorbCookies(res)
                 }
             } catch (_e) {}
@@ -384,7 +385,7 @@ class Provider {
             $store.set("apahe:base2", { at: this.now(), host: fallback })
             return fallback
         }
-        return this.preferredBase(candidates[0])
+        return candidates[0]
     }
 
     private async harvestCookies(force: boolean): Promise<string> {
@@ -436,7 +437,8 @@ class Provider {
         if (!ep) return { up: false }
         const cached = $store.get<{ at: number; up: boolean; version?: string }>("apahe:ping")
         const t = this.now()
-        if (cached && t > 0 && cached.at > 0 && t - cached.at < 30000) return { up: cached.up, version: cached.version }
+        const ttl = cached && cached.up ? 30000 : 4000
+        if (cached && t > 0 && cached.at > 0 && t - cached.at < ttl) return { up: cached.up, version: cached.version }
         try {
             const res = await fetch(ep, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cmd: "sessions.list" }), timeout: 8, noCloudflareBypass: true })
             const up = !!res && res.ok
@@ -451,14 +453,9 @@ class Provider {
     }
 
     private async getJson<T>(url: string): Promise<T> {
-        const text = await this.getText(url, { Referer: `${this.baseUrl}/`, "X-Requested-With": "XMLHttpRequest", Accept: "application/json, text/javascript, */*; q=0.01" })
-        let parsed = this.parseJson<T>(text)
+        const text = await this.getText(url, { Referer: `${this.baseUrl}/`, "X-Requested-With": "XMLHttpRequest", Accept: "application/json, text/javascript, */*; q=0.01" }, (body) => this.parseJson<T>(body) !== undefined)
+        const parsed = this.parseJson<T>(text)
         if (parsed !== undefined) return parsed
-        const solved = await this.solveGet(url)
-        if (solved) {
-            parsed = this.parseJson<T>(solved)
-            if (parsed !== undefined) return parsed
-        }
         const diag = this.parseDiag(url)
         this.invalidateBase()
         throw this.fail("parse", diag)
