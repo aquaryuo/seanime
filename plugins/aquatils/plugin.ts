@@ -30,6 +30,7 @@ function init() {
         const notify = ctx.state<boolean>(sget<boolean>("seh.notify", false))
         const appRef = ctx.fieldRef<string>(appBase.get())
         let sehAuthWarned = false
+        let sehMaxT = sget<number>("seh.maxT", 0)
 
         const _storedMode = sget<string>("fs.mode", "")
         const fsMode = ctx.state<string>((!_storedMode || _storedMode === "native" || _storedMode === "docker") ? "binary" : _storedMode)
@@ -63,6 +64,7 @@ function init() {
         let fsStartTicks = 0
         let fsBinaryGen = 0
         let fsBadStarts = 0
+        let fsBindRetries = 0
         let fsAvBlocked = sget<boolean>("fs.avBlocked", false)
         let fsDownloadId = ""
         let fsLastOut = ""
@@ -344,6 +346,7 @@ function init() {
                 setErr("")
                 fsRestarting = false
                 fsBadStarts = 0
+                fsBindRetries = 0
                 markInstalled()
                 fsAvBlocked = false
                 try { $storage.set("fs.avBlocked", false) } catch (_e) {}
@@ -458,6 +461,7 @@ function init() {
             try {
                 $storage.set("seh.errors", errors.get())
                 $storage.set("seh.seen", seen.get())
+                $storage.set("seh.maxT", sehMaxT)
                 $storage.set("seh.appBase", appBase.get())
                 $storage.set("seh.notify", notify.get())
             } catch (_e) {}
@@ -498,10 +502,14 @@ function init() {
             const seenSet: { [k: string]: boolean } = {}
             for (let i = 0; i < seenList.length; i++) seenSet[seenList[i]] = true
             const fresh: SehError[] = []
+            let hi = sehMaxT
             for (let i = 0; i < found.length; i++) {
-                if (seenSet[found[i].id]) continue
-                seenSet[found[i].id] = true
-                fresh.push(found[i])
+                const e = found[i]
+                if (e.t && e.t < sehMaxT) continue
+                if (seenSet[e.id]) continue
+                seenSet[e.id] = true
+                fresh.push(e)
+                if (e.t > hi) hi = e.t
             }
             if (fresh.length === 0) return
             if (notify.get()) {
@@ -516,6 +524,7 @@ function init() {
             errors.set(nextErrors.slice(Math.max(0, nextErrors.length - SEH_MAX_KEEP)))
             const nextSeen = seenList.concat(fresh.map((e) => e.id))
             seen.set(nextSeen.slice(Math.max(0, nextSeen.length - SEH_MAX_SEEN)))
+            sehMaxT = hi
             sehPersist()
             tray.update()
         }
@@ -614,12 +623,15 @@ function init() {
             const p = await fsProbe()
             if (p.up) {
                 if (fsManualStop && fsMode.get() !== "remote") {
+                    const solverReply = p.version !== undefined || p.sessions !== undefined
                     setStatus("down")
-                    setNote("Stopped. Clearing a leftover solver that was still listening...")
-                    if (nowMs() - fsLeftoverKillAt >= 15000) {
-                        fsLeftoverKillAt = nowMs()
-                        plog("solver still listening after stop - killing the leftover")
-                        reapOrphanSolvers()
+                    if (solverReply) {
+                        setNote("Stopped. Clearing a leftover solver that was still listening...")
+                        if (nowMs() - fsLeftoverKillAt >= 15000) {
+                            fsLeftoverKillAt = nowMs()
+                            plog("solver still listening after stop - killing the leftover")
+                            reapLeftoverListener()
+                        }
                     }
                     refreshTrayBadge()
                     refreshAnimeBtn()
@@ -663,7 +675,7 @@ function init() {
                         if (fsStartTicks >= 18) {
                             setStatus("down")
                             const why = cleanTail(fsLastOut) || readLogTail(fsLogPath())
-                            setErr(fsLastOut || why || "The solver didn't come up in time.")
+                            setErr(why || "The solver didn't come up in time.")
                             setNote("The solver didn't come up" + (why ? ": " + why : "") + ".")
                         }
                     }
@@ -840,6 +852,7 @@ function init() {
         function fsResetRestartCap(): void {
             fsAutoRestarts = 0
             fsLastAutoRestart = 0
+            fsBindRetries = 0
         }
 
         function solverQuarantined(): boolean {
@@ -952,7 +965,7 @@ function init() {
             try { $os.mkdirAll(dir, 493) } catch (_e) {}
             const zip = $filepath.join(dir, "chrome.zip")
             let id = ""
-            try { id = dl.download(st.url, zip) } catch (_e) { setErr("Chromium download couldn't start: " + String(_e)); done(false); return }
+            try { id = dl.download(st.url, zip, { timeout: 900.5 }) } catch (_e) { setErr("Chromium download couldn't start: " + String(_e)); done(false); return }
             plog("downloading Chromium" + (st.version ? " " + st.version : "") + " (browser solver)")
             dlLogAt = 0
             const cancel = dl.watch(id, (p: $downloader.DownloadProgress | undefined) => {
@@ -979,6 +992,10 @@ function init() {
                 } else if (p.status === "error") {
                     cancel()
                     setErr("Chromium download failed: " + (p.error || "unknown error"))
+                    done(false)
+                } else if (p.status === "cancelled") {
+                    cancel()
+                    setErr("Chromium download timed out — the browser solver (hard challenges) will be unavailable. Press Start to try again.")
                     done(false)
                 }
             })
@@ -1024,15 +1041,21 @@ function init() {
                 if (!st.version || !st.url) { setNote("Couldn't reach the Chromium release feed."); tray.update(); return }
                 const cur = $storage.get<string>("fs.chromiumVer") || ""
                 if (cur && !verNewer(st.version, cur)) { setNote("Chromium is up to date (" + cur + ")."); tray.update(); return }
-                try { $os.removeAll($filepath.join(aquatilsDir(), "chromium")) } catch (_e) {}
-                try { $storage.set("fs.chromiumVer", "") } catch (_e) {}
-                chromiumOverride = ""
-                setNote("Updating Chromium…")
-                tray.update()
-                downloadChromium(st, (ok) => {
-                    setNote(ok ? ("Chromium updated to " + st.version + ".") : "Chromium update failed.")
+                const wasRunning = fsMode.get() !== "remote" && (fsStatus.get() === "up" || fsStatus.get() === "starting")
+                const apply = (): void => {
+                    fsChromiumBusy = true
+                    chromiumOverride = ""
+                    setNote("Updating Chromium…")
                     tray.update()
-                })
+                    downloadChromium(st, (ok) => {
+                        fsChromiumBusy = false
+                        setNote(ok ? ("Chromium updated to " + st.version + ".") : "Chromium update failed.")
+                        tray.update()
+                        if (wasRunning) fsStart()
+                    })
+                }
+                if (wasRunning) binaryStop(apply)
+                else apply()
             })
         }
 
@@ -1071,7 +1094,7 @@ function init() {
             const prep = "xattr -dr com.apple.quarantine " + shq(fsDir) + " 2>/dev/null; chmod -R 755 " + shq(fsDir) + "; "
                 + (chromiumOverride ? "xattr -dr com.apple.quarantine " + shq(chrDir) + " 2>/dev/null; chmod -R 755 " + shq(chrDir) + "; " : "")
             const ac = $os.platform === "windows"
-                ? $osExtra.asyncCmd("cmd", "/c", binPath)
+                ? $osExtra.asyncCmd("cmd", "/c", winCmdArg(binPath))
                 : $osExtra.asyncCmd("sh", "-c", prep + "exec " + shq(binPath))
             const c = ac.getCommand()
             try {
@@ -1134,6 +1157,10 @@ function init() {
                             plog("solver couldn't bind port " + port + " yet (a previous instance is still releasing it) - it will retry")
                             setErr("The previous solver is still shutting down (port " + port + " busy) - retrying shortly.")
                             setNote("Port " + port + " busy - retrying shortly.")
+                            if (!fsAutoStart.get() && !fsManualStop && fsMode.get() !== "remote" && fsBindRetries < 3) {
+                                fsBindRetries++
+                                ctx.setTimeout(() => { if (!fsManualStop && fsMode.get() !== "remote" && fsStatus.get() !== "up" && fsStatus.get() !== "starting") fsStart() }, 3000)
+                            }
                         } else if ((execBlocked || binGone) && $os.platform === "windows") {
                             fsAvBlocked = true
                             try { $storage.set("fs.avBlocked", true) } catch (_e) {}
@@ -1201,6 +1228,7 @@ function init() {
 
         function binaryStop(done?: () => void): void {
             fsBusy = false
+            fsChromiumBusy = false
             fsBinaryGen++
             const stopGen = fsBinaryGen
             const guardedDone = (): void => { if (stopGen === fsBinaryGen && done) done() }
@@ -1227,7 +1255,7 @@ function init() {
                 } catch (_e) {}
             }
             if (typeof $osExtra !== "undefined" && typeof $os !== "undefined" && $os.platform !== "windows") {
-                reapOrphanSolvers(() => waitPortFree(fsPort.get() || FS_DEFAULT_PORT, guardedDone))
+                reapOrphanSolvers(() => reapOurChrome(() => waitPortFree(fsPort.get() || FS_DEFAULT_PORT, guardedDone)))
                 return
             }
             guardedDone()
@@ -1237,8 +1265,10 @@ function init() {
             if (typeof $os === "undefined" || typeof $osExtra === "undefined" || $os.platform === "windows") { if (done) done(); return }
             const raw = fsPort.get() || FS_DEFAULT_PORT
             const port = /^[0-9]{1,5}$/.test(raw) ? raw : ""
+            const host = (fsHost.get() || FS_DEFAULT_HOST).trim()
+            const localHost = host === "" || host === "127.0.0.1" || host === "localhost" || host === "::1"
             let cmd = "pkill -9 -f '[a]quatils-beta/.*/solver/solver' 2>/dev/null; "
-            if (port) {
+            if (port && localHost) {
                 cmd += "if command -v fuser >/dev/null 2>&1; then fuser -k " + port + "/tcp 2>/dev/null; "
                     + "elif command -v lsof >/dev/null 2>&1; then lsof -tiTCP:" + port + " -sTCP:LISTEN 2>/dev/null | xargs -r kill -9 2>/dev/null; "
                     + "elif command -v ss >/dev/null 2>&1; then P=$(ss -H -ltnp 2>/dev/null | grep -E '[:.]" + port + " ' | grep -oE 'pid=[0-9]+' | head -n1 | cut -d= -f2); [ -n \"$P\" ] && kill -9 \"$P\" 2>/dev/null; fi; "
@@ -1264,7 +1294,7 @@ function init() {
                         if (done) done()
                     })
                 } else {
-                    $osExtra.asyncCmd("sh", "-c", "pkill -f aquatils-beta/chromium 2>/dev/null; exit 0").run((_d, _e, code) => {
+                    $osExtra.asyncCmd("sh", "-c", "pkill -f '[a]quatils-beta/chromium' 2>/dev/null; exit 0").run((_d, _e, code) => {
                         if (code === undefined) return
                         if (done) done()
                     })
@@ -1274,12 +1304,26 @@ function init() {
             if (done) done()
         }
 
+        function reapLeftoverListener(): void {
+            if (typeof $os === "undefined" || typeof $osExtra === "undefined") return
+            if ($os.platform === "windows") {
+                try { $osExtra.asyncCmd("cmd", "/c", "taskkill", "/F", "/T", "/IM", "solver.exe").run((_d, _e, _c) => {}) } catch (_e) {}
+                return
+            }
+            reapOrphanSolvers()
+        }
+
         function aquatilsDir(): string {
             return $filepath.join($os.cacheDir(), "aquatils-beta")
         }
 
         function shq(s: string): string {
             return "'" + String(s).replace(/'/g, "'\\''") + "'"
+        }
+
+        function winCmdArg(s: string): string {
+            if (/[ \t]/.test(s)) return s
+            return s.replace(/[&^()<>|]/g, "^$&")
         }
 
         function dirExists(p: string): boolean {
@@ -1350,6 +1394,11 @@ function init() {
 
         function binaryEnsureAndStart(): void {
             if (fsBusy) return
+            if (dl && fsDownloadId) {
+                try { dl.cancel(fsDownloadId) } catch (_e) {}
+                fsDownloadId = ""
+                fsBinaryGen++
+            }
             if (typeof $os === "undefined" || typeof $osExtra === "undefined" || !dl) {
                 setStatus("down")
                 setNote("Seanime's strict secure mode blocks local file & download access — only Remote mode works here. Turn off strict secure mode in Seanime settings, or use Remote mode with a solver you run yourself.")
@@ -1409,7 +1458,7 @@ function init() {
             dlLogAt = 0
             let id = ""
             try {
-                id = dl.download(url, archive)
+                id = dl.download(url, archive, { timeout: 900.5 })
                 fsDownloadId = id
             } catch (_e) {
                 fsBusy = false
@@ -1513,6 +1562,13 @@ function init() {
                     fsBusy = false
                     setStatus("down")
                     setNote("Download failed: " + (p.error || ""))
+                    tray.update()
+                } else if (p.status === "cancelled") {
+                    cancel()
+                    fsDownloadId = ""
+                    fsBusy = false
+                    setStatus("down")
+                    setNote("The solver download timed out — press Start to retry.")
                     tray.update()
                 }
             })
