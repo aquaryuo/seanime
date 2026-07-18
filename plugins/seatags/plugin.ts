@@ -61,7 +61,9 @@ function init() {
         let controlsCancel: any = null
         let cardsCancel: any = null
         let filterStyle: any = null
-        let genToken = 0
+        let genById: { [k: string]: number } = {}
+        let genSeq = 0
+        function live(eid: string, gen: number): boolean { return genById[eid] === gen }
 
         const CTL_INPUT_CSS = "height:40px;border-radius:12px;border:1px solid rgba(255,255,255,0.12);background:#0b0b0b;color:#d1d1d1;font-size:14px;outline:none;font-family:inherit;box-sizing:border-box;padding:0 12px;min-width:180px"
         const CTL_WRAP_CSS = "display:flex;flex-direction:row;flex-wrap:wrap;gap:8px;align-items:center;flex:1 1 auto;min-width:0"
@@ -159,7 +161,7 @@ function init() {
             try {
                 const html = (card && card.innerHTML) ? String(card.innerHTML) : ""
                 const id = extractId(html)
-                let info: Entry | null = (id && byId[id]) ? byId[id] : null
+                let info: Entry | null = (id && !/\s/.test(id) && byId[id]) ? byId[id] : null
                 if (!info) {
                     const nm = extractName(html)
                     if (nm && byName[nm.toLowerCase()]) info = byName[nm.toLowerCase()]
@@ -187,6 +189,21 @@ function init() {
             step()
         }
 
+        // After a fetch changes the data, strip already-decorated cards (the observer won't re-deliver
+        // them while they still carry [data-seatags]) so the re-armed observer re-decorates with fresh tags.
+        async function refreshDecorated(): Promise<void> {
+            let cards: any[] = [], blocks: any[] = []
+            try {
+                const r = await Promise.all([
+                    ctx.dom.query("[data-seatags]").catch(() => []),
+                    ctx.dom.query(".seatags-block").catch(() => []),
+                ])
+                cards = r[0] || []; blocks = r[1] || []
+            } catch (_e) {}
+            for (let i = 0; i < blocks.length; i++) { try { blocks[i].remove() } catch (_e) {} }
+            for (let i = 0; i < cards.length; i++) { try { cards[i].removeAttribute("data-seatags") } catch (_e) {} }
+        }
+
         // ---------- injected stylesheets ----------
         async function ensureFilterStyle(): Promise<void> {
             if (filterStyle) return
@@ -194,6 +211,7 @@ function init() {
                 const body = await ctx.dom.queryOne("body")
                 if (body) {
                     const s = await ctx.dom.createElement("style")
+                    try { s.setAttribute("data-seatags-style", "filter") } catch (_e) {}
                     s.setText("")
                     body.append(s)
                     filterStyle = s
@@ -239,13 +257,14 @@ function init() {
                 const b = await ctx.dom.queryOne("body")
                 if (!b) return
                 const s = await ctx.dom.createElement("style")
+                try { s.setAttribute("data-seatags-style", "hover") } catch (_e) {}
                 s.setText(".seatags-status-item:hover{background-color:var(--subtle)}")
                 b.append(s)
                 hoverStyle = s
             } catch (_e) {}
         }
 
-        type Menu = { open: boolean; cancel: any; content: any; body: any; checks: any[]; gen: number }
+        type Menu = { open: boolean; cancel: any; content: any; body: any; checks: any[]; gen: number; eid: string }
         function updateChecks(st: Menu): void {
             if (!st.checks) return
             const v = filterState.get()
@@ -265,7 +284,7 @@ function init() {
             updateChecks(st)
             try { st.content.setStyle("display", "block") } catch (_e) {}
             st.open = true
-            if (st.body) { try { st.cancel = st.body.addEventListener("click", () => { if (st.gen !== genToken) return; closeMenu(st) }) } catch (_e) {} }
+            if (st.body) { try { st.cancel = st.body.addEventListener("click", () => { if (!live(st.eid, st.gen)) return; closeMenu(st) }) } catch (_e) {} }
         }
         function toggleMenu(st: Menu): void { if (st.open) closeMenu(st); else openMenu(st) }
 
@@ -278,7 +297,7 @@ function init() {
 
         // Builds a div-based dropdown that reuses Seanime's own Select classes (looks identical).
         // Parallelizes the blocking reads (createElement / query) to minimize insertion latency.
-        async function buildStatusDropdown(boxClass: string, gen: number): Promise<any> {
+        async function buildStatusDropdown(boxClass: string, gen: number, eid: string): Promise<any> {
             await ensureHoverStyle()
             const body = await getBody()
 
@@ -331,7 +350,7 @@ function init() {
                 checks = q[2] || []
             } catch (_e) {}
 
-            const st: Menu = { open: false, cancel: null, content: content, body: body, checks: [], gen: gen }
+            const st: Menu = { open: false, cancel: null, content: content, body: body, checks: [], gen: gen, eid: eid }
             if (checks) {
                 for (let i = 0; i < checks.length && i < STATUS_OPTS.length; i++) {
                     if (checks[i]) st.checks.push({ val: STATUS_OPTS[i][0], el: checks[i] })
@@ -342,14 +361,14 @@ function init() {
                     const val = STATUS_OPTS[i][0]
                     const lbl = STATUS_OPTS[i][1]
                     const it = items[i]
-                    if (it) { try { it.addEventListener("click", () => { if (gen !== genToken) return; filterState.set(val); if (label) { try { label.setText(lbl) } catch (_e) {} } updateChecks(st); applyFilter().catch(() => {}); closeMenu(st) }) } catch (_e) {} }
+                    if (it) { try { it.addEventListener("click", () => { if (!live(eid, gen)) return; filterState.set(val); if (label) { try { label.setText(lbl) } catch (_e) {} } updateChecks(st); applyFilter().catch(() => {}); closeMenu(st) }) } catch (_e) {} }
                 }
             }
-            try { trigger.addEventListener("click", () => { if (gen !== genToken) return; toggleMenu(st) }) } catch (_e) {}
+            try { trigger.addEventListener("click", () => { if (!live(eid, gen)) return; toggleMenu(st) }) } catch (_e) {}
             return container
         }
 
-        async function buildAuthorInput(inputClass: string, gen: number): Promise<any> {
+        async function buildAuthorInput(inputClass: string, gen: number, eid: string): Promise<any> {
             if (inputClass) {
                 let author: any = null
                 try { author = await ctx.dom.createElement("div") } catch (_e) {}
@@ -361,8 +380,8 @@ function init() {
                 if (ains && ains.length) {
                     const ainput = ains[0]
                     try { ainput.setProperty("value", authorState.get()) } catch (_e) {}
-                    try { ainput.addEventListener("input", () => { if (gen !== genToken) return; onAuthorInput(ainput) }) } catch (_e) {}
-                    try { ainput.addEventListener("keyup", () => { if (gen !== genToken) return; onAuthorInput(ainput) }) } catch (_e) {}
+                    try { ainput.addEventListener("input", () => { if (!live(eid, gen)) return; onAuthorInput(ainput) }) } catch (_e) {}
+                    try { ainput.addEventListener("keyup", () => { if (!live(eid, gen)) return; onAuthorInput(ainput) }) } catch (_e) {}
                 }
                 return author
             }
@@ -373,8 +392,8 @@ function init() {
             try { author.setAttribute("placeholder", "Search by author...") } catch (_e) {}
             try { author.setCssText(CTL_INPUT_CSS) } catch (_e) {}
             try { author.setProperty("value", authorState.get()) } catch (_e) {}
-            try { author.addEventListener("input", () => { if (gen !== genToken) return; onAuthorInput(author) }) } catch (_e) {}
-            try { author.addEventListener("keyup", () => { if (gen !== genToken) return; onAuthorInput(author) }) } catch (_e) {}
+            try { author.addEventListener("input", () => { if (!live(eid, gen)) return; onAuthorInput(author) }) } catch (_e) {}
+            try { author.addEventListener("keyup", () => { if (!live(eid, gen)) return; onAuthorInput(author) }) } catch (_e) {}
             return author
         }
 
@@ -400,7 +419,8 @@ function init() {
                 if (eid && injectedIds[eid]) continue
                 if (eid) injectedIds[eid] = true
                 try { input.setAttribute("data-seatags-tb", "1") } catch (_e) {}
-                const gen = ++genToken
+                const gen = ++genSeq
+                genById[eid] = gen
 
                 // The search input's class is the InputAnatomy box (same box the language Select uses) — read once.
                 if (!cachedInputClass) { try { const c = await input.getAttribute("class"); cachedInputClass = c ? String(c) : "" } catch (_e) {} }
@@ -412,8 +432,8 @@ function init() {
                 try {
                     const r = await Promise.all([
                         resolveAnchors(input),
-                        buildStatusDropdown(cls, gen).catch(() => null),
-                        buildAuthorInput(cls, gen).catch(() => null),
+                        buildStatusDropdown(cls, gen, eid).catch(() => null),
+                        buildAuthorInput(cls, gen, eid).catch(() => null),
                     ])
                     anchors = r[0]; statusEl = r[1]; author = r[2]
                 } catch (_e) {}
@@ -455,13 +475,13 @@ function init() {
             if (!domReady) return
             if (controlsCancel) { try { controlsCancel() } catch (_e) {} controlsCancel = null }
             try {
-                const r: any = ctx.dom.observe('input[placeholder*="extensions"]:not([data-seatags-tb])', injectControls)
+                const r: any = ctx.dom.observe('input[placeholder^="Search"][placeholder*="extensions"]:not([data-seatags-tb])', injectControls)
                 controlsCancel = (r && r.length) ? r[0] : null
             } catch (e) { dErr = "obs-ctl" }
         }
         function startCards(): void {
             if (!domReady) return
-            if (entriesState.get().length === 0) return
+            if (entriesState.get().length === 0) { applyFilter().catch(() => {}); return }
             if (cardsCancel) { try { cardsCancel() } catch (_e) {} cardsCancel = null }
             try {
                 const r: any = ctx.dom.observe('[class*="extension-card"]:not([data-seatags])', decorateCards, { withInnerHTML: true })
@@ -469,15 +489,24 @@ function init() {
             } catch (e) { dErr = "obs-cards" }
             applyFilter().catch(() => {})
         }
-        function resetForReady(): void {
+        async function resetForReady(): Promise<void> {
             // A client reload resets the frontend's element-id counter, so our persisted handles and the
-            // injected-id cache go stale and can collide with new elements (e.g. the filter <style> handle
-            // lands on a visible element, or a recycled input id gets wrongly skipped). Drop them all so
-            // everything is recreated fresh for the new client. Removing the old styles first avoids stacking.
-            if (filterStyle) { try { filterStyle.remove() } catch (_e) {} filterStyle = null }
-            if (hoverStyle) { try { hoverStyle.remove() } catch (_e) {} hoverStyle = null }
+            // injected-id cache go stale and can collide with new elements (a recycled id can now point at a
+            // live element, so calling .remove() on a stale handle would delete real UI). Drop the refs
+            // WITHOUT removing through them; the old client's DOM is already gone on reload. For a same-tab
+            // reset (no reload) clear any leftover styles by querying fresh handles instead.
+            filterStyle = null
+            hoverStyle = null
             cachedBody = null
             injectedIds = {}
+            genById = {}
+            // ctx.dom.query never settles off the main/disposed tab; awaiting it here would block the
+            // resets above and (via .then) onDomReady. Clean up leftover styles fire-and-forget instead.
+            try {
+                ctx.dom.query("[data-seatags-style]").then((olds: any[]) => {
+                    if (olds) for (let i = 0; i < olds.length; i++) { try { olds[i].remove() } catch (_e) {} }
+                }, () => {})
+            } catch (_e) {}
         }
         function onDomReady(): void {
             domReady = true
@@ -485,8 +514,8 @@ function init() {
             startCards()
             load(false).catch(() => {})
         }
-        try { ctx.dom.onReady(() => { resetForReady(); onDomReady() }) } catch (_e) {}
-        try { ctx.dom.onMainTabReady(() => { resetForReady(); onDomReady() }) } catch (_e) {}
+        try { ctx.dom.onReady(() => { resetForReady().then(() => onDomReady(), () => onDomReady()) }) } catch (_e) {}
+        try { ctx.dom.onMainTabReady(() => { resetForReady().then(() => onDomReady(), () => onDomReady()) }) } catch (_e) {}
         try { ctx.screen.onNavigate(() => { startControls(); startCards() }) } catch (_e) {}
 
         // ---------- load the marketplace tag list ----------
@@ -495,12 +524,14 @@ function init() {
             if (inflight) return
             if (!force && entriesState.get().length > 0 && now() - lastAt < CACHE_TTL) return
             inflight = true
+            let dataChanged = false
             try {
                 const res = await fetch(SRC, { timeout: 15 })
                 if (res.ok) {
                     const data = res.json<any>()
                     if (Array.isArray(data)) {
                         const clean = (data as any[]).filter((e) => e && typeof e === "object")
+                        try { dataChanged = JSON.stringify(entriesState.get()) !== JSON.stringify(clean) } catch (_e) { dataChanged = true }
                         entriesState.set(clean as Entry[])
                         rebuildMaps()
                         try { $storage.set(CACHE_KEY, { at: now(), data: clean }) } catch (_e) {}
@@ -515,6 +546,7 @@ function init() {
                 dErr = "fetch"
             }
             inflight = false
+            if (dataChanged) { try { await refreshDecorated() } catch (_e) {} }
             startCards()
         }
 
