@@ -13,6 +13,7 @@ function init() {
         const POLL_ATTEMPTS = 8
         const POLL_INTERVAL = 350
         const MAX_CORRECTIONS = 8
+        const ENFORCE_WINDOW = 8000
         const REARM_DEDUP = 1500
         const OPT_SEL = "[data-vc-element='setting-select-option']"
         const LABEL_SEL = "[data-vc-element='setting-select-option-label']"
@@ -84,13 +85,13 @@ function init() {
         let armedPid = ""
         let lastArmAt = 0
         let lastMenu = ""
-        let skipClicks = false
+        let loadAt = 0
         const boundOpts: any = {}
         const pendingClick: any = { sub: 0, cap: 0 }
         const pickPending: any = { sub: false, cap: false }
         const enforceCount: any = { sub: 0, cap: 0 }
         const lastDesired: any = { sub: -999, cap: -999 }
-        const stopEnforce: any = { sub: false, cap: false }
+        const enforceOpen: any = { sub: false, cap: false }
         const curTrack: any = { sub: -999, cap: -999 }
         const enforceTok: any = { sub: 0, cap: 0 }
 
@@ -131,15 +132,42 @@ function init() {
             sset(k, Object.assign({}, cur, patch, { updatedAt: nowMs() }))
             indexAdd(k)
         }
-        function matchTrack(list: any[], want: any): number {
+        function trackList(): any[] | undefined {
+            const pi = pinfo()
+            if (!pi) return undefined
+            const out: any[] = []
+            const subs = pi.subtitleTracks
+            if (Array.isArray(subs)) {
+                let file = 1000
+                for (let i = 0; i < subs.length; i++) {
+                    const t = subs[i] || {}
+                    const libass = t.useLibassRenderer === true
+                    out.push({ kind: libass ? "sub" : "cap", number: libass ? file++ : i, label: String(t.label || ""), language: String(t.language || "") })
+                }
+            }
+            const mkv = pi.mkvMetadata
+            if (mkv && Array.isArray(mkv.subtitleTracks)) {
+                for (let i = 0; i < mkv.subtitleTracks.length; i++) {
+                    const t = mkv.subtitleTracks[i] || {}
+                    out.push({ kind: "sub", number: t.number, label: String(t.name || ""), language: String(t.language || t.languageIETF || "") })
+                }
+            }
+            return out
+        }
+        function domainList(kind: string): any[] | undefined {
+            const l = trackList()
+            if (l === undefined) return undefined
+            return l.filter((t) => t.kind === kind)
+        }
+        function findTrack(list: any[], want: any): any {
             const lang = String(want.language || "").toLowerCase()
             const label = String(want.label || "").toLowerCase()
             if (label) {
-                for (let i = 0; i < list.length; i++) if (lang && String(list[i].label || "").toLowerCase() === label && String(list[i].language || "").toLowerCase() === lang) return list[i].number
-                for (let i = 0; i < list.length; i++) if (String(list[i].label || "").toLowerCase() === label) return list[i].number
+                for (let i = 0; i < list.length; i++) if (lang && String(list[i].label || "").toLowerCase() === label && String(list[i].language || "").toLowerCase() === lang) return list[i]
+                for (let i = 0; i < list.length; i++) if (String(list[i].label || "").toLowerCase() === label) return list[i]
             }
-            for (let i = 0; i < list.length; i++) if (lang && String(list[i].language || "").toLowerCase() === lang) return list[i].number
-            return -2
+            for (let i = 0; i < list.length; i++) if (lang && String(list[i].language || "").toLowerCase() === lang) return list[i]
+            return null
         }
         function matchByLabel(list: any[], label: string): any {
             const L = label.toLowerCase(); const U = label.toUpperCase()
@@ -160,7 +188,7 @@ function init() {
             if (n === lastDesired[kind]) {
                 enforceCount[kind]++
                 if (enforceCount[kind] > MAX_CORRECTIONS) {
-                    if (!stopEnforce[kind]) { stopEnforce[kind] = true; log("⚠ " + kind + " enforcement paused — player keeps overriding (" + n + ")") }
+                    if (enforceOpen[kind]) { enforceOpen[kind] = false; log("⚠ " + kind + " enforcement paused — player keeps overriding (" + n + ")") }
                     return
                 }
             } else { lastDesired[kind] = n; enforceCount[kind] = 1 }
@@ -171,53 +199,50 @@ function init() {
             } catch (_e) {}
         }
 
-        function enforceKind(kind: string, current: number, myGen: number): Promise<string> {
-            if (myGen !== gen) return Promise.resolve("stale")
-            if (!persistSubs.get()) return Promise.resolve("off")
-            if (stopEnforce[kind]) return Promise.resolve("stopped")
-            if (pickPending[kind] || nowMs() - pendingClick[kind] <= CLICK_SUPPRESS) return Promise.resolve("user")
+        function enforceKind(kind: string, myGen: number): string {
+            if (myGen !== gen) return "stale"
+            if (!persistSubs.get()) return "off"
+            if (!enforceOpen[kind]) return "closed"
+            if (pickPending[kind] || nowMs() - pendingClick[kind] <= CLICK_SUPPRESS) return "user"
             const sv = savedFor(kind)
-            if (!sv) return Promise.resolve("none")
-            if (current === -999) return Promise.resolve("unknown")
-            return VC.getTextTracks().then((tracks) => {
-                if (myGen !== gen) return "stale"
-                const subs = (tracks || []).filter((t) => t.type === "subtitles")
-                const caps = (tracks || []).filter((t) => t.type === "captions")
-                if (!subs.length && !caps.length) return "no-tracks"
-                if (sv.off) {
-                    if (current === -1) { enforceCount[kind] = 0; return "ok" }
-                    setKind(kind, -1, myGen); return "applied"
-                }
-                const list = kind === "cap" ? caps : subs
-                const n = matchTrack(list, sv)
-                if (n === -2) { return "no-match" }
-                if (current === n) { enforceCount[kind] = 0; return "ok" }
-                setKind(kind, n, myGen); return "applied"
-            }).catch(() => "error")
+            if (!sv) return "none"
+            const list = domainList(kind)
+            if (list === undefined) return "unsupported"
+            if (!list.length) return "no-tracks"
+            if (sv.off) {
+                if (curTrack[kind] === -1) { enforceOpen[kind] = false; return "ok" }
+                setKind(kind, -1, myGen)
+                if (kind === "cap") enforceOpen[kind] = false
+                return "applied"
+            }
+            const m = findTrack(list, sv)
+            if (!m) return "no-match"
+            if (curTrack[kind] === m.number) { enforceOpen[kind] = false; return "ok" }
+            setKind(kind, m.number, myGen)
+            if (kind === "cap") enforceOpen[kind] = false
+            return "applied"
         }
 
         function scheduleEnforce(kind: string): void {
-            if (stopEnforce[kind]) return
+            if (!enforceOpen[kind]) return
             enforceTok[kind]++
             const tok = enforceTok[kind]
             const myGen = gen
             ctx.setTimeout(() => {
                 if (myGen !== gen || enforceTok[kind] !== tok) return
-                enforceKind(kind, curTrack[kind], myGen)
+                if (nowMs() - loadAt > ENFORCE_WINDOW) { enforceOpen[kind] = false; return }
+                enforceKind(kind, myGen)
             }, GRACE)
         }
 
         function pollLoad(myGen: number, attempt: number): void {
             if (myGen !== gen) return
-            Promise.all([
-                enforceKind("sub", curTrack.sub, myGen),
-                enforceKind("cap", curTrack.cap, myGen),
-            ]).then((st) => {
-                if (myGen !== gen) return
-                if ((st.indexOf("no-tracks") >= 0 || st.indexOf("unknown") >= 0) && attempt < POLL_ATTEMPTS) {
-                    ctx.setTimeout(() => pollLoad(myGen, attempt + 1), POLL_INTERVAL)
-                }
-            }).catch(() => {})
+            const sub = enforceKind("sub", myGen)
+            const cap = enforceKind("cap", myGen)
+            const wait = (s: string) => s === "unsupported" || s === "no-tracks"
+            if ((wait(sub) || wait(cap)) && attempt < POLL_ATTEMPTS) {
+                ctx.setTimeout(() => pollLoad(myGen, attempt + 1), POLL_INTERVAL)
+            }
         }
 
         function arm(pid: string, fromLoad: boolean): void {
@@ -227,42 +252,54 @@ function init() {
             const reload = (pid === armedPid)
             armedPid = pid
             lastArmAt = nowMs()
+            loadAt = nowMs()
             gen++
             const ks = ["sub", "cap"]
-            for (let i = 0; i < ks.length; i++) { const k = ks[i]; enforceCount[k] = 0; lastDesired[k] = -999; stopEnforce[k] = false; pickPending[k] = false; pendingClick[k] = 0; curTrack[k] = -999 }
+            for (let i = 0; i < ks.length; i++) { const k = ks[i]; enforceCount[k] = 0; lastDesired[k] = -999; enforceOpen[k] = true; pickPending[k] = false; pendingClick[k] = 0; curTrack[k] = -999 }
             for (const id in boundOpts) delete boundOpts[id]
             log("▶ LOAD" + (reload ? " (reload)" : "") + " pid=" + shortPid(pid) + " · " + ctxStr())
             pollLoad(gen, 0)
         }
 
-        function menuSkips(t: string): boolean {
-            const s = String(t || "").toLowerCase()
-            return s.indexOf("quality") >= 0 || s.indexOf("settings") >= 0 || s.indexOf("audio") >= 0
+        function owningMenuTitle(el: any): Promise<string> {
+            function up(cur: any, depth: number): Promise<string> {
+                if (depth <= 0) return Promise.resolve("")
+                return cur.getParent().then((p: any) => {
+                    if (!p) return ""
+                    return p.queryOne(TITLE_SEL).then((title: any) => {
+                        if (title) return title.getText().then((t: string) => String(t || "").trim())
+                        return up(p, depth - 1)
+                    }).catch(() => up(p, depth - 1))
+                }).catch(() => "")
+            }
+            return up(el, 8)
         }
 
         function recordByLabel(el: any, done: () => void): void {
-            el.query(LABEL_SEL).then((spans: any[]) => {
-                const sp = (spans && spans.length) ? spans[0] : el
-                return sp.getText()
-            }).then((txt: string) => {
-                const label = String(txt || "").trim()
-                if (!label) { log("· click: could not read label"); done(); return }
-                log("· you picked '" + label + "' (" + (lastMenu || "?") + ")")
-                if (/^off$/i.test(label)) { const key = writeKey(); recordTo(key, { sub: { off: true }, cap: { off: true } }); log("✓ saved off @ " + key); done(); return }
-                VC.getTextTracks().then((tracks) => {
-                    const subs = (tracks || []).filter((t) => t.type === "subtitles")
-                    const caps = (tracks || []).filter((t) => t.type === "captions")
-                    const m = matchByLabel(subs, label)
-                    if (m) { const key = writeKey(); recordTo(key, { sub: { off: false, language: m.language, label: m.label }, cap: null }); log("✓ saved sub=" + (m.label || m.language) + " @ " + key); done(); return }
-                    const cm = matchByLabel(caps, label)
-                    if (cm) { const key = writeKey(); recordTo(key, { cap: { off: false, language: cm.language, label: cm.label }, sub: null }); log("✓ saved cap=" + (cm.label || cm.language) + " @ " + key); done(); return }
+            owningMenuTitle(el).then((menu: string) => {
+                if (menu && !/subtitle/i.test(menu)) { log("· click ignored (" + menu + ")"); done(); return }
+                el.query(LABEL_SEL).then((spans: any[]) => {
+                    const sp = (spans && spans.length) ? spans[0] : el
+                    return sp.getText()
+                }).then((txt: string) => {
+                    const label = String(txt || "").trim()
+                    if (!label) { log("· click: could not read label"); done(); return }
+                    log("· you picked '" + label + "' (" + (menu || lastMenu || "?") + ")")
+                    if (/^off$/i.test(label)) { const key = writeKey(); recordTo(key, { sub: { off: true }, cap: { off: true } }); enforceOpen.sub = false; enforceOpen.cap = false; log("✓ saved off @ " + key); done(); return }
+                    const m = matchByLabel(trackList() || [], label)
+                    if (m) {
+                        const key = writeKey()
+                        if (m.kind === "cap") recordTo(key, { cap: { off: false, language: m.language, label: m.label }, sub: null })
+                        else recordTo(key, { sub: { off: false, language: m.language, label: m.label }, cap: null })
+                        enforceOpen.sub = false; enforceOpen.cap = false
+                        log("✓ saved " + m.kind + "=" + (m.label || m.language) + " @ " + key); done(); return
+                    }
                     log("· '" + label + "' matched no track — not saved"); done()
-                }).catch(() => { log("· getTextTracks error"); done() })
+                }).catch(() => { log("· click: could not read label"); done() })
             }).catch(() => { log("· click: could not read label"); done() })
         }
 
         function onOptionClick(el: any): void {
-            if (skipClicks) { log("· click ignored (" + (lastMenu || "?") + ")"); return }
             const kinds = ["sub", "cap"]
             const t = nowMs()
             for (let i = 0; i < kinds.length; i++) { pendingClick[kinds[i]] = t; pickPending[kinds[i]] = true }
@@ -278,10 +315,8 @@ function init() {
                     const el = els[els.length - 1]
                     try {
                         el.getText().then((t) => {
-                            const skip = menuSkips(t)
                             const name = String(t || "").trim()
-                            if (name && name !== lastMenu) { lastMenu = name; log("· menu open: " + name + (skip ? " (clicks ignored)" : "")) }
-                            skipClicks = skip
+                            if (name && name !== lastMenu) { lastMenu = name; log("· menu open: " + name) }
                         }).catch(() => {})
                     } catch (_e) {}
                 })
@@ -306,13 +341,13 @@ function init() {
                 arm((e && e.playbackId) || "", false)
                 const v = (typeof e.trackNumber === "number" && e.trackNumber >= 0) ? e.trackNumber : -1
                 curTrack.sub = v
-                scheduleEnforce("sub")
+                if (enforceOpen.sub) scheduleEnforce("sub")
             })
             VC.addEventListener("video-media-caption-track", (e) => {
                 arm((e && e.playbackId) || "", false)
                 const v = (typeof e.trackIndex === "number" && e.trackIndex >= 0) ? e.trackIndex : -1
                 curTrack.cap = v
-                scheduleEnforce("cap")
+                if (enforceOpen.cap) scheduleEnforce("cap")
             })
         }
 
