@@ -528,7 +528,7 @@ class Provider {
     private async solveGet(url: string): Promise<string | undefined> {
         const ep = this.solverEndpoint()
         if (!ep) { this.lastSolver = { ran: false, http: 0, snippet: "", reason: "" }; return undefined }
-        const data = await this.solverPost(ep, { cmd: "request.get", url, maxTimeout: 32000, session: this.sessionName() })
+        const data = await this.solverPost(ep, { cmd: "request.get", url, maxTimeout: 30000, session: this.sessionName() })
         const sol = data && data.solution ? data.solution : undefined
         if (sol) this.absorbSolution(sol, /animepahe/i.test(url))
         const body = sol ? sol.response : undefined
