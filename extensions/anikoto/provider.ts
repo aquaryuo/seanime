@@ -5,7 +5,6 @@ class Provider {
     private loadSubtitles = "{{loadSubtitles}}"
     private useCustomSolver = "{{useCustomSolver}}"
     private solverUrl = "{{solverUrl}}"
-    private solverDownUntil = 0
     private solverCooldown = 90000
     private mirrors = ["https://anikototv.to", "https://anikoto.cz", "https://anikoto.me", "https://anikoto.net", "https://anikototv.se"]
     private cacheTtl = 900000
@@ -95,12 +94,6 @@ class Provider {
                 "Auto",
                 "VidPlay-1",
                 "HD-1",
-                "Vidstream-2",
-                "VidCloud-1",
-                "HS: VidPlay-1",
-                "HS: HD-1",
-                "HS: Vidstream-2",
-                "HS: VidCloud-1",
             ],
             supportsDub: true,
         }
@@ -651,7 +644,8 @@ class Provider {
     }
 
     private solverEnabled(): boolean {
-        return (this.useCustomSolver || "").toLowerCase() === "on" && this.solverEndpoint() !== "" && this.now() >= this.solverDownUntil
+        const down = this.readCache<number>("anikoto:solverdown", this.solverCooldown)
+        return (this.useCustomSolver || "").toLowerCase() === "on" && this.solverEndpoint() !== "" && (down === undefined || this.now() >= down)
     }
 
     private solverEndpoint(): string {
@@ -672,10 +666,10 @@ class Provider {
                 timeout: 35,
             })
             if (!res.ok) {
-                if (res.status === 0) this.solverDownUntil = this.now() + this.solverCooldown
+                if (res.status >= 500) this.writeCache("anikoto:solverdown", this.now() + this.solverCooldown)
                 return undefined
             }
-            this.solverDownUntil = 0
+            this.writeCache("anikoto:solverdown", 0)
             const data = res.json<{ solution?: { userAgent?: string; cookies?: { name: string; value: string }[] } }>()
             const sol = data && data.solution ? data.solution : undefined
             if (!sol || !Array.isArray(sol.cookies)) return undefined
@@ -686,7 +680,7 @@ class Provider {
             if (parts.length === 0) return undefined
             return { cookie: parts.join("; "), ua: sol.userAgent || "" }
         } catch (_e) {
-            this.solverDownUntil = this.now() + this.solverCooldown
+            this.writeCache("anikoto:solverdown", this.now() + this.solverCooldown)
             return undefined
         }
     }
@@ -851,14 +845,12 @@ class Provider {
         if (this.loadSubtitles === "disabled") return collected
         if (!tracks || tracks.length === 0) return collected
 
-        if (ctx.anilistId <= 0) return collected
-
         const anime = String(ctx.anilistId)
         const ep = String(ctx.episode)
         const refParam = embedOrigin ? `&ref=${encodeURIComponent(embedOrigin)}` : ""
         const valid = tracks.filter((t) => t && typeof t.file === "string" && /^https?:\/\//i.test(t.file) && (!t.kind || t.kind === "captions" || t.kind === "subtitles"))
         if (valid.length === 0) return collected
-        const up = await this.subUp()
+        const up = ctx.anilistId > 0 ? await this.subUp() : false
         let tokParam = ""
         if (up) {
             let tok = this.readCache<string>(`anikoto:tok:${ctx.anilistId}`, this.tokenTtl)
@@ -893,18 +885,7 @@ class Provider {
         if (collected.length === 0) return collected
         const pick = englishIdx !== -1 ? englishIdx : defaultIdx !== -1 ? defaultIdx : 0
         collected[pick].isDefault = true
-        if (up) this.cacheAllLanguages(collected, ctx)
         return collected.filter((s) => s.isDefault).concat(collected.filter((s) => !s.isDefault))
-    }
-
-    private cacheAllLanguages(subs: VideoSubtitle[], ctx: { anilistId: number; episode: number }): void {
-        if (subs.length <= 1 || ctx.anilistId <= 0) return
-        const key = `anikoto:lw:${ctx.anilistId}:${ctx.episode}`
-        if (this.readCache<boolean>(key, this.serverCacheTtl)) return
-        this.writeCache(key, true)
-        try {
-            void Promise.all(subs.map((s) => fetch(s.url, { timeout: 8 }).catch(() => undefined)))
-        } catch (_e) {}
     }
 
     private async langCodes(labels: string[]): Promise<string[]> {
