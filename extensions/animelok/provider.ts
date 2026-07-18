@@ -9,7 +9,8 @@ class Provider {
     }
 
     async search(opts: SearchOptions): Promise<SearchResult[]> {
-        const anilistId = opts.media.id
+        let anilistId = opts.media.id
+        if (!anilistId || anilistId <= 0) anilistId = this.parseAnilistId(opts.query)
         if (!anilistId || anilistId <= 0) return []
         const av = await this.availability(anilistId, opts.dub)
         if (!av.exists) return []
@@ -28,7 +29,8 @@ class Provider {
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {
         const meta = this.decode(id)
         if (meta.anilistId <= 0) return []
-        const count = meta.num
+        let count = meta.num
+        if (count <= 0) count = await this.probeEpisodeCount(meta.anilistId, meta.audio)
         if (count <= 0) return []
         const episodes: EpisodeDetails[] = []
         for (let n = 1; n <= count; n++) {
@@ -47,7 +49,7 @@ class Provider {
         if (v.status === "ok") {
             return {
                 server: server === "Auto" || server === "default" || !server ? "Auto" : server,
-                headers: {},
+                headers: { Referer: `${this.normBase()}/` },
                 videoSources: [
                     {
                         url: v.url,
@@ -122,6 +124,34 @@ class Provider {
             }
         }
         return { status: "fail", url: "" }
+    }
+
+    private async probeEpisodeCount(anilistId: number, audio: string): Promise<number> {
+        const cacheKey = `animelok:epcount:${anilistId}:${audio}`
+        const cached = this.readCache<number>(cacheKey, this.cacheTtl)
+        if (cached !== undefined && cached > 0) return cached
+        let count = 0
+        let bounded = false
+        for (let n = 1; n <= 500; n++) {
+            const v = await this.getVibe(anilistId, n, audio)
+            if (v.status === "ok") {
+                count = n
+                continue
+            }
+            if (v.status === "notfound") bounded = true
+            break
+        }
+        if (bounded && count > 0) this.writeCache(cacheKey, count)
+        return count
+    }
+
+    private parseAnilistId(query: string): number {
+        if (!query) return 0
+        const urlMatch = query.match(/anilist\.co\/anime\/(\d+)/i)
+        if (urlMatch && urlMatch[1]) return parseInt(urlMatch[1], 10) || 0
+        const trimmed = query.trim()
+        if (/^\d+$/.test(trimmed)) return parseInt(trimmed, 10) || 0
+        return 0
     }
 
     private encode(anilistId: number, audio: string, num: number): string {
