@@ -10,6 +10,7 @@ class Provider {
     private cacheTtl = 900000
     private serverCacheTtl = 300000
     private tokenTtl = 18000000
+    private resolveDownTtl = 60000
     private clearanceTtl = 1200000
     private subEndpoint = "https://sub.ryuo.to"
 
@@ -90,11 +91,7 @@ class Provider {
 
     getSettings(): Settings {
         return {
-            episodeServers: [
-                "Auto",
-                "VidPlay-1",
-                "HD-1",
-            ],
+            episodeServers: ["Auto"],
             supportsDub: true,
         }
     }
@@ -295,9 +292,13 @@ class Provider {
         const cacheKey = `anikoto:resolve:${anilistId}:${audio}`
         const cached = this.readCache<EpisodeDetails[]>(cacheKey)
         if (cached && cached.length > 0) return cached
+        if (this.readCache<boolean>("anikoto:resolvedown", this.resolveDownTtl)) return null
         try {
             const res = await fetch(`${this.subEndpoint}/resolve/${anilistId}`, { timeout: 8 })
-            if (!res.ok) return null
+            if (!res.ok) {
+                this.writeCache("anikoto:resolvedown", true)
+                return null
+            }
             const data = res.json<{ episodes?: { number: number; dataIds: string; title?: string; hasSub?: boolean; hasDub?: boolean }[]; token?: string }>()
             if (data && typeof data.token === "string" && data.token) this.writeCache(`anikoto:tok:${anilistId}`, data.token)
             const eps = data && data.episodes
@@ -313,6 +314,7 @@ class Provider {
             this.writeCache(cacheKey, out)
             return out
         } catch (_e) {
+            this.writeCache("anikoto:resolvedown", true)
             return null
         }
     }
