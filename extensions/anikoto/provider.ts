@@ -11,6 +11,8 @@ class Provider {
     private serverCacheTtl = 300000
     private tokenTtl = 18000000
     private resolveDownTtl = 60000
+    private serverBudget = 75000
+    private deadline = 0
     private clearanceTtl = 1200000
     private subEndpoint = "https://sub.ryuo.to"
 
@@ -451,6 +453,7 @@ class Provider {
     }
 
     async findEpisodeServer(episode: EpisodeDetails, server: string): Promise<EpisodeServer> {
+        this.deadline = this.now() + this.serverBudget
         this.baseUrl = this.currentBase()
         const parsed = this.splitMeta(episode.id)
         const dataIds = parsed.base
@@ -472,6 +475,7 @@ class Provider {
             let playableNoSubs: EpisodeServer | undefined
             const dubMismatchIds: { [key: string]: boolean } = {}
             for (const c of candidates) {
+                if (this.outOfTime() && (playableNoSubs || firstResolved)) break
                 let resolved: EpisodeServer | undefined
                 try {
                     resolved = await this.resolveServer(c.linkId, c.name, ctx, audio)
@@ -615,7 +619,7 @@ class Provider {
             const pre = this.cachedClearance(this.hostOf(src.url))
             if (pre) server.headers = this.withClearance(origHeaders, pre)
             let body = await this.fetchPlaylist(src.url, server.headers)
-            if (body === undefined && allowSolver && this.solverEnabled()) {
+            if (body === undefined && allowSolver && this.solverEnabled() && !this.outOfTime()) {
                 const cl = await this.clearanceForHost(src.url, !!pre)
                 if (cl) {
                     server.headers = this.withClearance(origHeaders, cl)
@@ -1014,6 +1018,11 @@ class Provider {
         } catch (_e) {
             return false
         }
+    }
+
+    private outOfTime(): boolean {
+        const t = this.now()
+        return this.deadline > 0 && t > 0 && t > this.deadline
     }
 
     private now(): number {
