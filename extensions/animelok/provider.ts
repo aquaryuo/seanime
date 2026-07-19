@@ -1,3 +1,5 @@
+declare const console: { log(...args: any[]): void; info(...args: any[]): void; warn(...args: any[]): void; error(...args: any[]): void }
+
 type VibeTrack = { url?: string; lang?: string; label?: string; kind?: string; default?: boolean }
 type VibeResult = { status: "ok" | "notfound" | "fail"; url: string; tracks: VibeTrack[]; headers: { [key: string]: string } }
 
@@ -63,8 +65,8 @@ class Provider {
                 ],
             }
         }
-        if (v.status === "notfound") throw `animelok: episode ${meta.num} is not available on this site`
-        throw `animelok: source temporarily unavailable (failed to extract episode ${meta.num}; try again)`
+        if (v.status === "notfound") throw this.fail("server", `animelok: episode ${meta.num} is not available on this site`)
+        throw this.fail("server", `animelok: source temporarily unavailable (failed to extract episode ${meta.num}; try again)`)
     }
 
     private streamHeaders(apiHeaders: { [key: string]: string }): { [key: string]: string } {
@@ -226,6 +228,17 @@ class Provider {
 
     private normBase(): string {
         return this.baseUrl.replace(/animelok\.online/i, "animelok.net").replace(/\/+$/, "")
+    }
+
+    private reportError(scope: string, message: string): void {
+        try {
+            console.error("SEHERRv1 " + JSON.stringify({ t: this.now(), ext: "aq-animelok-beta", scope: scope, msg: String(message) }))
+        } catch (_e) {}
+    }
+
+    private fail(scope: string, message: string): Error {
+        this.reportError(scope, message)
+        return new Error(message)
     }
 
     private now(): number {
