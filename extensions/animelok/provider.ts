@@ -1,3 +1,6 @@
+type VibeTrack = { url?: string; lang?: string; label?: string; kind?: string; default?: boolean }
+type VibeResult = { status: "ok" | "notfound" | "fail"; url: string; tracks: VibeTrack[]; headers: { [key: string]: string } }
+
 class Provider {
     private baseUrl = "{{baseUrl}}"
     private cacheTtl = 900000
@@ -49,19 +52,54 @@ class Provider {
         if (v.status === "ok") {
             return {
                 server: server === "Auto" || server === "default" || !server ? "Auto" : server,
-                headers: { Referer: `${this.normBase()}/` },
+                headers: this.streamHeaders(v.headers),
                 videoSources: [
                     {
                         url: v.url,
                         type: "m3u8",
                         quality: "auto",
-                        subtitles: [],
+                        subtitles: this.buildSubs(v.tracks),
                     },
                 ],
             }
         }
         if (v.status === "notfound") throw `animelok: episode ${meta.num} is not available on this site`
         throw `animelok: source temporarily unavailable (failed to extract episode ${meta.num}; try again)`
+    }
+
+    private streamHeaders(apiHeaders: { [key: string]: string }): { [key: string]: string } {
+        const out: { [key: string]: string } = {}
+        if (apiHeaders) {
+            for (const k in apiHeaders) {
+                const v = apiHeaders[k]
+                if (typeof v === "string" && v) out[k] = v
+            }
+        }
+        if (!out.Referer && !out.referer) out.Referer = `${this.normBase()}/`
+        return out
+    }
+
+    private buildSubs(tracks: VibeTrack[]): VideoSubtitle[] {
+        const out: VideoSubtitle[] = []
+        if (!tracks || tracks.length === 0) return out
+        const seen: { [key: string]: boolean } = {}
+        let defaultIdx = -1
+        let englishIdx = -1
+        for (const t of tracks) {
+            if (!t || typeof t.url !== "string" || !/^https?:\/\//i.test(t.url)) continue
+            if (t.kind && t.kind !== "captions" && t.kind !== "subtitles") continue
+            const lang = (t.lang || t.label || "en").toLowerCase().split("-")[0]
+            if (seen[lang]) continue
+            seen[lang] = true
+            const idx = out.length
+            out.push({ id: `${lang}-${idx}`, url: t.url, language: t.label || t.lang || "English", isDefault: false })
+            if (defaultIdx === -1 && t.default === true) defaultIdx = idx
+            if (englishIdx === -1 && lang === "en") englishIdx = idx
+        }
+        if (out.length === 0) return out
+        const pick = defaultIdx !== -1 ? defaultIdx : englishIdx !== -1 ? englishIdx : 0
+        out[pick].isDefault = true
+        return out.filter((s) => s.isDefault).concat(out.filter((s) => !s.isDefault))
     }
 
     private async availability(anilistId: number, wantDub: boolean): Promise<{ exists: boolean; audio: string; subOrDub: SubOrDub }> {
@@ -94,10 +132,10 @@ class Provider {
         return result
     }
 
-    private async getVibe(anilistId: number, ep: number, audio: string): Promise<{ status: "ok" | "notfound" | "fail"; url: string }> {
+    private async getVibe(anilistId: number, ep: number, audio: string): Promise<VibeResult> {
         const cacheKey = `animelok:src:${anilistId}:${ep}:${audio}`
-        const cached = this.readCache<{ status: "ok"; url: string }>(cacheKey, this.srcCacheTtl)
-        if (cached && cached.status === "ok" && cached.url) return cached
+        const cached = this.readCache<VibeResult>(cacheKey, this.srcCacheTtl)
+        if (cached && cached.status === "ok" && cached.url) return { status: "ok", url: cached.url, tracks: cached.tracks || [], headers: cached.headers || {} }
         for (let i = 0; i < 2; i++) {
             let res: FetchResponse
             try {
@@ -108,41 +146,61 @@ class Provider {
             } catch (_e) {
                 continue
             }
-            if (res.status === 404) return { status: "notfound", url: "" }
+            if (res.status === 404) return { status: "notfound", url: "", tracks: [], headers: {} }
             if (res.ok) {
                 let url = ""
+                let tracks: VibeTrack[] = []
+                let headers: { [key: string]: string } = {}
                 try {
-                    const data = res.json<{ sources?: { url: string }[] }>()
+                    const data = res.json<{ sources?: { url: string }[]; tracks?: VibeTrack[]; headers?: { [key: string]: string } }>()
                     if (data && data.sources && data.sources.length > 0 && data.sources[0]) url = data.sources[0].url || ""
+                    if (data && data.tracks && data.tracks.length > 0) tracks = data.tracks
+                    if (data && data.headers) headers = data.headers
                 } catch (_e) {}
                 if (url) {
-                    const ok: { status: "ok"; url: string } = { status: "ok", url }
+                    const ok: VibeResult = { status: "ok", url, tracks, headers }
                     this.writeCache(cacheKey, ok)
                     return ok
                 }
-                return { status: "fail", url: "" }
+                return { status: "fail", url: "", tracks: [], headers: {} }
             }
+            break
         }
-        return { status: "fail", url: "" }
+        return { status: "fail", url: "", tracks: [], headers: {} }
     }
 
     private async probeEpisodeCount(anilistId: number, audio: string): Promise<number> {
         const cacheKey = `animelok:epcount:${anilistId}:${audio}`
         const cached = this.readCache<number>(cacheKey, this.cacheTtl)
         if (cached !== undefined && cached > 0) return cached
-        let count = 0
+        const first = await this.getVibe(anilistId, 1, audio)
+        if (first.status !== "ok") return 0
+        let lo = 1
+        let hi = 2
         let bounded = false
-        for (let n = 1; n <= 500; n++) {
-            const v = await this.getVibe(anilistId, n, audio)
+        while (hi <= 2048) {
+            const v = await this.getVibe(anilistId, hi, audio)
             if (v.status === "ok") {
-                count = n
+                lo = hi
+                hi = hi * 2
                 continue
             }
-            if (v.status === "notfound") bounded = true
-            break
+            if (v.status === "notfound") {
+                bounded = true
+                break
+            }
+            return lo
         }
-        if (bounded && count > 0) this.writeCache(cacheKey, count)
-        return count
+        if (!bounded) return lo
+        while (hi - lo > 1) {
+            const mid = Math.floor((lo + hi) / 2)
+            const v = await this.getVibe(anilistId, mid, audio)
+            if (v.status === "ok") lo = mid
+            else if (v.status === "notfound") hi = mid
+            else return lo
+        }
+        this.writeCache(cacheKey, lo)
+        return lo
     }
 
     private parseAnilistId(query: string): number {
