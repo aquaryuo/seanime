@@ -1,3 +1,5 @@
+declare const console: { log(...args: any[]): void; info(...args: any[]): void; warn(...args: any[]): void; error(...args: any[]): void }
+
 class Provider {
     private baseUrl = "{{baseUrl}}"
     private subtitleSource = "{{subtitleSource}}"
@@ -35,7 +37,7 @@ class Provider {
         }
         await run(sq.primary)
         if (results.length === 0) await run(sq.fallback)
-        if (!anyOk) throw "anizone: search failed (site unreachable)"
+        if (!anyOk) throw this.fail("search", "anizone: search failed (site unreachable)")
         return this.pickBest(results, opts.media, sq.season, sq.part)
     }
 
@@ -188,7 +190,7 @@ class Provider {
         if (cached && cached.length > 0) return cached
         const res = await fetch(`${this.normBase()}/anime/${shortid}`, { headers: this.pageHeaders(), timeout: 12 })
         if (res.status === 404) return []
-        if (!res.ok) throw `anizone: series page failed (status ${res.status})`
+        if (!res.ok) throw this.fail("episodes", `anizone: series page failed (status ${res.status})`)
         const html = res.text()
         const nums: { [key: number]: boolean } = {}
         this.collectEps(html, shortid, nums)
@@ -226,15 +228,15 @@ class Provider {
         let cached = this.readCache<{ m3u8: string; subs: { origin: string; lang: string; ext: string }[] }>(cacheKey, this.srcCacheTtl)
         if (!cached || !cached.m3u8) {
             const res = await fetch(`${this.normBase()}/anime/${shortid}/${n}`, { headers: this.pageHeaders(), timeout: 14 })
-            if (!res.ok) throw `anizone: episode page failed (status ${res.status})`
+            if (!res.ok) throw this.fail("server", `anizone: episode page failed (status ${res.status})`)
             const html = res.text()
             const found = this.firstMatch(html, /https?:\/\/[^"'\s]+\/master\.m3u8[^"'\s]*/)
-            if (!found) throw "anizone: no stream found for this episode"
+            if (!found) throw this.fail("server", "anizone: no stream found for this episode")
             cached = { m3u8: found, subs: this.extractSubs(html) }
             this.writeCache(cacheKey, cached)
         }
         const m3u8 = cached.m3u8
-        if (audio === "dub" && !(await this.hasEnglishAudio(m3u8, shortid, n))) throw "anizone: no dub available for this episode"
+        if (audio === "dub" && !(await this.hasEnglishAudio(m3u8, shortid, n))) throw this.fail("server", "anizone: no dub available for this episode")
         const subtitles = await this.buildSubs(cached.subs, alId, parseInt(n, 10) || episode.number)
         return {
             server: server === "Auto" || server === "default" || !server ? "Auto" : server,
@@ -496,6 +498,17 @@ class Provider {
 
     private pageHeaders(): { [key: string]: string } {
         return { Referer: `${this.normBase()}/` }
+    }
+
+    private reportError(scope: string, message: string): void {
+        try {
+            console.error("SEHERRv1 " + JSON.stringify({ t: this.now(), ext: "aq-anizone-beta", scope: scope, msg: String(message) }))
+        } catch (_e) {}
+    }
+
+    private fail(scope: string, message: string): Error {
+        this.reportError(scope, message)
+        return new Error(message)
     }
 
     private now(): number {
