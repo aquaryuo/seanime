@@ -380,7 +380,7 @@ class Provider {
 
     private extractSubs(html: string): { origin: string; lang: string; ext: string }[] {
         const out: { origin: string; lang: string; ext: string }[] = []
-        const re = /https?:\/\/[^"'\s]+\/subtitles\/[0-9]+_([A-Za-z-]+)\.(ass|srt)/g
+        const re = /https?:\/\/[^"'\s]+\/subtitles\/[0-9]+_([A-Za-z0-9-]+)\.(ass|srt)/g
         let m: RegExpExecArray | null
         while ((m = re.exec(html)) !== null) {
             out.push({ origin: m[0], lang: m[1] || "en", ext: m[2] || "ass" })
