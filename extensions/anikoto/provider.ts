@@ -812,20 +812,6 @@ class Provider {
         return e === "ass" || e === "srt" ? e : "vtt"
     }
 
-    private async subUp(): Promise<boolean> {
-        const cached = this.readCache<boolean>("anikoto:subup", 60000)
-        if (cached !== undefined) return cached
-        let up = false
-        try {
-            const res = await fetch(`${this.subEndpoint}/health`, { timeout: 4 })
-            up = !!res && res.ok
-        } catch (_e) {
-            up = false
-        }
-        this.writeCache("anikoto:subup", up)
-        return up
-    }
-
     private async ensureServeToken(anilistId: number): Promise<string | undefined> {
         const key = `anikoto:tok:${anilistId}`
         const cached = this.readCache<string>(key, this.tokenTtl)
@@ -856,7 +842,7 @@ class Provider {
         const refParam = embedOrigin ? `&ref=${encodeURIComponent(embedOrigin)}` : ""
         const valid = tracks.filter((t) => t && typeof t.file === "string" && /^https?:\/\//i.test(t.file) && (!t.kind || t.kind === "captions" || t.kind === "subtitles"))
         if (valid.length === 0) return collected
-        const up = ctx.anilistId > 0 ? await this.subUp() : false
+        const up = ctx.anilistId > 0
         let tokParam = ""
         if (up) {
             let tok = this.readCache<string>(`anikoto:tok:${ctx.anilistId}`, this.tokenTtl)
