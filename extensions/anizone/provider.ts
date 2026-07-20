@@ -2,8 +2,6 @@ declare const console: { log(...args: any[]): void; info(...args: any[]): void; 
 
 class Provider {
     private baseUrl = "{{baseUrl}}"
-    private subtitleSource = "{{subtitleSource}}"
-    private subEndpoint = "https://sub.ryuo.to"
     private cacheTtl = 900000
     private srcCacheTtl = 300000
 
@@ -392,8 +390,6 @@ class Provider {
 
     private async buildSubs(subs: { origin: string; lang: string; ext: string }[], anilistId: number, episode: number): Promise<VideoSubtitle[]> {
         const out: VideoSubtitle[] = []
-        const wantSite = this.subtitleSource === "subryuo" && anilistId > 0 && episode > 0
-        const viaSite = wantSite && (await this.subUp())
         const seen: { [key: string]: boolean } = {}
         let englishIdx = -1
         for (const s of subs) {
@@ -403,7 +399,7 @@ class Provider {
             if (seen[lang]) continue
             seen[lang] = true
             const idx = out.length
-            const url = viaSite ? this.siteSubUrl(anilistId, episode, lang, ext, origin) : origin
+            const url = origin
             out.push({ id: `${lang}-${idx}`, url, language: this.langName(lang), isDefault: false })
             if (englishIdx === -1 && lang === "en") englishIdx = idx
         }
@@ -411,25 +407,6 @@ class Provider {
         const pick = englishIdx !== -1 ? englishIdx : 0
         out[pick].isDefault = true
         return out.filter((s) => s.isDefault).concat(out.filter((s) => !s.isDefault))
-    }
-
-    private siteSubUrl(anilistId: number, episode: number, lang: string, ext: string, origin: string): string {
-        const ref = encodeURIComponent(`${this.normBase()}/`)
-        return `${this.subEndpoint}/s/${anilistId}/${episode}/${lang}.${ext}?source=anizone&src=${encodeURIComponent(origin)}&ref=${ref}`
-    }
-
-    private async subUp(): Promise<boolean> {
-        const cached = this.readCache<boolean>("anizone:subup", 60000)
-        if (cached !== undefined) return cached
-        let up = false
-        try {
-            const res = await fetch(`${this.subEndpoint}/health`, { timeout: 4 })
-            up = !!res && res.ok
-        } catch (_e) {
-            up = false
-        }
-        this.writeCache("anizone:subup", up)
-        return up
     }
 
     private alOf(id: string): number {
