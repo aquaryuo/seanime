@@ -1,6 +1,151 @@
+declare const console: { log(...args: any[]): void; info(...args: any[]): void; warn(...args: any[]): void; error(...args: any[]): void }
+
+// ── aqualog v1 ───────────────────────────────────────────────────────────────
+// Shared logging core. Plugins have no module system, so this block is copied
+// verbatim into each plugin instead of imported — keep the copies identical.
+// Every line in a plugin's log buffer has the same shape:
+//
+//     HH:MM:SS.mmm LVL [scope] message
+//
+// which is what lets the tray colour lines by severity, and what keeps a copied
+// log readable when it mixes plugin events with a child process's own output.
+type AqLevel = "ERR" | "WRN" | "OK" | "INF" | "DBG"
+
+const AQ_SEH_MARKER = "SEHERRv1"
+const AQ_LINE_RE = /^\d{2}:\d{2}:\d{2}\.\d{3} (ERR|WRN|OK|INF|DBG)\s/
+const AQ_GO_RE = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})\s+(INFO|ERROR|WARNING|WARN|DIAG|DEBUG)\s+/
+const AQ_SCOPE_RE = /^\[([A-Za-z0-9_/-]{2,24})\]\s*/
+
+const AQ_COLOR: { [k: string]: string } = {
+    ERR: "rgba(255,138,138,0.95)",
+    WRN: "rgba(255,199,120,0.95)",
+    OK: "rgba(146,222,170,0.95)",
+    INF: "rgba(255,255,255,0.78)",
+    DBG: "rgba(255,255,255,0.45)",
+}
+
+function aqStamp(ms?: number): string {
+    try {
+        const d = ms === undefined || ms <= 0 ? new Date() : new Date(ms)
+        const p2 = (n: number): string => (n < 10 ? "0" : "") + n
+        const p3 = (n: number): string => (n < 100 ? (n < 10 ? "00" : "0") : "") + n
+        return p2(d.getHours()) + ":" + p2(d.getMinutes()) + ":" + p2(d.getSeconds()) + "." + p3(d.getMilliseconds())
+    } catch (_e) {
+        return "00:00:00.000"
+    }
+}
+
+// aqText flattens a message to one printable line. The tray renders logs in a
+// monospace box where an embedded newline breaks the one-line-per-event
+// alignment, and a few glyphs render inconsistently across platforms.
+function aqText(msg: string): string {
+    if (msg === undefined || msg === null) return ""
+    return String(msg)
+        .replace(/…/g, "...")
+        .replace(/[—–]/g, "-")
+        .replace(/[\r\n\t]+/g, " ")
+        .replace(/ {2,}/g, " ")
+        .replace(/^ +/, "")
+        .replace(/\s+$/, "")
+}
+
+function aqLine(lvl: AqLevel, scope: string, msg: string, ms?: number): string {
+    const body = aqText(msg)
+    if (!body) return ""
+    return aqStamp(ms) + " " + (lvl + "  ").slice(0, 3) + " [" + (scope || "plugin") + "] " + body
+}
+
+function aqLevelOf(line: string): AqLevel {
+    const m = AQ_LINE_RE.exec(line)
+    if (m) return m[1] as AqLevel
+    return aqGuessLevel(line)
+}
+
+// aqGuessLevel only runs on text that carries no level of its own. It stays
+// deliberately narrow: over-eager matching paints ordinary lines red.
+function aqGuessLevel(text: string): AqLevel {
+    if (/\b(error|fatal|panic|failed|failure|refused|denied)\b/i.test(text)) return "ERR"
+    if (/\b(warn|warning|deprecated)\b/i.test(text)) return "WRN"
+    return "INF"
+}
+
+function aqMapLevel(tag: string): AqLevel {
+    switch (tag.toUpperCase()) {
+        case "ERROR":
+            return "ERR"
+        case "WARNING":
+        case "WARN":
+            return "WRN"
+        case "DIAG":
+        case "DEBUG":
+            return "DBG"
+        default:
+            return "INF"
+    }
+}
+
+// aqNormalize rewrites a foreign log line — a Go logger's "date LEVEL msg", a
+// bare "[subsystem] msg" tag, or raw stderr — into the canonical shape, so one
+// buffer holds one format. Lines that are already canonical pass through
+// untouched, which is what lets a plugin's own events and a child process's
+// output share a single funnel.
+function aqNormalize(line: string, defScope: string): string {
+    const raw = aqText(line)
+    if (!raw) return ""
+    if (AQ_LINE_RE.test(raw)) return raw
+    let rest = raw
+    let ms = 0
+    let lvl: AqLevel | undefined = undefined
+    let scope = defScope
+    const g = AQ_GO_RE.exec(rest)
+    if (g) {
+        try {
+            ms = new Date(parseInt(g[1], 10), parseInt(g[2], 10) - 1, parseInt(g[3], 10),
+                parseInt(g[4], 10), parseInt(g[5], 10), parseInt(g[6], 10)).getTime()
+        } catch (_e) {
+            ms = 0
+        }
+        lvl = aqMapLevel(g[7])
+        rest = rest.slice(g[0].length)
+    }
+    const s = AQ_SCOPE_RE.exec(rest)
+    if (s) {
+        const sub = s[1]
+        scope = defScope ? defScope + "/" + sub : sub
+        rest = rest.slice(s[0].length)
+    }
+    return aqLine(lvl === undefined ? aqGuessLevel(rest) : lvl, scope, rest, ms)
+}
+
+function aqStyle(lvl: AqLevel): { [k: string]: string } {
+    return {
+        fontSize: "11px",
+        fontFamily: "ui-monospace, monospace",
+        whiteSpace: "pre-wrap",
+        wordBreak: "break-word",
+        lineHeight: "1.5",
+        color: AQ_COLOR[lvl] || AQ_COLOR.INF,
+    }
+}
+
+// aqReport mirrors a genuine error into Seanime's own log. console.error is the
+// only console level the host records above Debug, and the SEHERRv1 marker is
+// what Aqua's Utils scrapes back out of /api/v1/logs/latest — so this is the one
+// path that makes a plugin error visible outside its own tray. $debug is not an
+// option: the host binds it to a no-op unless the plugin is in development mode.
+function aqReport(ext: string, scope: string, msg: string): void {
+    try {
+        const body = aqText(msg)
+        if (!body) return
+        console.error(AQ_SEH_MARKER + " " + JSON.stringify({ t: Date.now(), ext: ext, scope: scope, msg: body }))
+    } catch (_e) {}
+}
+// ── end aqualog v1 ───────────────────────────────────────────────────────────
+
 function init() {
     $ui.register((ctx) => {
         const SRC = "https://raw.githubusercontent.com/Bas1874/Seanime-Marketplace/main/Marketplace/Main.json"
+        const EXT_ID = "aq-seatags-beta"
         const CACHE_KEY = "seatags:cache"
         const CACHE_TTL = 3600000
 
@@ -57,6 +202,17 @@ function init() {
         rebuildMaps()
 
         let dErr = ""
+        // dErr used to be write-only: every failure was recorded and surfaced
+        // nowhere. Route it through the shared reporter so it reaches the error
+        // panel that already aggregates extension failures. Each distinct code
+        // reports once per session, since the observers can fire repeatedly.
+        const dErrSeen: { [k: string]: boolean } = {}
+        function dsetErr(code: string): void {
+            dErr = code
+            if (dErrSeen[code]) return
+            dErrSeen[code] = true
+            aqReport(EXT_ID, "decorate", code)
+        }
         let domReady = false
         let controlsCancel: any = null
         let cardsCancel: any = null
@@ -138,19 +294,19 @@ function init() {
                     card.query(".seatags-block").catch(() => []),
                 ])
                 badges = r[0] || []; block = r[1]; existing = r[2] || []
-            } catch (e) { dErr = "findrow" }
+            } catch (e) { dsetErr("findrow") }
             for (let i = 0; i < existing.length; i++) { try { existing[i].remove() } catch (_e) {} }
             if (!block) return
             let row: any = null
             if (badges.length) { try { row = await badges[0].getParent() } catch (_e) {} }
             try { block.setAttribute("class", "seatags-block") } catch (_e) {}
             try { block.setCssText("display:flex;flex-direction:column;gap:6px;margin-top:8px") } catch (_e) {}
-            try { block.setInnerHTML(blockHtml(info, tags)) } catch (e) { dErr = "html" }
+            try { block.setInnerHTML(blockHtml(info, tags)) } catch (e) { dsetErr("html") }
             if (row) {
                 try { row.setStyle("display", "none") } catch (_e) {}
-                try { row.after(block) } catch (e) { dErr = "insert" }
+                try { row.after(block) } catch (e) { dsetErr("insert") }
             } else {
-                try { card.append(block) } catch (e) { dErr = "append" }
+                try { card.append(block) } catch (e) { dsetErr("append") }
             }
         }
 
@@ -168,7 +324,7 @@ function init() {
                 }
                 const tags = info ? tagsOf(info) : []
                 const author = info && info.author ? String(info.author).toLowerCase() : ""
-                try { card.setAttribute("data-seatags", tags.length ? tags.join(" ") : "untagged") } catch (e) { dErr = "attr" }
+                try { card.setAttribute("data-seatags", tags.length ? tags.join(" ") : "untagged") } catch (e) { dsetErr("attr") }
                 try { card.setAttribute("data-seatags-author", author) } catch (_e) {}
                 if (info) await rebuildBadges(card, info, tags)
             } finally {
@@ -216,7 +372,7 @@ function init() {
                     body.append(s)
                     filterStyle = s
                 }
-            } catch (e) { dErr = "fstyle" }
+            } catch (e) { dsetErr("fstyle") }
         }
         async function applyFilter(): Promise<void> {
             await ensureFilterStyle()
@@ -226,7 +382,7 @@ function init() {
             let css = ""
             if (f && f !== "all" && entriesState.get().length > 0) css += '[class*="extension-card"]:not([data-seatags~="' + f + '"]){display:none !important}'
             if (a) css += '[class*="extension-card"]:not([data-seatags-author*="' + a + '"]){display:none !important}'
-            try { filterStyle.setText(css) } catch (e) { dErr = "filter" }
+            try { filterStyle.setText(css) } catch (e) { dsetErr("filter") }
         }
 
         // ---------- toolbar controls (Author search + Status dropdown) ----------
@@ -447,7 +603,7 @@ function init() {
                         try { toolbar.setStyle("align-items", "center") } catch (_e) {}
                         try { toolbar.setStyle("flex-wrap", "wrap") } catch (_e) {}
                     }
-                    if (statusEl && rowEl) { try { rowEl.before(statusEl) } catch (e) { dErr = "place" } }
+                    if (statusEl && rowEl) { try { rowEl.before(statusEl) } catch (e) { dsetErr("place") } }
                     if (author && rowEl) { try { rowEl.before(author) } catch (_e) {} }
                     if (rowEl) {
                         try { rowEl.setStyle("flex", "1 1 200px") } catch (_e) {}
@@ -460,7 +616,7 @@ function init() {
                         try { rowEl.setStyle("gap", "8px") } catch (_e) {}
                         try { rowEl.setStyle("flex-wrap", "wrap") } catch (_e) {}
                     }
-                    if (statusEl) { try { ic.before(statusEl) } catch (e) { dErr = "place" } }
+                    if (statusEl) { try { ic.before(statusEl) } catch (e) { dsetErr("place") } }
                     if (author) { try { ic.before(author) } catch (_e) {} }
                     try { ic.setStyle("flex", "1 1 320px") } catch (_e) {}
                     try { ic.setStyle("max-width", "100%") } catch (_e) {}
@@ -477,7 +633,7 @@ function init() {
             try {
                 const r: any = ctx.dom.observe('input[placeholder^="Search"][placeholder*="extensions"]:not([data-seatags-tb])', injectControls)
                 controlsCancel = (r && r.length) ? r[0] : null
-            } catch (e) { dErr = "obs-ctl" }
+            } catch (e) { dsetErr("obs-ctl") }
         }
         function startCards(): void {
             if (!domReady) return
@@ -486,7 +642,7 @@ function init() {
             try {
                 const r: any = ctx.dom.observe('[class*="extension-card"]:not([data-seatags])', decorateCards, { withInnerHTML: true })
                 cardsCancel = (r && r.length) ? r[0] : null
-            } catch (e) { dErr = "obs-cards" }
+            } catch (e) { dsetErr("obs-cards") }
             applyFilter().catch(() => {})
         }
         async function resetForReady(): Promise<void> {
@@ -536,14 +692,14 @@ function init() {
                         rebuildMaps()
                         try { $storage.set(CACHE_KEY, { at: now(), data: clean }) } catch (_e) {}
                     } else {
-                        dErr = "shape"
+                        dsetErr("shape")
                     }
                     lastAt = now()
                 } else {
-                    dErr = "http"
+                    dsetErr("http")
                 }
             } catch (_e) {
-                dErr = "fetch"
+                dsetErr("fetch")
             }
             inflight = false
             if (dataChanged) { try { await refreshDecorated() } catch (_e) {} }

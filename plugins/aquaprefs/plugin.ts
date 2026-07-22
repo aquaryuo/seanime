@@ -1,8 +1,153 @@
+declare const console: { log(...args: any[]): void; info(...args: any[]): void; warn(...args: any[]): void; error(...args: any[]): void }
+
+// ── aqualog v1 ───────────────────────────────────────────────────────────────
+// Shared logging core. Plugins have no module system, so this block is copied
+// verbatim into each plugin instead of imported — keep the copies identical.
+// Every line in a plugin's log buffer has the same shape:
+//
+//     HH:MM:SS.mmm LVL [scope] message
+//
+// which is what lets the tray colour lines by severity, and what keeps a copied
+// log readable when it mixes plugin events with a child process's own output.
+type AqLevel = "ERR" | "WRN" | "OK" | "INF" | "DBG"
+
+const AQ_SEH_MARKER = "SEHERRv1"
+const AQ_LINE_RE = /^\d{2}:\d{2}:\d{2}\.\d{3} (ERR|WRN|OK|INF|DBG)\s/
+const AQ_GO_RE = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})\s+(INFO|ERROR|WARNING|WARN|DIAG|DEBUG)\s+/
+const AQ_SCOPE_RE = /^\[([A-Za-z0-9_/-]{2,24})\]\s*/
+
+const AQ_COLOR: { [k: string]: string } = {
+    ERR: "rgba(255,138,138,0.95)",
+    WRN: "rgba(255,199,120,0.95)",
+    OK: "rgba(146,222,170,0.95)",
+    INF: "rgba(255,255,255,0.78)",
+    DBG: "rgba(255,255,255,0.45)",
+}
+
+function aqStamp(ms?: number): string {
+    try {
+        const d = ms === undefined || ms <= 0 ? new Date() : new Date(ms)
+        const p2 = (n: number): string => (n < 10 ? "0" : "") + n
+        const p3 = (n: number): string => (n < 100 ? (n < 10 ? "00" : "0") : "") + n
+        return p2(d.getHours()) + ":" + p2(d.getMinutes()) + ":" + p2(d.getSeconds()) + "." + p3(d.getMilliseconds())
+    } catch (_e) {
+        return "00:00:00.000"
+    }
+}
+
+// aqText flattens a message to one printable line. The tray renders logs in a
+// monospace box where an embedded newline breaks the one-line-per-event
+// alignment, and a few glyphs render inconsistently across platforms.
+function aqText(msg: string): string {
+    if (msg === undefined || msg === null) return ""
+    return String(msg)
+        .replace(/…/g, "...")
+        .replace(/[—–]/g, "-")
+        .replace(/[\r\n\t]+/g, " ")
+        .replace(/ {2,}/g, " ")
+        .replace(/^ +/, "")
+        .replace(/\s+$/, "")
+}
+
+function aqLine(lvl: AqLevel, scope: string, msg: string, ms?: number): string {
+    const body = aqText(msg)
+    if (!body) return ""
+    return aqStamp(ms) + " " + (lvl + "  ").slice(0, 3) + " [" + (scope || "plugin") + "] " + body
+}
+
+function aqLevelOf(line: string): AqLevel {
+    const m = AQ_LINE_RE.exec(line)
+    if (m) return m[1] as AqLevel
+    return aqGuessLevel(line)
+}
+
+// aqGuessLevel only runs on text that carries no level of its own. It stays
+// deliberately narrow: over-eager matching paints ordinary lines red.
+function aqGuessLevel(text: string): AqLevel {
+    if (/\b(error|fatal|panic|failed|failure|refused|denied)\b/i.test(text)) return "ERR"
+    if (/\b(warn|warning|deprecated)\b/i.test(text)) return "WRN"
+    return "INF"
+}
+
+function aqMapLevel(tag: string): AqLevel {
+    switch (tag.toUpperCase()) {
+        case "ERROR":
+            return "ERR"
+        case "WARNING":
+        case "WARN":
+            return "WRN"
+        case "DIAG":
+        case "DEBUG":
+            return "DBG"
+        default:
+            return "INF"
+    }
+}
+
+// aqNormalize rewrites a foreign log line — a Go logger's "date LEVEL msg", a
+// bare "[subsystem] msg" tag, or raw stderr — into the canonical shape, so one
+// buffer holds one format. Lines that are already canonical pass through
+// untouched, which is what lets a plugin's own events and a child process's
+// output share a single funnel.
+function aqNormalize(line: string, defScope: string): string {
+    const raw = aqText(line)
+    if (!raw) return ""
+    if (AQ_LINE_RE.test(raw)) return raw
+    let rest = raw
+    let ms = 0
+    let lvl: AqLevel | undefined = undefined
+    let scope = defScope
+    const g = AQ_GO_RE.exec(rest)
+    if (g) {
+        try {
+            ms = new Date(parseInt(g[1], 10), parseInt(g[2], 10) - 1, parseInt(g[3], 10),
+                parseInt(g[4], 10), parseInt(g[5], 10), parseInt(g[6], 10)).getTime()
+        } catch (_e) {
+            ms = 0
+        }
+        lvl = aqMapLevel(g[7])
+        rest = rest.slice(g[0].length)
+    }
+    const s = AQ_SCOPE_RE.exec(rest)
+    if (s) {
+        const sub = s[1]
+        scope = defScope ? defScope + "/" + sub : sub
+        rest = rest.slice(s[0].length)
+    }
+    return aqLine(lvl === undefined ? aqGuessLevel(rest) : lvl, scope, rest, ms)
+}
+
+function aqStyle(lvl: AqLevel): { [k: string]: string } {
+    return {
+        fontSize: "11px",
+        fontFamily: "ui-monospace, monospace",
+        whiteSpace: "pre-wrap",
+        wordBreak: "break-word",
+        lineHeight: "1.5",
+        color: AQ_COLOR[lvl] || AQ_COLOR.INF,
+    }
+}
+
+// aqReport mirrors a genuine error into Seanime's own log. console.error is the
+// only console level the host records above Debug, and the SEHERRv1 marker is
+// what Aqua's Utils scrapes back out of /api/v1/logs/latest — so this is the one
+// path that makes a plugin error visible outside its own tray. $debug is not an
+// option: the host binds it to a no-op unless the plugin is in development mode.
+function aqReport(ext: string, scope: string, msg: string): void {
+    try {
+        const body = aqText(msg)
+        if (!body) return
+        console.error(AQ_SEH_MARKER + " " + JSON.stringify({ t: Date.now(), ext: ext, scope: scope, msg: body }))
+    } catch (_e) {}
+}
+// ── end aqualog v1 ───────────────────────────────────────────────────────────
+
 function init() {
     $ui.register((ctx) => {
         const VC = ctx.videoCore
         const hasVC = !!(VC && typeof VC.addEventListener === "function")
 
+        const EXT_ID = "aq-aquaprefs-beta"
         const CFG_KEY = "cfg"
         const IDX_KEY = "pref:__index"
         const LOG_KEY = "log"
@@ -27,19 +172,26 @@ function init() {
 
         let logs: string[] = sget<string[]>(LOG_KEY, [])
         if (!Array.isArray(logs)) logs = []
-        function clock(): string {
-            try {
-                const d = new Date()
-                const p2 = (n: number) => (n < 10 ? "0" : "") + n
-                const p3 = (n: number) => (n < 100 ? (n < 10 ? "00" : "0") : "") + n
-                return p2(d.getHours()) + ":" + p2(d.getMinutes()) + ":" + p2(d.getSeconds()) + "." + p3(d.getMilliseconds())
-            } catch (_e) { return "" }
+        // Call sites mark severity with a leading glyph; deriving the level
+        // from it keeps them unchanged while still colouring the tray.
+        function glyphLevel(msg: string): AqLevel {
+            const c = msg.charAt(0)
+            if (c === "⚠") return "WRN"
+            if (c === "✓") return "OK"
+            if (c === "·") return "DBG"
+            return "INF"
         }
-        function log(msg: string): void {
-            logs.push(clock() + "  " + msg)
+        function log(msg: string, lvl?: AqLevel): void {
+            const line = aqLine(lvl === undefined ? glyphLevel(msg) : lvl, "prefs", msg)
+            if (!line) return
+            logs.push(line)
             if (logs.length > LOG_CAP) logs = logs.slice(logs.length - LOG_CAP)
             sset(LOG_KEY, logs)
             try { tray.update() } catch (_e) {}
+        }
+        function logErr(msg: string): void {
+            log(msg, "ERR")
+            aqReport(EXT_ID, "enforce", msg)
         }
         function shortPid(pid: string): string {
             const s = String(pid || "")
@@ -188,7 +340,7 @@ function init() {
             if (n === lastDesired[kind]) {
                 enforceCount[kind]++
                 if (enforceCount[kind] > MAX_CORRECTIONS) {
-                    if (enforceOpen[kind]) { enforceOpen[kind] = false; log("⚠ " + kind + " enforcement paused — player keeps overriding (" + n + ")") }
+                    if (enforceOpen[kind]) { enforceOpen[kind] = false; logErr(kind + " enforcement paused - player keeps overriding (" + n + ")") }
                     return
                 }
             } else { lastDesired[kind] = n; enforceCount[kind] = 1 }
@@ -389,9 +541,12 @@ function init() {
             })
         }
         function logBox(): any {
-            const tail = logs.slice(-30).join("\n")
+            const tail = logs.slice(-30)
+            const items = tail.length
+                ? tail.map((l) => tray.text(l.length ? l : " ", { style: aqStyle(aqLevelOf(l)) }))
+                : [tray.text("(no logs yet — play something and change a track)", { style: { fontSize: "11px", color: "rgba(255,255,255,0.5)" } })]
             return tray.div({
-                items: [tray.text(tail || "(no logs yet — play something and change a track)", { style: { fontSize: "11px", fontFamily: "ui-monospace, monospace", lineHeight: "1.5", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", color: "rgba(255,255,255,0.75)" } })],
+                items: items,
                 style: { background: "rgba(0,0,0,0.28)", borderRadius: "10px", padding: "10px 12px", maxHeight: "220px", overflowY: "auto" },
             })
         }
