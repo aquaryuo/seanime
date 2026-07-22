@@ -93,7 +93,7 @@ class Provider {
 
     getSettings(): Settings {
         return {
-            episodeServers: ["Auto"],
+            episodeServers: ["Auto", "VidPlay-1", "HD-1"],
             supportsDub: true,
         }
     }
