@@ -394,14 +394,13 @@ class Provider {
         let englishIdx = -1
         for (const s of subs) {
             const origin = s.origin
-            const lang = (s.lang || "en").toLowerCase().split("-")[0]
-            const ext = (s.ext || "ass").toLowerCase()
-            if (seen[lang]) continue
-            seen[lang] = true
+            const code = (s.lang || "en").toLowerCase()
+            if (seen[code]) continue
+            seen[code] = true
             const idx = out.length
             const url = origin
-            out.push({ id: `${lang}-${idx}`, url, language: this.langName(lang), isDefault: false })
-            if (englishIdx === -1 && lang === "en") englishIdx = idx
+            out.push({ id: `${code}-${idx}`, url, language: this.langName(code), isDefault: false })
+            if (englishIdx === -1 && code.split("-")[0] === "en") englishIdx = idx
         }
         if (out.length === 0) return out
         const pick = englishIdx !== -1 ? englishIdx : 0
@@ -440,8 +439,14 @@ class Provider {
             en: "English", ja: "Japanese", ar: "Arabic", de: "German", es: "Spanish", fr: "French",
             it: "Italian", ru: "Russian", pt: "Portuguese", hi: "Hindi", ta: "Tamil", id: "Indonesian",
             ko: "Korean", zh: "Chinese", th: "Thai", vi: "Vietnamese", tr: "Turkish", pl: "Polish", nl: "Dutch",
+            my: "Burmese", tl: "Tagalog",
+            "es-419": "Latin American Spanish", "pt-br": "Portuguese (Brazil)",
+            "zh-hans": "Chinese (Simplified)", "zh-hant": "Chinese (Traditional)",
         }
-        return map[code] || code.toUpperCase()
+        const c = (code || "").toLowerCase()
+        if (map[c]) return map[c]
+        const base = c.split("-")[0]
+        return map[base] || c.toUpperCase()
     }
 
     private shortId(id: string): string {
