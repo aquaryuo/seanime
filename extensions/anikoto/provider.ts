@@ -988,7 +988,7 @@ class Provider {
     private challengeToken(body: string): string {
         if (!body) return ""
         const b = body.toLowerCase()
-        const toks = ["just a moment", "cf-mitigated", "cf-browser-verification", "ddos-guard", "attention required"]
+        const toks = ["cf-mitigated", "cf-browser-verification", "/cdn-cgi/challenge-platform", "ddos-guard", "just a moment...</title>", "attention required! | cloudflare"]
         for (let i = 0; i < toks.length; i++) if (b.indexOf(toks[i]) !== -1) return toks[i]
         return ""
     }
