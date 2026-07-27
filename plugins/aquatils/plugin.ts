@@ -155,7 +155,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.73"
+        const SOLVER_VERSION = "0.1.75"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -175,6 +175,7 @@ function init() {
         const notify = ctx.state<boolean>(sget<boolean>("seh.notify", false))
         const appRef = ctx.fieldRef<string>(appBase.get())
         let sehAuthWarned = false
+        let sehRetryAfter = 0
         let sehMaxT = sget<number>("seh.maxT", 0)
 
         const _storedMode = sget<string>("fs.mode", "")
@@ -237,6 +238,7 @@ function init() {
         const fsDepsInstalling = ctx.state<boolean>(false)
         const fsDepsInstallMsg = ctx.state<string>("")
         let fsDepsChecked = false
+        let fsDepsAutoTried = false
         const fsVersion = ctx.state<string>("")
         const fsTest = ctx.state<string>("")
         const fsLogFilter = ctx.state<boolean>(true)
@@ -298,7 +300,7 @@ function init() {
             "libwayland-client": "libwayland-client0", "libwayland-server": "libwayland-server0", "libwayland-egl": "libwayland-egl1",
         }
 
-        const CHROME_DEPS = "ca-certificates fonts-liberation libasound2 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 libcairo2 libcups2 libdbus-1-3 libdrm2 libexpat1 libfontconfig1 libgbm1 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxkbcommon0 libxrandr2 libxrender1 libxshmfence1 libxss1 libxtst6 xvfb xdotool"
+        const CHROME_DEPS = "ca-certificates fonts-liberation libasound2 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 libcairo2 libcups2 libdbus-1-3 libdrm2 libexpat1 libfontconfig1 libgbm1 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxkbcommon0 libxrandr2 libxrender1 libxshmfence1 libxss1 libxtst6 xvfb"
 
         function chromeDepsCmd(): string {
             return "sudo apt-get update && sudo apt-get install -y " + CHROME_DEPS
@@ -328,11 +330,21 @@ function init() {
             if (fsDepsChecked && !force) return
             let chrome = ""
             try { chrome = chromiumCachedPath() } catch (_e) {}
-            if (!chrome) return
+            // Run once the browser is in play (cached or opted into), so a gap shows
+            // up before use, not after; Stage-A-only users are never nagged.
+            if (!chrome && !fsWantChromium.get()) return
             fsDepsChecked = true
-            const script = "c=" + shq(chrome) + "; "
-                + "if ldd \"$c\" 2>/dev/null | grep -q 'not found'; then echo BROKEN; "
+            // Two signals: a shared library Chromium links against is missing (ldd),
+            // and the Xvfb executable is absent (ldd can't see it — it's a binary, not
+            // a library). On apt systems list the exact missing packages; else surface
+            // the tool name.
+            const script = "c=" + shq(chrome) + "; miss=; "
+                + "for t in Xvfb; do command -v \"$t\" >/dev/null 2>&1 || miss=\"$miss $t\"; done; "
+                + "lib=0; [ -n \"$c\" ] && ldd \"$c\" 2>/dev/null | grep -q 'not found' && lib=1; "
+                + "if [ \"$lib\" = 1 ] || [ -n \"$miss\" ]; then echo BROKEN; "
+                + "if command -v dpkg-query >/dev/null 2>&1; then "
                 + "for p in " + CHROME_DEPS + "; do dpkg-query -W -f='${Status}' \"$p\" 2>/dev/null | grep -q 'install ok installed' || echo \"$p\"; done; "
+                + "else for t in $miss; do [ \"$t\" = Xvfb ] && echo xvfb || echo \"$t\"; done; fi; "
                 + "else echo OK; fi"
             try {
                 $osExtra.asyncCmd("sh", "-c", script).run((data, _e, code) => {
@@ -353,9 +365,8 @@ function init() {
                     pkgs.sort()
                     fsDepsPkgs.set(pkgs)
                     fsDepsCmd.set(chromeDepsCmd())
-                    plog("browser solver: Chromium is missing " + pkgs.length + " system package(s) - see the tray")
-                    notifyOnce("chromedeps", "Aqua's Utils: the browser solver's Chromium needs system packages that aren't installed. Open the tray to install them in one click.")
                     tray.update()
+                    maybeAutoInstallDeps()
                 })
             } catch (_e) {}
         }
@@ -401,6 +412,42 @@ function init() {
             }
         }
 
+        // Install missing packages ourselves when we can act without interaction (root
+        // or passwordless sudo), once; otherwise fall back to the tray prompt.
+        function maybeAutoInstallDeps(): void {
+            if (typeof $osExtra === "undefined") return
+            const pkgs = fsDepsPkgs.get() || []
+            if (!pkgs.length || fsDepsInstalling.get()) return
+            if (fsDepsAutoTried) { promptDeps(); return }
+            try {
+                $osExtra.asyncCmd("sh", "-c", "if [ \"$(id -u)\" = 0 ] || sudo -n true 2>/dev/null; then echo YES; else echo NO; fi").run((data, _e, code) => {
+                    if (code === undefined) return
+                    const canInstall = !!data && $toString(data).indexOf("YES") >= 0
+                    if (canInstall) {
+                        fsDepsAutoTried = true
+                        plog("installing missing system package(s) automatically: " + pkgs.join(", "))
+                        try { ctx.toast.info("Installing system packages the browser solver needs (" + pkgs.join(", ") + ")…") } catch (_e) {}
+                        installChromiumDeps()
+                    } else {
+                        promptDeps()
+                    }
+                })
+            } catch (_e) {
+                promptDeps()
+            }
+        }
+
+        function promptDeps(): void {
+            const pkgs = fsDepsPkgs.get() || []
+            if (!pkgs.length) return
+            const needsClick = pkgs.indexOf("xvfb") >= 0
+            plog("browser solver: missing " + pkgs.length + " system package(s)" + (needsClick ? " incl. xvfb (interactive challenges will fail without it)" : "") + " - see the tray")
+            notifyOnce("chromedeps", needsClick
+                ? "Aqua's Utils: the browser solver needs xvfb to clear interactive Cloudflare challenges on this box, and couldn't install it for you (needs root or passwordless sudo). Open the tray to install it in one click."
+                : "Aqua's Utils: the browser solver's Chromium needs system packages that aren't installed. Open the tray to install them in one click.")
+            tray.update()
+        }
+
         function scanChromeDeps(chunk: string): void {
             if (typeof $os === "undefined" || $os.platform !== "linux") return
             if ((fsDepsPkgs.get() || []).length) return
@@ -408,7 +455,7 @@ function init() {
             if (!m) return
             mergeDepPkgs([libToPkg(m[1])])
             checkChromiumDeps(true)
-            notifyOnce("chromedeps", "Aqua's Utils: the browser solver's Chromium needs system packages that aren't installed. Open the tray to install them in one click.")
+            maybeAutoInstallDeps()
         }
 
         function pushLog(chunk: string): void {
@@ -667,17 +714,25 @@ function init() {
         }
 
         async function sehPoll(): Promise<void> {
+            // A password-protected Seanime returns 401/403 on the log API; back off
+            // instead of retrying every few seconds. Auto-retries later; a URL save
+            // retries immediately.
+            if (nowMs() < sehRetryAfter) return
             try {
                 const url = (appBase.get() || SEH_DEFAULT_APP).replace(/\/+$/, "") + "/api/v1/logs/latest"
                 const res = await ctx.fetch(url, { method: "GET", timeout: 20 })
                 if (!res.ok) {
-                    if (!sehAuthWarned && (res.status === 401 || res.status === 403)) {
-                        sehAuthWarned = true
-                        ctx.toast.warning("Aqua's Utils can't read logs (HTTP " + res.status + "). A server password or strict mode blocks it.")
+                    if (res.status === 401 || res.status === 403) {
+                        sehRetryAfter = nowMs() + 10 * 60 * 1000
+                        if (!sehAuthWarned) {
+                            sehAuthWarned = true
+                            ctx.toast.warning("Aqua's Utils can't read Seanime's error log (HTTP " + res.status + ") — a server password blocks it. Only the extension-error list is affected; the solver itself works. Clear the password or ignore this.")
+                        }
                     }
                     return
                 }
                 sehAuthWarned = false
+                sehRetryAfter = 0
                 const body = res.json<{ data?: string }>()
                 const content = body && typeof body.data === "string" ? body.data : ""
                 if (content) sehIngest(sehParse(content))
@@ -1801,6 +1856,7 @@ function init() {
             if (!/^https?:\/\/.+/i.test(raw)) { ctx.toast.error("Server URL must start with http:// or https://"); return }
             appBase.set(raw)
             sehAuthWarned = false
+            sehRetryAfter = 0
             sehPersist()
             ctx.toast.success("Saved Seanime URL")
             void sehPoll()
