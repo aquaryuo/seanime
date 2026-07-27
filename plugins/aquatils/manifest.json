@@ -1,7 +1,7 @@
 {
   "id": "aq-aquatils-beta",
   "name": "Aqua's Utils - BETA",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/manifest.json",
   "language": "typescript",
   "type": "plugin",
