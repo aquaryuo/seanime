@@ -361,12 +361,16 @@ function init() {
                         const t = lines[i].replace(/\s+/g, "")
                         if (/^[a-z0-9][a-z0-9+.-]*$/.test(t) && !seen[t]) { seen[t] = true; pkgs.push(t) }
                     }
-                    if (!pkgs.length) return
+                    if (!pkgs.length) {
+                        plog("browser solver: Chromium is missing a system library (no dpkg here to name it)")
+                        notifyOnce("chromedeps", "Aqua's Utils: the browser solver's Chromium is missing a system library, so hard challenges can't be solved until it's installed.")
+                        return
+                    }
                     pkgs.sort()
                     fsDepsPkgs.set(pkgs)
                     fsDepsCmd.set(chromeDepsCmd())
                     tray.update()
-                    maybeAutoInstallDeps()
+                    if (chrome) maybeAutoInstallDeps(); else promptDeps()
                 })
             } catch (_e) {}
         }
@@ -402,6 +406,7 @@ function init() {
                         fsDepsInstallMsg.set("Automatic install failed (exit " + code + ")" + (why ? ": " + why : "") + ". You likely need root or passwordless sudo - use Copy command to run it yourself.")
                         plog("Chromium deps install failed (exit " + code + ")")
                         try { ctx.toast.error("Automatic install failed - see the tray for the command to run yourself.") } catch (_e) {}
+                        promptDeps()
                     }
                     tray.update()
                 })
@@ -420,7 +425,7 @@ function init() {
             if (!pkgs.length || fsDepsInstalling.get()) return
             if (fsDepsAutoTried) { promptDeps(); return }
             try {
-                $osExtra.asyncCmd("sh", "-c", "if [ \"$(id -u)\" = 0 ] || sudo -n true 2>/dev/null; then echo YES; else echo NO; fi").run((data, _e, code) => {
+                $osExtra.asyncCmd("sh", "-c", "if command -v apt-get >/dev/null 2>&1 && { [ \"$(id -u)\" = 0 ] || sudo -n true 2>/dev/null; }; then echo YES; else echo NO; fi").run((data, _e, code) => {
                     if (code === undefined) return
                     const canInstall = !!data && $toString(data).indexOf("YES") >= 0
                     if (canInstall) {
@@ -455,7 +460,7 @@ function init() {
             if (!m) return
             mergeDepPkgs([libToPkg(m[1])])
             checkChromiumDeps(true)
-            maybeAutoInstallDeps()
+            promptDeps()
         }
 
         function pushLog(chunk: string): void {
