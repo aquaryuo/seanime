@@ -353,7 +353,7 @@ class Provider {
             if (m) seriesId = m[1]
         }
         if (!seriesId) {
-            if (this.bodyIsChallenge(pageHtml)) throw this.fail("episodes", "the site is showing an anti-bot challenge on this mirror — retry later or switch mirrors")
+            if (this.bodyIsChallenge(pageHtml) && !this.bodyIsSitePage(pageHtml)) throw this.fail("episodes", "the site is showing an anti-bot challenge on this mirror — retry later or switch mirrors")
             throw this.fail("episodes", "could not determine series id (site layout may have changed)")
         }
 
@@ -995,6 +995,21 @@ class Provider {
 
     private bodyIsChallenge(body: string): boolean {
         return this.challengeToken(body) !== ""
+    }
+
+    // A challenge interstitial is a bare stub with none of the site's own chrome,
+    // so a page that still renders its footer is the real site — a missing series
+    // id there means the layout moved, not that we were blocked. Some challenge
+    // markers (the cdn-cgi script) are also injected into ordinary pages when the
+    // origin turns on JS detections, which is what makes this distinction matter.
+    private bodyIsSitePage(body: string): boolean {
+        if (!body) return false
+        try {
+            const $ = LoadDoc(body)
+            return $("footer").length() > 0 || $("div.item").length() > 0
+        } catch (_e) {
+            return false
+        }
     }
 
     private bodyHasResults(body: string): boolean {
