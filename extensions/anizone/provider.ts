@@ -223,7 +223,7 @@ class Provider {
         const alId = this.alOf(episode.id)
         const audio = this.audioOf(episode.id)
         const cacheKey = `anizone:src:${shortid}:${n}`
-        let cached = this.readCache<{ m3u8: string; subs: { origin: string; lang: string; ext: string }[] }>(cacheKey, this.srcCacheTtl)
+        let cached = this.readCache<{ m3u8: string; subs: { origin: string; lang: string; ext: string; label?: string; def?: boolean }[] }>(cacheKey, this.srcCacheTtl)
         if (!cached || !cached.m3u8) {
             const res = await fetch(`${this.normBase()}/anime/${shortid}/${n}`, { headers: this.pageHeaders(), timeout: 14 })
             if (!res.ok) throw this.fail("server", `anizone: episode page failed (status ${res.status})`)
@@ -378,32 +378,93 @@ class Provider {
         return titles[0]
     }
 
-    private extractSubs(html: string): { origin: string; lang: string; ext: string }[] {
-        const out: { origin: string; lang: string; ext: string }[] = []
+    private tagAttr(tag: string, name: string): string {
+        const pats = [
+            new RegExp("(?:^|\\s)" + name + '\\s*=\\s*"([^"]*)"', "i"),
+            new RegExp("(?:^|\\s)" + name + "\\s*=\\s*'([^']*)'", "i"),
+            new RegExp("(?:^|\\s)" + name + "\\s*=\\s*([^\\s>]+)", "i"),
+        ]
+        for (const re of pats) {
+            const m = re.exec(tag)
+            if (m) return m[1] || ""
+        }
+        return ""
+    }
+
+    private decodeEntities(s: string): string {
+        return (s || "")
+            .replace(/&amp;/gi, "&")
+            .replace(/&lt;/gi, "<")
+            .replace(/&gt;/gi, ">")
+            .replace(/&quot;/gi, '"')
+            .replace(/&#0?39;|&apos;/gi, "'")
+            .replace(/&nbsp;/gi, " ")
+            .trim()
+    }
+
+    // A track carries the site's own label, which is the only thing separating an
+    // episode's several same-language subtitles: different release groups, a
+    // signs-and-songs-only track, an SDH track. Keying on the language code alone
+    // collapses them and silently picks whichever came first.
+    private extractSubs(html: string): { origin: string; lang: string; ext: string; label: string; def: boolean }[] {
+        const out: { origin: string; lang: string; ext: string; label: string; def: boolean }[] = []
+        const seen: { [key: string]: boolean } = {}
+        const tagRe = /<track\b[^>]*>/gi
+        let t: RegExpExecArray | null
+        while ((t = tagRe.exec(html)) !== null) {
+            const tag = t[0]
+            const src = this.tagAttr(tag, "src")
+            if (!/^https?:\/\//i.test(src) || src.indexOf("/subtitles/") === -1) continue
+            const kind = this.tagAttr(tag, "kind").toLowerCase()
+            if (kind && kind !== "subtitles" && kind !== "captions") continue
+            if (seen[src]) continue
+            seen[src] = true
+            const fromUrl = src.match(/\/subtitles\/[0-9]+_([A-Za-z0-9-]+)\.(ass|srt|vtt)/i)
+            const lang = this.tagAttr(tag, "srclang") || (fromUrl ? fromUrl[1] : "") || "en"
+            const ext = (this.tagAttr(tag, "data-type") || (fromUrl ? fromUrl[2] : "") || "ass").toLowerCase()
+            out.push({ origin: src, lang, ext, label: this.decodeEntities(this.tagAttr(tag, "label")), def: /(?:^|\s)default(?:[\s/>=])/i.test(tag) })
+        }
+        if (out.length > 0) return out
+        // Fallback for a markup change: recover bare subtitle URLs as before.
         const re = /https?:\/\/[^"'\s]+\/subtitles\/[0-9]+_([A-Za-z0-9-]+)\.(ass|srt)/g
         let m: RegExpExecArray | null
         while ((m = re.exec(html)) !== null) {
-            out.push({ origin: m[0], lang: m[1] || "en", ext: m[2] || "ass" })
+            if (seen[m[0]]) continue
+            seen[m[0]] = true
+            out.push({ origin: m[0], lang: m[1] || "en", ext: m[2] || "ass", label: "", def: false })
         }
         return out
     }
 
-    private async buildSubs(subs: { origin: string; lang: string; ext: string }[], anilistId: number, episode: number): Promise<VideoSubtitle[]> {
+    private isSignsOnly(label: string): boolean {
+        return /\bsigns?\b/i.test(label) && !/\bdialogue\b/i.test(label)
+    }
+
+    private async buildSubs(subs: { origin: string; lang: string; ext: string; label?: string; def?: boolean }[], anilistId: number, episode: number): Promise<VideoSubtitle[]> {
         const out: VideoSubtitle[] = []
         const seen: { [key: string]: boolean } = {}
-        let englishIdx = -1
+        // Track identity is the URL, not the language: an episode routinely carries
+        // several same-language subtitles that are not interchangeable.
+        let siteDefault = -1
+        let englishFull = -1
+        let englishAny = -1
         for (const s of subs) {
             const origin = s.origin
+            if (!origin || seen[origin]) continue
+            seen[origin] = true
             const code = (s.lang || "en").toLowerCase()
-            if (seen[code]) continue
-            seen[code] = true
+            const label = (s.label || "").trim()
             const idx = out.length
-            const url = origin
-            out.push({ id: `${code}-${idx}`, url, language: this.langName(code), isDefault: false })
-            if (englishIdx === -1 && code.split("-")[0] === "en") englishIdx = idx
+            out.push({ id: `${code}-${idx}`, url: origin, language: label || this.langName(code), isDefault: false })
+            const isEnglish = code.split("-")[0] === "en"
+            if (isEnglish && englishAny === -1) englishAny = idx
+            if (isEnglish && englishFull === -1 && !this.isSignsOnly(label)) englishFull = idx
+            if (siteDefault === -1 && s.def === true && !this.isSignsOnly(label)) siteDefault = idx
         }
         if (out.length === 0) return out
-        const pick = englishIdx !== -1 ? englishIdx : 0
+        // Prefer a full English track over a signs-and-songs one, which carries no
+        // dialogue and looks like working subtitles until the episode plays.
+        const pick = englishFull !== -1 ? englishFull : siteDefault !== -1 ? siteDefault : englishAny !== -1 ? englishAny : 0
         out[pick].isDefault = true
         return out.filter((s) => s.isDefault).concat(out.filter((s) => !s.isDefault))
     }
