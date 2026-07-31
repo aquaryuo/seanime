@@ -155,7 +155,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.78"
+        const SOLVER_VERSION = "0.1.79"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -184,7 +184,7 @@ function init() {
         const fsPort = ctx.state<string>(sget<string>("fs.port", FS_DEFAULT_PORT))
         const fsSession = ctx.state<string>(sget<string>("fs.session", FS_DEFAULT_SESSION))
         const fsAutoStart = ctx.state<boolean>(sget<boolean>("fs.autoStart", false))
-        const fsWantChromium = ctx.state<boolean>(sget<boolean>("fs.wantChromium", false))
+        const fsWantChromium = ctx.state<boolean>(sget<boolean>("fs.wantChromium", typeof $os !== "undefined" && $os.platform !== "windows"))
         const fsAutoUpdate = ctx.state<boolean>(sget<boolean>("fs.autoUpdate", false))
         const fsBrowserMode = ctx.state<string>(sget<string>("fs.browserMode", "offscreen"))
         const fsEngine = ctx.state<string>(((): string => { const e = sget<string>("fs.engine", "webview2"); return e === "edge" ? "chrome" : e })())
@@ -804,10 +804,16 @@ function init() {
                 })
                 let data: any = null
                 try { data = res.json<any>() } catch (_e) {}
+                // Something answering on the port is not the same as our solver
+                // answering: a wrong host, a stale process, or another service
+                // all reply, and reporting those as running shows a green badge
+                // while nothing works.
+                const ours = !!data && (data.version !== undefined || Array.isArray(data.sessions))
+                if (!res.ok || !ours) return { up: false }
                 return {
                     up: true,
-                    version: data && data.version ? String(data.version) : undefined,
-                    sessions: data && Array.isArray(data.sessions) ? data.sessions : undefined,
+                    version: data.version ? String(data.version) : undefined,
+                    sessions: Array.isArray(data.sessions) ? data.sessions : undefined,
                 }
             } catch (_e) {
                 return { up: false }
@@ -1303,6 +1309,11 @@ function init() {
                 if (chromiumOverride) env.push("SOLVER_CHROME=" + chromiumOverride)
                 env.push("SOLVER_BROWSER_MODE=" + (fsBrowserMode.get() === "headed" ? "headed" : fsBrowserMode.get() === "headless" ? "headless" : $os.platform === "windows" ? "offscreen" : "auto"))
                 if (fsBrowserMode.get() === "headless") env.push("SOLVER_HEADLESS=1")
+                // On Linux ask for a display of our own. Sharing the machine's
+                // screen means the browser cannot take over the pointer, which is
+                // what completing an interactive check needs — and it keeps us
+                // from moving the operator's real cursor.
+                else if ($os.platform === "linux") env.push("SOLVER_XVFB=1")
                 if ($os.platform === "windows" && fsEngine.get() && fsEngine.get() !== "chrome") env.push("SOLVER_BROWSER_ENGINE=" + fsEngine.get())
                 if (!fsWv2Warm.get()) env.push("SOLVER_WV2_WARM=0")
                 if (fsWv2Refresh.get()) env.push("SOLVER_WV2_REFRESH=1")
@@ -1311,7 +1322,6 @@ function init() {
                 if (dnsVal && dnsVal !== "off") env.push("SOLVER_DNS=" + dnsVal)
                 if (fsPacing.get()) env.push("SOLVER_PACING=1")
                 if (fsCustomTls.get()) env.push("SOLVER_TLS=custom")
-                env.push("SOLVER_IDLE_EXIT=600")
                 c.env = env
             } catch (_e) {}
             fsBinary = c
