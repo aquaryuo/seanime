@@ -155,7 +155,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.80"
+        const SOLVER_VERSION = "0.1.81"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -235,6 +235,12 @@ function init() {
         const fsHint = ctx.state<string>("")
         const fsDepsCmd = ctx.state<string>("")
         const fsDepsPkgs = ctx.state<string[]>([])
+        // What the solver says about its own ability to clear a hard challenge on
+        // this machine. Without it a box that cannot do the job looks healthy and
+        // only fails later, silently, per episode.
+        const fsCanHard = ctx.state<string>("")   // "" unknown | "yes" | "no"
+        const fsHardWhy = ctx.state<string>("")
+        let fsCapAt = 0
         const fsDepsInstalling = ctx.state<boolean>(false)
         const fsDepsInstallMsg = ctx.state<string>("")
         let fsDepsChecked = false
@@ -820,11 +826,28 @@ function init() {
             }
         }
 
+        // Re-asks periodically so installing a missing package clears the warning
+        // without a restart.
+        async function refreshCapability(): Promise<void> {
+            if (fsMode.get() === "remote") return
+            const stale = fsCanHard.get() === "" ? 20000 : 300000
+            if (nowMs() - fsCapAt < stale) return
+            fsCapAt = nowMs()
+            const r = await fsApi("capability", {}, 20)
+            const c = r && r.capability
+            if (!c) return
+            const before = fsCanHard.get()
+            fsCanHard.set(c.canStageB ? "yes" : "no")
+            fsHardWhy.set(c.canStageB ? "" : String(c.reason || ""))
+            if (before !== fsCanHard.get()) tray.update()
+        }
+
         async function fsRefresh(): Promise<void> {
             if (fsTesting && nowMs() < fsTestUntil) return
             if (!fsDepsChecked) checkChromiumDeps()
             const p = await fsProbe()
             if (p.up) {
+                void refreshCapability()
                 if (fsManualStop && fsMode.get() !== "remote") {
                     const solverReply = p.version !== undefined || p.sessions !== undefined
                     setStatus("down")
@@ -2301,6 +2324,13 @@ function init() {
                     description: "A newer solver (v" + SOLVER_VERSION + ") is bundled; you're running v" + fsVersion.get() + ".",
                 }))
                 rows.push(tray.button({ label: "Restart to update", onClick: "fs-restart-update", intent: "primary", size: "sm", style: ACCENT_STYLE }))
+            }
+            if (fsCanHard.get() === "no" && !(fsDepsPkgs.get() || []).length) {
+                rows.push(tray.alert({
+                    intent: "warning",
+                    title: "Hard challenges can't be solved on this machine",
+                    description: (fsHardWhy.get() || "The browser can't complete an interactive check here.") + " Sites behind a light check still work.",
+                }))
             }
             if ((fsDepsPkgs.get() || []).length) {
                 const pkgs = fsDepsPkgs.get() || []
