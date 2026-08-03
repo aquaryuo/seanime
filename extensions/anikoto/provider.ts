@@ -118,7 +118,7 @@ class Provider {
                     })
                     if (res.ok) {
                         const body = res.text()
-                        if (this.bodyIsChallenge(body) && !this.bodyHasResults(body)) {
+                        if (this.bodyIsChallenge(body) && !this.bodyIsSitePage(body)) {
                             challenged = true
                         } else {
                             anyOk = true
@@ -1007,15 +1007,6 @@ class Provider {
         try {
             const $ = LoadDoc(body)
             return $("footer").length() > 0 || $("div.item").length() > 0
-        } catch (_e) {
-            return false
-        }
-    }
-
-    private bodyHasResults(body: string): boolean {
-        if (!body) return false
-        try {
-            return LoadDoc(body)("div.item").length() > 0
         } catch (_e) {
             return false
         }
