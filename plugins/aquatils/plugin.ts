@@ -155,7 +155,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.81"
+        const SOLVER_VERSION = "0.1.82"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -1227,18 +1227,43 @@ function init() {
             })
         }
 
+        // Some platforms have no build to fetch — ARM Linux most of all — and there
+        // the tier simply did not exist, while the message told the user to enable
+        // a download that could never appear. Look for a browser the machine
+        // already has and hand its path to the solver explicitly; the solver still
+        // launches only what it is given, and always in its own profile directory,
+        // never the user's.
+        let systemChromeAt = ""
+        let systemChromeDone = false
+        function findSystemChrome(cb: (path: string) => void): void {
+            if (systemChromeDone) { cb(systemChromeAt); return }
+            if (typeof $osExtra === "undefined" || typeof $os === "undefined" || $os.platform === "windows") { cb(""); return }
+            const names = "chromium chromium-browser google-chrome google-chrome-stable brave-browser microsoft-edge"
+            try {
+                $osExtra.asyncCmd("sh", "-c", "for c in " + names + "; do p=$(command -v \"$c\" 2>/dev/null); if [ -n \"$p\" ]; then echo \"$p\"; exit 0; fi; done").run((data, _e, code) => {
+                    if (code === undefined) return
+                    systemChromeDone = true
+                    const out = data ? $toString(data).trim().split("\n")[0].trim() : ""
+                    systemChromeAt = out && out.indexOf("/") === 0 ? out : ""
+                    if (systemChromeAt) plog("using the browser already installed at " + systemChromeAt)
+                    cb(systemChromeAt)
+                })
+            } catch (_e) { systemChromeDone = true; cb("") }
+        }
+
         function ensureChromium(cb: (path: string) => void): void {
             const cached = chromiumCachedPath()
             if (cached) { cb(cached); return }
-            if (!fsWantChromium.get()) { cb(""); return }
+            if (!fsWantChromium.get()) { findSystemChrome(cb); return }
             const plt = chromiumCfTPlatform()
             if (!plt) {
-                if ($os.platform === "linux" && $os.arch === "arm64") {
-                    setErr("Hard-challenge browser solving isn't available on ARM Linux — Google ships no Chromium build for this architecture. The fast uTLS path still works; for Stage B install a system Chromium and point SOLVER_CHROME at it.")
-                } else {
-                    setErr("Browser solving isn't available on this OS/architecture (uTLS-only).")
-                }
-                tray.update(); cb(""); return
+                findSystemChrome((sys) => {
+                    if (sys) { cb(sys); return }
+                    setErr("No browser is available for this OS/architecture, so hard challenges can't be solved. Install one (on Debian/Ubuntu: sudo apt install chromium) and restart the solver — the fast path keeps working meanwhile.")
+                    tray.update()
+                    cb("")
+                })
+                return
             }
             if (!downloaderReady()) { cb(""); return }
             setNote("Fetching a minimal Chromium…")
