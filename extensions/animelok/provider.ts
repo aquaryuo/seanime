@@ -1,7 +1,7 @@
 declare const console: { log(...args: any[]): void; info(...args: any[]): void; warn(...args: any[]): void; error(...args: any[]): void }
 
 type VibeTrack = { url?: string; lang?: string; label?: string; kind?: string; default?: boolean }
-type VibeResult = { status: "ok" | "notfound" | "fail"; url: string; tracks: VibeTrack[]; headers: { [key: string]: string } }
+type VibeResult = { status: "ok" | "notfound" | "nosource" | "fail"; url: string; tracks: VibeTrack[]; headers: { [key: string]: string } }
 
 class Provider {
     private baseUrl = "{{baseUrl}}"
@@ -66,6 +66,7 @@ class Provider {
             }
         }
         if (v.status === "notfound") throw this.fail("server", `animelok: episode ${meta.num} is not available on this site`)
+        if (v.status === "nosource") throw this.fail("server", `animelok: no source for episode ${meta.num} right now (the site returned an error; try again later)`)
         throw this.fail("server", `animelok: source temporarily unavailable (failed to extract episode ${meta.num}; try again)`)
     }
 
@@ -126,7 +127,8 @@ class Provider {
             subOrDub = "both"
         }
         const result = { exists, audio, subOrDub }
-        if (exists || (sub.status === "notfound" && dub.status === "notfound")) {
+        const definitelyAbsent = sub.status === "notfound" && dub.status === "notfound"
+        if (exists || definitelyAbsent) {
             this.writeCache(cacheKey, result)
         } else {
             this.writeCache(failKey, result)
@@ -148,7 +150,11 @@ class Provider {
             } catch (_e) {
                 continue
             }
+            // 404 = the anime is unknown; 500 = it is known but this episode has no
+            // sources (also returned for every episode of a title it does not carry).
+            // Both mean "not here", and the probe needs that to terminate.
             if (res.status === 404) return { status: "notfound", url: "", tracks: [], headers: {} }
+            if (res.status === 500 && this.noSources(res)) return { status: "nosource", url: "", tracks: [], headers: {} }
             if (res.ok) {
                 let url = ""
                 let tracks: VibeTrack[] = []
@@ -171,6 +177,15 @@ class Provider {
         return { status: "fail", url: "", tracks: [], headers: {} }
     }
 
+    private noSources(res: FetchResponse): boolean {
+        try {
+            const body = res.json<{ error?: string }>()
+            return !!(body && typeof body.error === "string" && /not found|fetching sources/i.test(body.error))
+        } catch (_e) {
+            return false
+        }
+    }
+
     private async probeEpisodeCount(anilistId: number, audio: string): Promise<number> {
         const cacheKey = `animelok:epcount:${anilistId}:${audio}`
         const cached = this.readCache<number>(cacheKey, this.cacheTtl)
@@ -187,7 +202,7 @@ class Provider {
                 hi = hi * 2
                 continue
             }
-            if (v.status === "notfound") {
+            if (v.status === "notfound" || v.status === "nosource") {
                 bounded = true
                 break
             }
@@ -198,7 +213,7 @@ class Provider {
             const mid = Math.floor((lo + hi) / 2)
             const v = await this.getVibe(anilistId, mid, audio)
             if (v.status === "ok") lo = mid
-            else if (v.status === "notfound") hi = mid
+            else if (v.status === "notfound" || v.status === "nosource") hi = mid
             else return lo
         }
         this.writeCache(cacheKey, lo)
@@ -226,8 +241,11 @@ class Provider {
         return { anilistId, audio, num }
     }
 
+    // Only animelok.live answers the API. The other hosts 301 to it but drop the
+    // request path, so the redirect lands on the homepage and every call comes
+    // back as HTML — which parses as no sources at all rather than as an error.
     private normBase(): string {
-        return this.baseUrl.replace(/animelok\.online/i, "animelok.net").replace(/\/+$/, "")
+        return this.baseUrl.replace(/animelok\.(online|net|to)/i, "animelok.live").replace(/\/+$/, "")
     }
 
     private reportError(scope: string, message: string): void {
