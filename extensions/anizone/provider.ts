@@ -402,10 +402,6 @@ class Provider {
             .trim()
     }
 
-    // A track carries the site's own label, which is the only thing separating an
-    // episode's several same-language subtitles: different release groups, a
-    // signs-and-songs-only track, an SDH track. Keying on the language code alone
-    // collapses them and silently picks whichever came first.
     private extractSubs(html: string): { origin: string; lang: string; ext: string; label: string; def: boolean }[] {
         const out: { origin: string; lang: string; ext: string; label: string; def: boolean }[] = []
         const seen: { [key: string]: boolean } = {}
@@ -425,7 +421,6 @@ class Provider {
             out.push({ origin: src, lang, ext, label: this.decodeEntities(this.tagAttr(tag, "label")), def: /(?:^|\s)default(?:[\s/>=])/i.test(tag) })
         }
         if (out.length > 0) return out
-        // Fallback for a markup change: recover bare subtitle URLs as before.
         const re = /https?:\/\/[^"'\s]+\/subtitles\/[0-9]+_([A-Za-z0-9-]+)\.(ass|srt)/g
         let m: RegExpExecArray | null
         while ((m = re.exec(html)) !== null) {
@@ -443,8 +438,6 @@ class Provider {
     private async buildSubs(subs: { origin: string; lang: string; ext: string; label?: string; def?: boolean }[], anilistId: number, episode: number): Promise<VideoSubtitle[]> {
         const out: VideoSubtitle[] = []
         const seen: { [key: string]: boolean } = {}
-        // Track identity is the URL, not the language: an episode routinely carries
-        // several same-language subtitles that are not interchangeable.
         let siteDefault = -1
         let englishFull = -1
         let englishAny = -1
@@ -462,8 +455,6 @@ class Provider {
             if (siteDefault === -1 && s.def === true && !this.isSignsOnly(label)) siteDefault = idx
         }
         if (out.length === 0) return out
-        // Prefer a full English track over a signs-and-songs one, which carries no
-        // dialogue and looks like working subtitles until the episode plays.
         const pick = englishFull !== -1 ? englishFull : siteDefault !== -1 ? siteDefault : englishAny !== -1 ? englishAny : 0
         out[pick].isDefault = true
         return out.filter((s) => s.isDefault).concat(out.filter((s) => !s.isDefault))

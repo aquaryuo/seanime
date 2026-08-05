@@ -150,9 +150,6 @@ class Provider {
             } catch (_e) {
                 continue
             }
-            // 404 = the anime is unknown; 500 = it is known but this episode has no
-            // sources (also returned for every episode of a title it does not carry).
-            // Both mean "not here", and the probe needs that to terminate.
             if (res.status === 404) return { status: "notfound", url: "", tracks: [], headers: {} }
             if (res.status === 500 && this.noSources(res)) return { status: "nosource", url: "", tracks: [], headers: {} }
             if (res.ok) {
@@ -241,9 +238,6 @@ class Provider {
         return { anilistId, audio, num }
     }
 
-    // Only animelok.live answers the API. The other hosts 301 to it but drop the
-    // request path, so the redirect lands on the homepage and every call comes
-    // back as HTML — which parses as no sources at all rather than as an error.
     private normBase(): string {
         return this.baseUrl.replace(/animelok\.(online|net|to)/i, "animelok.live").replace(/\/+$/, "")
     }
