@@ -138,7 +138,7 @@ class Provider {
             if (anyOk) {
                 this.rememberBase(base)
                 const best = this.dominantMatch(results, opts.media)
-                return best ? [best] : this.filterBySeason(results, sq.season, sq.part)
+                return best ? [best] : this.filterBySeason(results, sq.season, sq.part, opts.media)
             }
         }
 
@@ -147,9 +147,36 @@ class Provider {
         throw this.fail("search", "search failed (site unreachable)")
     }
 
-    private filterBySeason(results: SearchResult[], season: number, part: number): SearchResult[] {
-        if (season < 2 && part < 2) return results
-        const matched = results.filter((r) => {
+    private baseTitle(s: string): string {
+        return this.normTitle(
+            (s || "")
+                .replace(/\b(?:season|cour|part)\s*\d+\b/gi, " ")
+                .replace(/\bfinal\s+season\b/gi, " ")
+                .replace(/\b(?:II|III|IV|V|VI)\b/g, " ")
+                .replace(/\b\d+(?:st|nd|rd|th)\s+season\b/gi, " ")
+        )
+    }
+
+    private sameShow(results: SearchResult[], media: Media): SearchResult[] {
+        const targets: string[] = []
+        for (const t of [media.romajiTitle, media.englishTitle]) {
+            const b = this.baseTitle(t || "")
+            if (b.length >= 3) targets.push(b)
+        }
+        if (targets.length === 0) return results
+        return results.filter((r) => {
+            const b = this.baseTitle(r.title)
+            if (!b) return false
+            for (const t of targets) if (this.simNorm(b, t) >= 0.8) return true
+            return false
+        })
+    }
+
+    private filterBySeason(results: SearchResult[], season: number, part: number, media: Media): SearchResult[] {
+        const show = this.sameShow(results, media)
+        const pool = show.length > 0 ? show : results
+        if (season < 2 && part < 2) return pool
+        const matched = pool.filter((r) => {
             let resultSeason = -1
             let resultPart = -1
             try {
@@ -163,7 +190,7 @@ class Provider {
             const partOk = part < 2 || resultPart === part
             return seasonOk && partOk
         })
-        return matched.length > 0 ? matched : results
+        return matched.length > 0 ? matched : pool
     }
 
     private dominantMatch(results: SearchResult[], media: Media): SearchResult | null {
