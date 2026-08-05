@@ -2,15 +2,6 @@ declare const console: { log(...args: any[]): void; info(...args: any[]): void; 
 
 function init() {
     $ui.register((ctx) => {
-        // ── aqualog v1 ───────────────────────────────────────────────────────────────
-        // Shared logging core. Plugins have no module system, so this block is copied
-        // verbatim into each plugin instead of imported — keep the copies identical.
-        // Every line in a plugin's log buffer has the same shape:
-        //
-        //     HH:MM:SS.mmm LVL [scope] message
-        //
-        // which is what lets the tray colour lines by severity, and what keeps a copied
-        // log readable when it mixes plugin events with a child process's own output.
         type AqLevel = "ERR" | "WRN" | "OK" | "INF" | "DBG"
 
         const AQ_SEH_MARKER = "SEHERRv1"
@@ -37,9 +28,6 @@ function init() {
             }
         }
 
-        // aqText flattens a message to one printable line. The tray renders logs in a
-        // monospace box where an embedded newline breaks the one-line-per-event
-        // alignment, and a few glyphs render inconsistently across platforms.
         function aqText(msg: string): string {
             if (msg === undefined || msg === null) return ""
             return String(msg)
@@ -63,8 +51,6 @@ function init() {
             return aqGuessLevel(line)
         }
 
-        // aqGuessLevel only runs on text that carries no level of its own. It stays
-        // deliberately narrow: over-eager matching paints ordinary lines red.
         function aqGuessLevel(text: string): AqLevel {
             if (/\b(error|fatal|panic|failed|failure|refused|denied)\b/i.test(text)) return "ERR"
             if (/\b(warn|warning|deprecated)\b/i.test(text)) return "WRN"
@@ -86,11 +72,6 @@ function init() {
             }
         }
 
-        // aqNormalize rewrites a foreign log line — a Go logger's "date LEVEL msg", a
-        // bare "[subsystem] msg" tag, or raw stderr — into the canonical shape, so one
-        // buffer holds one format. Lines that are already canonical pass through
-        // untouched, which is what lets a plugin's own events and a child process's
-        // output share a single funnel.
         function aqNormalize(line: string, defScope: string): string {
             const raw = aqText(line)
             if (!raw) return ""
@@ -130,11 +111,6 @@ function init() {
             }
         }
 
-        // aqReport mirrors a genuine error into Seanime's own log. console.error is the
-        // only console level the host records above Debug, and the SEHERRv1 marker is
-        // what Aqua's Utils scrapes back out of /api/v1/logs/latest — so this is the one
-        // path that makes a plugin error visible outside its own tray. $debug is not an
-        // option: the host binds it to a no-op unless the plugin is in development mode.
         function aqReport(ext: string, scope: string, msg: string): void {
             try {
                 const body = aqText(msg)
@@ -142,7 +118,6 @@ function init() {
                 console.error(AQ_SEH_MARKER + " " + JSON.stringify({ t: Date.now(), ext: ext, scope: scope, msg: body }))
             } catch (_e) {}
         }
-        // ── end aqualog v1 ───────────────────────────────────────────────────────────
 
         const VC = ctx.videoCore
         const hasVC = !!(VC && typeof VC.addEventListener === "function")
