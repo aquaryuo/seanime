@@ -473,14 +473,12 @@ class Provider {
             const wantSubs = this.loadSubtitles !== "disabled"
             let firstResolved: EpisodeServer | undefined
             let playableNoSubs: EpisodeServer | undefined
-            const dubMismatchIds: { [key: string]: boolean } = {}
             for (const c of candidates) {
                 if (this.outOfTime() && (playableNoSubs || firstResolved)) break
                 let resolved: EpisodeServer | undefined
                 try {
                     resolved = await this.resolveServer(c.linkId, c.name, ctx, audio)
-                } catch (e) {
-                    if (audio === "dub" && this.isDubMismatch(e)) dubMismatchIds[c.linkId] = true
+                } catch (_e) {
                     resolved = undefined
                 }
                 if (!resolved) continue
@@ -497,28 +495,6 @@ class Provider {
                 const cl = this.cachedClearance(this.hostOf(firstResolved.videoSources[0].url))
                 if (cl) firstResolved.headers = this.withClearance(firstResolved.headers, cl)
                 return firstResolved
-            }
-            if (audio === "dub") {
-                // Retry exactly the servers the dub check rejected, with the check
-                // skipped. It infers "this is really the subbed track" from the
-                // presence of a full English subtitle, which a genuine dub can also
-                // ship — so when every server trips it, prefer playing the dub the
-                // site advertised over failing outright.
-                for (const c of candidates) {
-                    if (!dubMismatchIds[c.linkId]) continue
-                    let r: EpisodeServer | undefined
-                    try {
-                        r = await this.resolveServer(c.linkId, c.name, ctx, audio, true)
-                    } catch (_e) {
-                        r = undefined
-                    }
-                    if (!r) continue
-                    if (label) r.server = label
-                    const cl = this.cachedClearance(this.hostOf(r.videoSources[0].url))
-                    if (cl) r.headers = this.withClearance(r.headers, cl)
-                    return r
-                }
-                if (Object.keys(dubMismatchIds).length > 0) throw this.fail("server", "dub source resolved to the subbed (Japanese) track")
             }
             throw this.fail("server", "no playable server found for this episode" + (this.solverEnabled() ? "" : "; if sources are Cloudflare-protected, enable the custom solver in settings (run it via Aqua's Utils)"))
         }
@@ -572,10 +548,10 @@ class Provider {
         return out
     }
 
-    private async resolveServer(linkId: string, serverName: string, ctx: { anilistId: number; episode: number }, audio: string, skipDubCheck = false): Promise<EpisodeServer> {
+    private async resolveServer(linkId: string, serverName: string, ctx: { anilistId: number; episode: number }, audio: string): Promise<EpisodeServer> {
         const got = await this.fetchSources(linkId)
         if (!got || !got.file) throw this.fail("server", "could not resolve the player URL (source may be encrypted or down)")
-        if (!skipDubCheck && audio === "dub" && (await this.dubLooksWrong(got.tracks, got.origin))) throw this.fail("server", "dub source resolved to the subbed (Japanese) track")
+        if (audio === "dub" && got.embedAudio === "sub") throw this.fail("server", "dub source resolved to the subbed (Japanese) track")
         const subtitles = await this.buildSubtitles(got.tracks, ctx, got.origin)
         return {
             server: serverName,
@@ -588,31 +564,6 @@ class Provider {
                     subtitles,
                 },
             ],
-        }
-    }
-
-    private isDubMismatch(e: unknown): boolean {
-        return e instanceof Error && e.message.indexOf("resolved to the subbed") !== -1
-    }
-
-    private async dubLooksWrong(
-        tracks: { file: string; label?: string; kind?: string; default?: boolean }[] | undefined,
-        origin: string
-    ): Promise<boolean> {
-        if (!tracks || tracks.length === 0) return false
-        const caps = tracks.filter((t) => t && typeof t.file === "string" && /^https?:\/\//i.test(t.file) && (!t.kind || t.kind === "captions" || t.kind === "subtitles"))
-        if (caps.length === 0) return false
-        const track = caps.filter((t) => t.default === true)[0] || caps[0]
-        if (!track || !/eng/i.test(track.label || "English")) return false
-        const file = this.fixTrackUrl(track.file)
-        try {
-            const res = await fetch(file, { headers: { Referer: `${origin}/`, Origin: origin }, timeout: 4 })
-            if (!res.ok) return false
-            const body = res.text()
-            const cues = (body.match(/-->/g) || []).length
-            return cues >= 60 && body.length >= 8000
-        } catch (_e) {
-            return false
         }
     }
 
@@ -748,9 +699,9 @@ class Provider {
 
     private async fetchSources(
         linkId: string
-    ): Promise<{ origin: string; file?: string; tracks?: { file: string; label?: string; kind?: string; default?: boolean }[] } | undefined> {
+    ): Promise<{ origin: string; file?: string; embedAudio?: string; tracks?: { file: string; label?: string; kind?: string; default?: boolean }[] } | undefined> {
         const cacheKey = `anikoto:src:${linkId}`
-        const cachedSrc = this.readCache<{ origin: string; file?: string; tracks?: { file: string; label?: string; kind?: string; default?: boolean }[] }>(cacheKey, this.serverCacheTtl)
+        const cachedSrc = this.readCache<{ origin: string; file?: string; embedAudio?: string; tracks?: { file: string; label?: string; kind?: string; default?: boolean }[] }>(cacheKey, this.serverCacheTtl)
         if (cachedSrc) return cachedSrc
 
         const psRes = await this.fetchRetry(`${this.baseUrl}/ajax/server?get=${encodeURIComponent(linkId)}`, {
@@ -800,14 +751,14 @@ class Provider {
         if (!data || !data.sources) return undefined
         const raw = Array.isArray(data.sources) ? (data.sources[0] || ({} as any)).file : data.sources.file
         const file = typeof raw === "string" && /^https?:\/\//i.test(raw) ? raw : undefined
-        const result = { origin, file, tracks: Array.isArray(data.tracks) ? data.tracks : undefined }
+        const result = { origin, file, embedAudio: this.embedAudioOf(embedUrl), tracks: Array.isArray(data.tracks) ? data.tracks : undefined }
         if (file) this.writeCache(cacheKey, result)
         return result
     }
 
-    private fixTrackUrl(file: string): string {
-        if (file.indexOf("/subtitles/") !== -1) return file
-        return file.replace(/^(https?:\/\/[^/]*nekostream\.site\/[0-9a-f]{16,}\/)([^/?#]+\.(?:vtt|ass|srt))/i, "$1subtitles/$2")
+    private embedAudioOf(u: string): string {
+        const m = (u || "").match(/\/(sub|dub)(?:[/?#]|$)/i)
+        return m ? m[1].toLowerCase() : ""
     }
 
     private extOf(file: string): string {
@@ -865,7 +816,7 @@ class Provider {
             if (seenLang[lang]) continue
             seenLang[lang] = true
             const idx = collected.length
-            const fixed = this.fixTrackUrl(t.file)
+            const fixed = t.file
             const url = up
                 ? `${this.subEndpoint}/s/${anime}/${ep}/${lang}.${this.extOf(fixed)}?src=${encodeURIComponent(fixed)}${tokParam}${refParam}`
                 : fixed
@@ -1002,11 +953,6 @@ class Provider {
         return this.challengeToken(body) !== ""
     }
 
-    // A challenge interstitial is a bare stub with none of the site's own chrome,
-    // so a page that still renders its footer is the real site — a missing series
-    // id there means the layout moved, not that we were blocked. Some challenge
-    // markers (the cdn-cgi script) are also injected into ordinary pages when the
-    // origin turns on JS detections, which is what makes this distinction matter.
     private bodyIsSitePage(body: string): boolean {
         if (!body) return false
         try {
