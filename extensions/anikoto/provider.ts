@@ -12,6 +12,7 @@ class Provider {
     private tokenTtl = 18000000
     private resolveDownTtl = 60000
     private serverBudget = 75000
+    private searchBudget = 60000
     private deadline = 0
     private clearanceTtl = 1200000
     private subEndpoint = "https://sub.ryuo.to"
@@ -103,32 +104,35 @@ class Provider {
         const audio = wantDub ? "dub" : "sub"
         const sq = this.searchQueries(opts)
         let challenged = false
+        this.deadline = this.now() + this.searchBudget
 
         for (const base of this.candidateBases()) {
+            if (this.outOfTime()) break
             this.baseUrl = base
             const results: SearchResult[] = []
             const seen: { [key: string]: boolean } = {}
             let anyOk = false
 
+            let hardFail = false
             for (const q of sq.queries) {
+                if (this.outOfTime()) break
                 let html = ""
                 try {
                     const res = await fetch(`${base}/filter?keyword=${encodeURIComponent(q)}`, {
                         headers: this.pageHeaders(),
                     })
-                    if (res.ok) {
-                        const body = res.text()
-                        if (this.bodyIsChallenge(body) && !this.bodyIsSitePage(body)) {
-                            challenged = true
-                        } else {
-                            anyOk = true
-                            html = body
-                        }
+                    const body = res.text()
+                    if (this.isChallengeResponse(res, body)) {
+                        challenged = true
+                    } else if (res.ok && this.bodyIsSitePage(body)) {
+                        anyOk = true
+                        html = body
                     }
                 } catch (_e) {
-                    html = ""
+                    hardFail = true
                 }
                 if (html) this.parseSearchInto(LoadDoc(html), audio, wantDub, opts.media.id, seen, results)
+                if (hardFail) break
             }
 
             if (anyOk) {
@@ -344,16 +348,15 @@ class Provider {
             this.invalidateBase()
             throw this.fail("episodes", e instanceof Error ? e.message : String(e))
         }
-        if (!page.ok) throw this.fail("episodes", `episode page failed (status ${page.status})`)
-
         const pageHtml = page.text()
+        if (this.isChallengeResponse(page, pageHtml)) throw this.fail("episodes", "the site is showing an anti-bot challenge on this mirror — retry later or switch mirrors")
+        if (!page.ok) throw this.fail("episodes", `episode page failed (status ${page.status})`)
         let seriesId = this.firstAttr(LoadDoc(pageHtml), ["#watch-main", "[id*='watch'][data-id]", "main [data-id]"], "data-id")
         if (!seriesId) {
             const m = pageHtml.match(/data-id="(\d+)"/)
             if (m) seriesId = m[1]
         }
         if (!seriesId) {
-            if (this.bodyIsChallenge(pageHtml) && !this.bodyIsSitePage(pageHtml)) throw this.fail("episodes", "the site is showing an anti-bot challenge on this mirror — retry later or switch mirrors")
             throw this.fail("episodes", "could not determine series id (site layout may have changed)")
         }
 
@@ -411,16 +414,18 @@ class Provider {
                     }>()
                     const titles = (meta && meta.episodeTitles) || {}
                     const map = (meta && meta.episodeMap) || {}
-                    const aniTotal = (meta && meta.episodes) || 0
+                    const aniTotal = meta && typeof meta.episodes === "number" && meta.episodes > 0 ? meta.episodes : 0
                     const mapKeys = Object.keys(map)
-                    const mapCoversSeries = !(aniTotal > 0 && mapKeys.length < aniTotal && episodes.length > mapKeys.length)
+                    const mapCoversSeries = aniTotal > 0
+                        ? !(mapKeys.length < aniTotal && episodes.length > mapKeys.length)
+                        : mapKeys.length >= episodes.length
                     if (mapKeys.length > 0 && mapCoversSeries) {
                         const byNum: { [key: number]: EpisodeDetails } = {}
                         for (const e of episodes) byNum[e.number] = e
                         let maxTarget = 0
                         for (const k of mapKeys) {
                             const m = map[k]
-                            maxTarget = Math.max(maxTarget, m.ep || 0, m.abs || 0)
+                            maxTarget = Math.max(maxTarget, m.ep || 0)
                         }
                         const perPart = episodes.length < maxTarget
                         const remapped: EpisodeDetails[] = []
@@ -806,34 +811,54 @@ class Provider {
             tokParam = tok ? `&t=${encodeURIComponent(tok)}` : ""
         }
         const codes = await this.langCodes(valid.map((t) => t.label || "English"))
-        const seenLang: { [key: string]: boolean } = {}
-        let englishIdx = -1
+        const seenSrc: { [key: string]: boolean } = {}
+        const seenSlot: { [key: string]: boolean } = {}
+        let englishFull = -1
+        let englishAny = -1
         let defaultIdx = -1
 
         for (let i = 0; i < valid.length; i++) {
             const t = valid[i]
             const lang = codes[i]
-            if (seenLang[lang]) continue
-            seenLang[lang] = true
+            const label = (t.label || "").trim()
+            if (seenSrc[t.file]) continue
+            seenSrc[t.file] = true
             const idx = collected.length
-            const fixed = t.file
+            const slot = seenSlot[lang] ? `${lang}-${idx}` : lang
+            seenSlot[lang] = true
             const url = up
-                ? `${this.subEndpoint}/s/${anime}/${ep}/${lang}.${this.extOf(fixed)}?src=${encodeURIComponent(fixed)}${tokParam}${refParam}`
-                : fixed
+                ? `${this.subEndpoint}/s/${anime}/${ep}/${slot}.${this.extOf(t.file)}?src=${encodeURIComponent(t.file)}${tokParam}${refParam}`
+                : t.file
             collected.push({
                 id: `${lang}-${idx}`,
                 url,
-                language: t.label || "English",
+                language: label || this.langName(lang),
                 isDefault: false,
             })
-            if (englishIdx === -1 && lang === "en") englishIdx = idx
-            if (defaultIdx === -1 && t.default === true) defaultIdx = idx
+            if (lang === "en") {
+                if (englishAny === -1) englishAny = idx
+                if (englishFull === -1 && !this.isSignsOnly(label)) englishFull = idx
+            }
+            if (defaultIdx === -1 && t.default === true && !this.isSignsOnly(label)) defaultIdx = idx
         }
 
         if (collected.length === 0) return collected
-        const pick = englishIdx !== -1 ? englishIdx : defaultIdx !== -1 ? defaultIdx : 0
+        const pick = englishFull !== -1 ? englishFull : defaultIdx !== -1 ? defaultIdx : englishAny !== -1 ? englishAny : 0
         collected[pick].isDefault = true
         return collected.filter((s) => s.isDefault).concat(collected.filter((s) => !s.isDefault))
+    }
+
+    private isSignsOnly(label: string): boolean {
+        return /\bsigns?\b/i.test(label) && !/\bdialogue\b/i.test(label)
+    }
+
+    private langName(code: string): string {
+        const map: { [key: string]: string } = {
+            en: "English", ja: "Japanese", ar: "Arabic", de: "German", es: "Spanish", fr: "French",
+            it: "Italian", ru: "Russian", pt: "Portuguese", hi: "Hindi", id: "Indonesian",
+            ko: "Korean", zh: "Chinese", th: "Thai", vi: "Vietnamese", tr: "Turkish", pl: "Polish", nl: "Dutch",
+        }
+        return map[code] || code.toUpperCase()
     }
 
     private async langCodes(labels: string[]): Promise<string[]> {
@@ -947,6 +972,15 @@ class Provider {
         const toks = ["cf-mitigated", "cf-browser-verification", "/cdn-cgi/challenge-platform", "ddos-guard", "just a moment...</title>", "attention required! | cloudflare"]
         for (let i = 0; i < toks.length; i++) if (b.indexOf(toks[i]) !== -1) return toks[i]
         return ""
+    }
+
+    private isChallengeResponse(res: FetchResponse, body: string): boolean {
+        const h = res.headers || {}
+        for (const k in h) {
+            if (k.toLowerCase() === "cf-mitigated" && String(h[k]).toLowerCase().indexOf("challenge") !== -1) return true
+        }
+        if (res.status === 403 || res.status === 503) return !this.bodyIsSitePage(body)
+        return this.bodyIsChallenge(body) && !this.bodyIsSitePage(body)
     }
 
     private bodyIsChallenge(body: string): boolean {
