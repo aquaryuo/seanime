@@ -499,8 +499,13 @@ class Provider {
                 return firstResolved
             }
             if (audio === "dub") {
+                // Retry exactly the servers the dub check rejected, with the check
+                // skipped. It infers "this is really the subbed track" from the
+                // presence of a full English subtitle, which a genuine dub can also
+                // ship — so when every server trips it, prefer playing the dub the
+                // site advertised over failing outright.
                 for (const c of candidates) {
-                    if (dubMismatchIds[c.linkId]) continue
+                    if (!dubMismatchIds[c.linkId]) continue
                     let r: EpisodeServer | undefined
                     try {
                         r = await this.resolveServer(c.linkId, c.name, ctx, audio, true)
