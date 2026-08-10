@@ -62,8 +62,8 @@ class Provider {
         }
 
         if (results.length === 0 && lastErr) {
-            if (blocked) throw new Error(`${this.blockedMessage()} (${lastErr})`)
-            throw new Error(lastErr)
+            if (blocked) throw `${this.blockedMessage()} (${lastErr})`
+            throw lastErr
         }
         return this.filterBySeason(results, opts)
     }
@@ -545,9 +545,9 @@ class Provider {
         } catch (_e) {}
     }
 
-    private fail(scope: string, message: string): Error {
+    private fail(scope: string, message: string): string {
         this.reportError(scope, message)
-        return new Error(message)
+        return message
     }
 
     private blockedMessage(): string {
