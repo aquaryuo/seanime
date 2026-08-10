@@ -573,9 +573,9 @@ class Provider {
         } catch (_e) {}
     }
 
-    private fail(scope: string, message: string): Error {
+    private fail(scope: string, message: string): string {
         this.reportError(scope, message)
-        return new Error(message)
+        return message
     }
 
     private now(): number {
