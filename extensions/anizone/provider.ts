@@ -431,16 +431,41 @@ class Provider {
         return out
     }
 
-    private isSignsOnly(label: string): boolean {
-        return /\bsigns?\b/i.test(label) && !/\bdialogue\b/i.test(label)
+    private isNonDialogue(label: string): boolean {
+        const l = label || ""
+        if (/\b(?:full|dialogu?e|dialog|main|complete)\b/i.test(l)) return false
+        return /\b(?:forced|forc[eé]s|signs?|songs?|karaoke|kfx|typeset(?:ting)?|commentary)\b/i.test(l) || /\bs\s*[&+\/]\s*s\b/i.test(l) || /\bop\s*[\/&+]\s*ed\b/i.test(l)
+    }
+
+    private isMachine(label: string): boolean {
+        return /\b(?:ai|mtl)\b/i.test(label || "")
+    }
+
+    private isAltDialogue(label: string): boolean {
+        return /\b(?:sdh|cc|closed[\s-]?captions?|hearing[\s-]?impaired|dub[\s-]?titles?)\b/i.test(label || "")
+    }
+
+    private trackScore(label: string, isEnglish: boolean, def: boolean): number {
+        const base = this.isNonDialogue(label) ? (isEnglish ? 3 : 0) : this.isMachine(label) ? (isEnglish ? 4 : 1) : this.isAltDialogue(label) ? (isEnglish ? 5 : 1) : isEnglish ? 6 : 2
+        return def ? base * 10 + 1 : base * 10
+    }
+
+    private displayName(code: string, label: string): string {
+        const c = (code || "en").toLowerCase()
+        const name = this.langName(c)
+        if (!label) return name
+        if (!/[a-z]/.test(name)) return label
+        const base = this.langName(c.split("-")[0])
+        if (label.toLowerCase().indexOf(base.toLowerCase()) !== -1) return label
+        return `${name} - ${label}`
     }
 
     private async buildSubs(subs: { origin: string; lang: string; ext: string; label?: string; def?: boolean }[], anilistId: number, episode: number): Promise<VideoSubtitle[]> {
         const out: VideoSubtitle[] = []
+        const nonDialogue: boolean[] = []
         const seen: { [key: string]: boolean } = {}
-        let siteDefault = -1
-        let englishFull = -1
-        let englishAny = -1
+        let pick = 0
+        let best = -1
         for (const s of subs) {
             const origin = s.origin
             if (!origin || seen[origin]) continue
@@ -448,16 +473,24 @@ class Provider {
             const code = (s.lang || "en").toLowerCase()
             const label = (s.label || "").trim()
             const idx = out.length
-            out.push({ id: `${code}-${idx}`, url: origin, language: label || this.langName(code), isDefault: false })
-            const isEnglish = code.split("-")[0] === "en"
-            if (isEnglish && englishAny === -1) englishAny = idx
-            if (isEnglish && englishFull === -1 && !this.isSignsOnly(label)) englishFull = idx
-            if (siteDefault === -1 && s.def === true && !this.isSignsOnly(label)) siteDefault = idx
+            out.push({ id: `${code}-${idx}`, url: origin, language: this.displayName(code, label), isDefault: false })
+            const score = this.trackScore(label, code.split("-")[0] === "en", s.def === true)
+            nonDialogue.push(this.isNonDialogue(label))
+            if (score > best) {
+                best = score
+                pick = idx
+            }
         }
         if (out.length === 0) return out
-        const pick = englishFull !== -1 ? englishFull : siteDefault !== -1 ? siteDefault : englishAny !== -1 ? englishAny : 0
         out[pick].isDefault = true
-        return out.filter((s) => s.isDefault).concat(out.filter((s) => !s.isDefault))
+        const head: VideoSubtitle[] = []
+        const tail: VideoSubtitle[] = []
+        for (let i = 0; i < out.length; i++) {
+            if (i === pick) continue
+            if (nonDialogue[i]) tail.push(out[i])
+            else head.push(out[i])
+        }
+        return [out[pick]].concat(head).concat(tail)
     }
 
     private alOf(id: string): number {
@@ -491,7 +524,7 @@ class Provider {
             en: "English", ja: "Japanese", ar: "Arabic", de: "German", es: "Spanish", fr: "French",
             it: "Italian", ru: "Russian", pt: "Portuguese", hi: "Hindi", ta: "Tamil", id: "Indonesian",
             ko: "Korean", zh: "Chinese", th: "Thai", vi: "Vietnamese", tr: "Turkish", pl: "Polish", nl: "Dutch",
-            my: "Burmese", tl: "Tagalog",
+            my: "Malay", tl: "Tagalog",
             "es-419": "Latin American Spanish", "pt-br": "Portuguese (Brazil)",
             "zh-hans": "Chinese (Simplified)", "zh-hant": "Chinese (Traditional)",
         }

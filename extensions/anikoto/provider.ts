@@ -840,9 +840,9 @@ class Provider {
         const codes = await this.langCodes(valid.map((t) => t.label || "English"))
         const seenSrc: { [key: string]: boolean } = {}
         const seenSlot: { [key: string]: boolean } = {}
-        let englishFull = -1
-        let englishAny = -1
-        let defaultIdx = -1
+        const nonDialogue: boolean[] = []
+        let pick = 0
+        let best = -1
 
         for (let i = 0; i < valid.length; i++) {
             const t = valid[i]
@@ -862,21 +862,43 @@ class Provider {
                 language: label || this.langName(lang),
                 isDefault: false,
             })
-            if (lang === "en") {
-                if (englishAny === -1) englishAny = idx
-                if (englishFull === -1 && !this.isSignsOnly(label)) englishFull = idx
+            const score = this.trackScore(label, lang === "en", t.default === true)
+            nonDialogue.push(this.isNonDialogue(label))
+            if (score > best) {
+                best = score
+                pick = idx
             }
-            if (defaultIdx === -1 && t.default === true && !this.isSignsOnly(label)) defaultIdx = idx
         }
 
         if (collected.length === 0) return collected
-        const pick = englishFull !== -1 ? englishFull : defaultIdx !== -1 ? defaultIdx : englishAny !== -1 ? englishAny : 0
         collected[pick].isDefault = true
-        return collected.filter((s) => s.isDefault).concat(collected.filter((s) => !s.isDefault))
+        const head: VideoSubtitle[] = []
+        const tail: VideoSubtitle[] = []
+        for (let i = 0; i < collected.length; i++) {
+            if (i === pick) continue
+            if (nonDialogue[i]) tail.push(collected[i])
+            else head.push(collected[i])
+        }
+        return [collected[pick]].concat(head).concat(tail)
     }
 
-    private isSignsOnly(label: string): boolean {
-        return /\bsigns?\b/i.test(label) && !/\bdialogue\b/i.test(label)
+    private isNonDialogue(label: string): boolean {
+        const l = label || ""
+        if (/\b(?:full|dialogu?e|dialog|main|complete)\b/i.test(l)) return false
+        return /\b(?:forced|forc[eé]s|signs?|songs?|karaoke|kfx|typeset(?:ting)?|commentary)\b/i.test(l) || /\bs\s*[&+\/]\s*s\b/i.test(l) || /\bop\s*[\/&+]\s*ed\b/i.test(l)
+    }
+
+    private isMachine(label: string): boolean {
+        return /\b(?:ai|mtl)\b/i.test(label || "")
+    }
+
+    private isAltDialogue(label: string): boolean {
+        return /\b(?:sdh|cc|closed[\s-]?captions?|hearing[\s-]?impaired|dub[\s-]?titles?)\b/i.test(label || "")
+    }
+
+    private trackScore(label: string, isEnglish: boolean, def: boolean): number {
+        const base = this.isNonDialogue(label) ? (isEnglish ? 3 : 0) : this.isMachine(label) ? (isEnglish ? 4 : 1) : this.isAltDialogue(label) ? (isEnglish ? 5 : 1) : isEnglish ? 6 : 2
+        return def ? base * 10 + 1 : base * 10
     }
 
     private langName(code: string): string {
@@ -921,8 +943,7 @@ class Provider {
     }
 
     private fallbackCode(label: string): string {
-        const k = (label || "english").toLowerCase().replace(/[^a-z]/g, "")
-        if (!k) return "en"
+        const words = (label || "english").toLowerCase().split(/[^a-z]+/)
         const map: { [key: string]: string } = {
             eng: "en", english: "en",
             por: "pt", portuguese: "pt", brazilian: "pt",
@@ -949,7 +970,10 @@ class Provider {
             ukr: "uk", ukrainian: "uk",
             hin: "hi", hindi: "hi",
         }
-        return map[k] || "en"
+        for (const w of words) {
+            if (map[w]) return map[w]
+        }
+        return "en"
     }
 
     private withAudio(base: string, audio: string): string {
