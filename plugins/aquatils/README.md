@@ -13,7 +13,7 @@ Two stages, escalated automatically per request:
 
 Launch modes (persisted):
 
-- **Binary** *(default)* — fetches the OS/arch build (Linux/macOS x64+arm64, Windows x64) into `$CACHE/aquatils-beta/<ver>/solver/`, runs it via `sh -c` / `cmd /c` bound to `127.0.0.1`. First run: one **consent** click + Seanime's **Allow** download prompt.
+- **Binary** *(default)* — fetches the OS/arch build (Linux/macOS x64+arm64, Windows x64) into `$CACHE/aquatils/<ver>/solver/`, runs it via `sh -c` / `cmd /c` bound to `127.0.0.1`. First run: one **consent** click + Seanime's **Allow** download prompt.
 - **Remote** — point Host/Port at a FlareSolverr `/v1` endpoint you run (box / NAS / container). The plugin only manages sessions + status. Mandatory under Seanime **strict** secure mode (no `$os` / `$osExtra` / `ctx.downloader`).
 
 Advanced/Settings: **Test** (real `request.get` + timing), **Doctor** (cache/port/binary), **Stealth** (validates the live TLS fingerprint against `tls.peet.ws`), browser engine + window mode, encrypted DNS (DoH), adaptive rate-limit pacing, own-spec TLS fingerprint, Auto-start + crash-restart.
@@ -46,4 +46,4 @@ console.error("SEHERRv1 " + JSON.stringify({ t: Date.now(), ext, scope, msg: Str
 - Scopes: `system`, `storage`, `notification`.
 - `networkAccess: ["*"]` — loopback (log API + solver), a user-set Remote host (anywhere), GitHub release download. Broad because Remote is arbitrary and Seanime has no runtime per-host grant.
 - `commandScopes` `sh` / `cmd` — launch/stop the binary. Decline if Remote-only.
-- `readPaths` / `writePaths`: `$CACHE/aquatils-beta` — solver download/extract dir.
+- `readPaths` / `writePaths`: `$CACHE/aquatils` — solver download/extract dir.

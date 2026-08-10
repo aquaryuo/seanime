@@ -1,7 +1,7 @@
+declare const console: { log(...args: any[]): void; info(...args: any[]): void; warn(...args: any[]): void; error(...args: any[]): void }
+
 class Provider {
     private baseUrl = "{{baseUrl}}"
-    private subtitleSource = "{{subtitleSource}}"
-    private subEndpoint = "https://sub.ryuo.to"
     private cacheTtl = 900000
     private srcCacheTtl = 300000
 
@@ -35,7 +35,7 @@ class Provider {
         }
         await run(sq.primary)
         if (results.length === 0) await run(sq.fallback)
-        if (!anyOk) throw "anizone: search failed (site unreachable)"
+        if (!anyOk) throw this.fail("search", "anizone: search failed (site unreachable)")
         return this.pickBest(results, opts.media, sq.season, sq.part)
     }
 
@@ -100,8 +100,8 @@ class Provider {
             if (season < 2 && part < 2) {
                 const bare = scored.filter((x) => this.yearOf(x.r.title) === 0)
                 if (bare.length > 0) return bare
+                return []
             }
-            return []
         }
         if (season < 2 && part < 2) return scored
         return scored.filter((x) => {
@@ -188,7 +188,7 @@ class Provider {
         if (cached && cached.length > 0) return cached
         const res = await fetch(`${this.normBase()}/anime/${shortid}`, { headers: this.pageHeaders(), timeout: 12 })
         if (res.status === 404) return []
-        if (!res.ok) throw `anizone: series page failed (status ${res.status})`
+        if (!res.ok) throw this.fail("episodes", `anizone: series page failed (status ${res.status})`)
         const html = res.text()
         const nums: { [key: number]: boolean } = {}
         this.collectEps(html, shortid, nums)
@@ -223,17 +223,19 @@ class Provider {
         const alId = this.alOf(episode.id)
         const audio = this.audioOf(episode.id)
         const cacheKey = `anizone:src:${shortid}:${n}`
-        let html = this.readCache<string>(cacheKey, this.srcCacheTtl)
-        if (!html) {
+        let cached = this.readCache<{ m3u8: string; subs: { origin: string; lang: string; ext: string; label?: string; def?: boolean }[] }>(cacheKey, this.srcCacheTtl)
+        if (!cached || !cached.m3u8) {
             const res = await fetch(`${this.normBase()}/anime/${shortid}/${n}`, { headers: this.pageHeaders(), timeout: 14 })
-            if (!res.ok) throw `anizone: episode page failed (status ${res.status})`
-            html = res.text()
-            if (html.indexOf("master.m3u8") !== -1) this.writeCache(cacheKey, html)
+            if (!res.ok) throw this.fail("server", `anizone: episode page failed (status ${res.status})`)
+            const html = res.text()
+            const found = this.firstMatch(html, /https?:\/\/[^"'\s]+\/master\.m3u8[^"'\s]*/)
+            if (!found) throw this.fail("server", "anizone: no stream found for this episode")
+            cached = { m3u8: found, subs: this.extractSubs(html) }
+            this.writeCache(cacheKey, cached)
         }
-        const m3u8 = this.firstMatch(html, /https?:\/\/[^"'\s]+\/master\.m3u8/)
-        if (!m3u8) throw "anizone: no stream found for this episode"
-        if (audio === "dub" && !(await this.hasEnglishAudio(m3u8, shortid, n))) throw "anizone: no dub available for this episode"
-        const subtitles = await this.buildSubs(html, alId, parseInt(n, 10) || episode.number)
+        const m3u8 = cached.m3u8
+        if (audio === "dub" && !(await this.hasEnglishAudio(m3u8, shortid, n))) throw this.fail("server", "anizone: no dub available for this episode")
+        const subtitles = await this.buildSubs(cached.subs, alId, parseInt(n, 10) || episode.number)
         return {
             server: server === "Auto" || server === "default" || !server ? "Auto" : server,
             headers: { Referer: `${this.normBase()}/` },
@@ -376,48 +378,119 @@ class Provider {
         return titles[0]
     }
 
-    private async buildSubs(html: string, anilistId: number, episode: number): Promise<VideoSubtitle[]> {
-        const out: VideoSubtitle[] = []
-        const re = /https?:\/\/[^"'\s]+\/subtitles\/[0-9]+_([a-z-]+)\.(ass|srt)/g
-        const wantSite = this.subtitleSource === "subryuo" && anilistId > 0 && episode > 0
-        const viaSite = wantSite && (await this.subUp())
+    private tagAttr(tag: string, name: string): string {
+        const pats = [
+            new RegExp("(?:^|\\s)" + name + '\\s*=\\s*"([^"]*)"', "i"),
+            new RegExp("(?:^|\\s)" + name + "\\s*=\\s*'([^']*)'", "i"),
+            new RegExp("(?:^|\\s)" + name + "\\s*=\\s*([^\\s>]+)", "i"),
+        ]
+        for (const re of pats) {
+            const m = re.exec(tag)
+            if (m) return m[1] || ""
+        }
+        return ""
+    }
+
+    private decodeEntities(s: string): string {
+        return (s || "")
+            .replace(/&amp;/gi, "&")
+            .replace(/&lt;/gi, "<")
+            .replace(/&gt;/gi, ">")
+            .replace(/&quot;/gi, '"')
+            .replace(/&#0?39;|&apos;/gi, "'")
+            .replace(/&nbsp;/gi, " ")
+            .trim()
+    }
+
+    private extractSubs(html: string): { origin: string; lang: string; ext: string; label: string; def: boolean }[] {
+        const out: { origin: string; lang: string; ext: string; label: string; def: boolean }[] = []
         const seen: { [key: string]: boolean } = {}
-        let englishIdx = -1
+        const tagRe = /<track\b[^>]*>/gi
+        let t: RegExpExecArray | null
+        while ((t = tagRe.exec(html)) !== null) {
+            const tag = t[0]
+            const src = this.tagAttr(tag, "src")
+            if (!/^https?:\/\//i.test(src) || src.indexOf("/subtitles/") === -1) continue
+            const kind = this.tagAttr(tag, "kind").toLowerCase()
+            if (kind && kind !== "subtitles" && kind !== "captions") continue
+            if (seen[src]) continue
+            seen[src] = true
+            const fromUrl = src.match(/\/subtitles\/[0-9]+_([A-Za-z0-9-]+)\.(ass|srt|vtt)/i)
+            const lang = this.tagAttr(tag, "srclang") || (fromUrl ? fromUrl[1] : "") || "en"
+            const ext = (this.tagAttr(tag, "data-type") || (fromUrl ? fromUrl[2] : "") || "ass").toLowerCase()
+            out.push({ origin: src, lang, ext, label: this.decodeEntities(this.tagAttr(tag, "label")), def: /(?:^|\s)default(?:[\s/>=])/i.test(tag) })
+        }
+        if (out.length > 0) return out
+        const re = /https?:\/\/[^"'\s]+\/subtitles\/[0-9]+_([A-Za-z0-9-]+)\.(ass|srt)/g
         let m: RegExpExecArray | null
         while ((m = re.exec(html)) !== null) {
-            const origin = m[0]
-            const lang = (m[1] || "en").toLowerCase().split("-")[0]
-            const ext = (m[2] || "ass").toLowerCase()
-            if (seen[lang]) continue
-            seen[lang] = true
+            if (seen[m[0]]) continue
+            seen[m[0]] = true
+            out.push({ origin: m[0], lang: m[1] || "en", ext: m[2] || "ass", label: "", def: false })
+        }
+        return out
+    }
+
+    private isNonDialogue(label: string): boolean {
+        const l = label || ""
+        if (/\b(?:full|dialogu?e|dialog|main|complete)\b/i.test(l)) return false
+        return /\b(?:forced|forc[eé]s|signs?|songs?|karaoke|kfx|typeset(?:ting)?|commentary)\b/i.test(l) || /\bs\s*[&+\/]\s*s\b/i.test(l) || /\bop\s*[\/&+]\s*ed\b/i.test(l)
+    }
+
+    private isMachine(label: string): boolean {
+        return /\b(?:ai|mtl)\b/i.test(label || "")
+    }
+
+    private isAltDialogue(label: string): boolean {
+        return /\b(?:sdh|cc|closed[\s-]?captions?|hearing[\s-]?impaired|dub[\s-]?titles?)\b/i.test(label || "")
+    }
+
+    private trackScore(label: string, isEnglish: boolean, def: boolean): number {
+        const base = this.isNonDialogue(label) ? (isEnglish ? 3 : 0) : this.isMachine(label) ? (isEnglish ? 4 : 1) : this.isAltDialogue(label) ? (isEnglish ? 5 : 1) : isEnglish ? 6 : 2
+        return def ? base * 10 + 1 : base * 10
+    }
+
+    private displayName(code: string, label: string): string {
+        const c = (code || "en").toLowerCase()
+        const name = this.langName(c)
+        if (!label) return name
+        if (!/[a-z]/.test(name)) return label
+        const base = this.langName(c.split("-")[0])
+        if (label.toLowerCase().indexOf(base.toLowerCase()) !== -1) return label
+        return `${name} - ${label}`
+    }
+
+    private async buildSubs(subs: { origin: string; lang: string; ext: string; label?: string; def?: boolean }[], anilistId: number, episode: number): Promise<VideoSubtitle[]> {
+        const out: VideoSubtitle[] = []
+        const nonDialogue: boolean[] = []
+        const seen: { [key: string]: boolean } = {}
+        let pick = 0
+        let best = -1
+        for (const s of subs) {
+            const origin = s.origin
+            if (!origin || seen[origin]) continue
+            seen[origin] = true
+            const code = (s.lang || "en").toLowerCase()
+            const label = (s.label || "").trim()
             const idx = out.length
-            const url = viaSite ? this.siteSubUrl(anilistId, episode, lang, ext, origin) : origin
-            out.push({ id: `${lang}-${idx}`, url, language: this.langName(lang), isDefault: false })
-            if (englishIdx === -1 && lang === "en") englishIdx = idx
+            out.push({ id: `${code}-${idx}`, url: origin, language: this.displayName(code, label), isDefault: false })
+            const score = this.trackScore(label, code.split("-")[0] === "en", s.def === true)
+            nonDialogue.push(this.isNonDialogue(label))
+            if (score > best) {
+                best = score
+                pick = idx
+            }
         }
         if (out.length === 0) return out
-        const pick = englishIdx !== -1 ? englishIdx : 0
         out[pick].isDefault = true
-        return out.filter((s) => s.isDefault).concat(out.filter((s) => !s.isDefault))
-    }
-
-    private siteSubUrl(anilistId: number, episode: number, lang: string, ext: string, origin: string): string {
-        const ref = encodeURIComponent(`${this.normBase()}/`)
-        return `${this.subEndpoint}/s/${anilistId}/${episode}/${lang}.${ext}?source=anizone&src=${encodeURIComponent(origin)}&ref=${ref}`
-    }
-
-    private async subUp(): Promise<boolean> {
-        const cached = this.readCache<boolean>("anizone:subup", 60000)
-        if (cached !== undefined) return cached
-        let up = false
-        try {
-            const res = await fetch(`${this.subEndpoint}/health`, { timeout: 4 })
-            up = !!res && res.ok
-        } catch (_e) {
-            up = false
+        const head: VideoSubtitle[] = []
+        const tail: VideoSubtitle[] = []
+        for (let i = 0; i < out.length; i++) {
+            if (i === pick) continue
+            if (nonDialogue[i]) tail.push(out[i])
+            else head.push(out[i])
         }
-        this.writeCache("anizone:subup", up)
-        return up
+        return [out[pick]].concat(head).concat(tail)
     }
 
     private alOf(id: string): number {
@@ -439,7 +512,7 @@ class Provider {
             const res = await fetch(m3u8, { headers: this.pageHeaders(), timeout: 8 })
             if (res.ok) {
                 const body = res.text()
-                ok = /#EXT-X-MEDIA:TYPE=AUDIO[^\n]*LANGUAGE="en"/i.test(body) || /#EXT-X-MEDIA:TYPE=AUDIO[^\n]*(?:english|\bdub\b)/i.test(body)
+                ok = /#EXT-X-MEDIA:TYPE=AUDIO[^\n]*LANGUAGE="(?:en|eng|en-[a-z]+)"/i.test(body) || /#EXT-X-MEDIA:TYPE=AUDIO[^\n]*(?:english|\bdub\b)/i.test(body)
             }
         } catch (_e) {}
         this.writeCache(key, ok)
@@ -451,8 +524,14 @@ class Provider {
             en: "English", ja: "Japanese", ar: "Arabic", de: "German", es: "Spanish", fr: "French",
             it: "Italian", ru: "Russian", pt: "Portuguese", hi: "Hindi", ta: "Tamil", id: "Indonesian",
             ko: "Korean", zh: "Chinese", th: "Thai", vi: "Vietnamese", tr: "Turkish", pl: "Polish", nl: "Dutch",
+            my: "Malay", tl: "Tagalog",
+            "es-419": "Latin American Spanish", "pt-br": "Portuguese (Brazil)",
+            "zh-hans": "Chinese (Simplified)", "zh-hant": "Chinese (Traditional)",
         }
-        return map[code] || code.toUpperCase()
+        const c = (code || "").toLowerCase()
+        if (map[c]) return map[c]
+        const base = c.split("-")[0]
+        return map[base] || c.toUpperCase()
     }
 
     private shortId(id: string): string {
@@ -486,6 +565,17 @@ class Provider {
 
     private pageHeaders(): { [key: string]: string } {
         return { Referer: `${this.normBase()}/` }
+    }
+
+    private reportError(scope: string, message: string): void {
+        try {
+            console.error("SEHERRv1 " + JSON.stringify({ t: this.now(), ext: "aq-anizone", scope: scope, msg: String(message) }))
+        } catch (_e) {}
+    }
+
+    private fail(scope: string, message: string): Error {
+        this.reportError(scope, message)
+        return new Error(message)
     }
 
     private now(): number {
