@@ -1060,6 +1060,16 @@ function init() {
             try { return $storage.get<string>("fs.solverReady") === FS_VERSION && !solverBinExists() } catch (_e) { return false }
         }
 
+        // Deliberately not under FS_VERSION: this directory holds the solved-site
+        // cookies, which stay valid across solver builds and are expensive to earn.
+        function fsStateDir(): string {
+            try {
+                return $filepath.join($os.cacheDir(), "aquatils-beta", "state")
+            } catch (_e) {
+                return ""
+            }
+        }
+
         function fsLogPath(): string {
             try {
                 return $filepath.join($os.cacheDir(), "aquatils-beta", FS_VERSION, "solver.log")
@@ -1329,6 +1339,11 @@ function init() {
                 env.push("PORT=" + port)
                 env.push("LOG_LEVEL=" + (fsVerbose.get() ? "debug" : "info"))
                 if (logPath) env.push("LOG_FILE=" + logPath)
+                // Outside the version directory on purpose: the cleared-site
+                // cookies are the whole point of running this, and keeping them
+                // beside the binary threw them away on every update.
+                const statePath = fsStateDir()
+                if (statePath) env.push("SOLVER_STATE_DIR=" + statePath)
                 if (chromiumOverride) env.push("SOLVER_CHROME=" + chromiumOverride)
                 env.push("SOLVER_BROWSER_MODE=" + (fsBrowserMode.get() === "headed" ? "headed" : fsBrowserMode.get() === "headless" ? "headless" : $os.platform === "windows" ? "offscreen" : "auto"))
                 if (fsBrowserMode.get() === "headless") env.push("SOLVER_HEADLESS=1")
