@@ -728,7 +728,13 @@ function init() {
         }
 
         function fsBase(): string {
-            return "http://" + (fsHost.get() || FS_DEFAULT_HOST) + ":" + (fsPort.get() || FS_DEFAULT_PORT)
+            // The bundled solver refuses to bind anywhere but loopback, so in that
+            // mode the host field cannot be right and must not be consulted. It is
+            // left holding whatever Remote mode was pointed at, and honouring it
+            // sent every request to a machine that was not running our solver —
+            // with no way to notice or undo it from the tray.
+            const host = fsMode.get() === "remote" ? (fsHost.get() || FS_DEFAULT_HOST) : FS_DEFAULT_HOST
+            return "http://" + host + ":" + (fsPort.get() || FS_DEFAULT_PORT)
         }
 
         function fsPersist(): void {
@@ -1179,6 +1185,7 @@ function init() {
             try { id = dl.download(st.url, zip, { timeout: 900.5 }) } catch (_e) { setErr("Chromium download couldn't start: " + String(_e)); done(false); return }
             plog("downloading Chromium" + (st.version ? " " + st.version : "") + " (browser solver)")
             dlLogAt = 0
+
             const cancel = dl.watch(id, (p: $downloader.DownloadProgress | undefined) => {
                 if (!p) return
                 if (p.status === "downloading") {
@@ -1567,6 +1574,44 @@ function init() {
             return "'" + String(s).replace(/'/g, "'\\''") + "'"
         }
 
+        // The runtime's CryptoJS.SHA256 takes a string, and the host re-encodes it
+        // on the way in, so any byte above 0x7f is mangled — an archive cannot be
+        // hashed through it (measured: both a Uint8Array and a latin1 string give
+        // the wrong digest). Ask the OS instead; every platform ships a tool.
+        function sha256OfFile(path: string): string {
+            try {
+                const c = $os.platform === "windows"
+                    ? $os.cmd("cmd", "/c", "certutil -hashfile " + winCmdArg(path) + " SHA256")
+                    : $os.cmd("sh", "-c", ($os.platform === "darwin" ? "shasum -a 256 " : "sha256sum ") + shq(path))
+                const raw = c.output()
+                const text = typeof raw === "string" ? raw : ""
+                // sha256sum/shasum lead with the digest; certutil puts it on its own
+                // line, sometimes spaced. Take the first 64-hex run either way.
+                const m = String(text).replace(/\s+/g, "").match(/[0-9a-fA-F]{64}/)
+                return m ? m[0].toLowerCase() : ""
+            } catch (_e) {
+                return ""
+            }
+        }
+
+        // Returns the expected digest for an asset from the release's checksums
+        // file, or "" when it cannot be obtained.
+        async function publishedSha256(asset: string): Promise<string> {
+            try {
+                const url = "https://github.com/" + SOLVER_REPO + "/releases/download/solver-v"
+                    + SOLVER_VERSION + "/aquatils-solver_checksums.txt"
+                const res = await ctx.fetch(url, { method: "GET" })
+                if (!res.ok) return ""
+                const lines = String(res.text()).split("\n")
+                for (const line of lines) {
+                    const parts = line.trim().split(/\s+/)
+                    // "<digest>  <name>", name possibly prefixed with "*".
+                    if (parts.length >= 2 && parts[1].replace(/^\*/, "") === asset) return parts[0].toLowerCase()
+                }
+            } catch (_e) {}
+            return ""
+        }
+
         function winCmdArg(s: string): string {
             if (/[ \t]/.test(s)) return s
             return s.replace(/[&^()<>|]/g, "^$&")
@@ -1659,6 +1704,9 @@ function init() {
                 tray.update()
                 return
             }
+            // Held as its own const so the null check above still applies inside
+            // finishInstall, which tsc treats as callable later.
+            const chosen = pick
             let cacheDir = ""
             try {
                 cacheDir = $os.cacheDir()
@@ -1702,6 +1750,9 @@ function init() {
             const url = "https://github.com/" + SOLVER_REPO + "/releases/download/solver-v" + SOLVER_VERSION + "/" + pick.asset
             plog("downloading solver binary " + pick.asset + " from github.com/" + SOLVER_REPO)
             dlLogAt = 0
+            // Started alongside the download so the digest is in hand by the time
+            // there is something to check it against.
+            const wantSha = publishedSha256(pick.asset)
             let id = ""
             try {
                 id = dl.download(url, archive, { timeout: 900.5 })
@@ -1721,6 +1772,65 @@ function init() {
                 tray.update()
                 return
             }
+            // Unpack, sanity-check and start. Split out of the download callback so
+            // the checksum can be awaited before any of it happens.
+            function finishInstall(archiveSize: number, expected: number): void {
+                setNote("Extracting solver " + SOLVER_VERSION + "…")
+                tray.update()
+                let extractOk = true
+                let extractErr = ""
+                try {
+                    if (chosen.zip) $osExtra.unzip(archive, dir)
+                    else $osExtra.unwrapAndMove(archive, dir)
+                } catch (e) {
+                    extractOk = false
+                    extractErr = String(e)
+                    plog("extract via " + (chosen.zip ? "unzip" : "unwrapAndMove") + " failed: " + extractErr)
+                }
+                if (!extractOk && !chosen.zip && $os.platform !== "windows") {
+                    try {
+                        $os.cmd("sh", "-c", "tar -xzf " + shq(archive) + " -C " + shq(dir)).combinedOutput()
+                        if (solverBinExists()) { extractOk = true; plog("recovered via system tar") }
+                        else plog("system tar ran but the binary is still missing")
+                    } catch (e2) {
+                        plog("system tar fallback failed: " + String(e2))
+                    }
+                }
+                if (!extractOk) {
+                    fsBusy = false
+                    setStatus("down")
+                    try { $os.removeAll(dir) } catch (_e) {}
+                    try { $storage.set("fs.solverReady", "") } catch (_e) {}
+                    setErr("Couldn't extract the solver: " + extractErr + ". Press Start to retry; if it keeps failing, copy the diagnostics (Advanced) and report it.")
+                    setNote("Extraction failed - see logs.")
+                    tray.update()
+                    return
+                }
+                try { $os.removeAll(archive) } catch (_e) {}
+                let exeSize = 0
+                let exeOk = false
+                try {
+                    const stb = $os.stat(binPath)
+                    if (stb) { exeOk = true; try { exeSize = stb.size() } catch (_e) { exeSize = -1 } }
+                } catch (_e) {}
+                plog("extracted " + chosen.bin + " " + (exeSize >= 0 ? fmtSize(exeSize) : "size?") + " (archive " + fmtSize(archiveSize) + (expected ? " of " + fmtSize(expected) : "") + ")")
+                const okBin = exeOk && (exeSize < 0 || (exeSize >= 1024 && (archiveSize === 0 || exeSize >= archiveSize)))
+                if (!okBin) {
+                    fsBusy = false
+                    setStatus("down")
+                    try { $storage.set("fs.solverReady", "") } catch (_e) {}
+                    try { $os.removeAll(dir) } catch (_e) {}
+                    setErr("The downloaded solver is incomplete" + (exeSize > 0 ? " (" + fmtSize(exeSize) + ")" : "") + " — the download is being cut short. Press Start to try again.")
+                    setNote("Download incomplete — press Start to retry.")
+                    tray.update()
+                    return
+                }
+                try { $storage.set("fs.solverReady", FS_VERSION) } catch (_e) {}
+                markInstalled()
+                fsBusy = false
+                binaryLaunch(binPath)
+            }
+
             const cancel = dl.watch(id, (p: $downloader.DownloadProgress | undefined) => {
                 if (!p) return
                 if (p.status === "downloading") {
@@ -1748,60 +1858,31 @@ function init() {
                         tray.update()
                         return
                     }
-                    setNote("Extracting solver " + SOLVER_VERSION + "…")
-                    tray.update()
-                    let extractOk = true
-                    let extractErr = ""
-                    try {
-                        if (pick.zip) $osExtra.unzip(archive, dir)
-                        else $osExtra.unwrapAndMove(archive, dir)
-                    } catch (e) {
-                        extractOk = false
-                        extractErr = String(e)
-                        plog("extract via " + (pick.zip ? "unzip" : "unwrapAndMove") + " failed: " + extractErr)
-                    }
-                    if (!extractOk && !pick.zip && $os.platform !== "windows") {
-                        try {
-                            $os.cmd("sh", "-c", "tar -xzf " + shq(archive) + " -C " + shq(dir)).combinedOutput()
-                            if (solverBinExists()) { extractOk = true; plog("recovered via system tar") }
-                            else plog("system tar ran but the binary is still missing")
-                        } catch (e2) {
-                            plog("system tar fallback failed: " + String(e2))
+                    // This archive is about to be unpacked, made executable and run.
+                    // The release publishes a digest for exactly that reason, and
+                    // until now nothing read it. A mismatch is fatal; being unable
+                    // to check (no digest published, no hash tool) is only noted,
+                    // since refusing to run then would strand the user over a
+                    // missing coreutil rather than a real problem.
+                    wantSha.then((want) => {
+                        const got = want ? sha256OfFile(archive) : ""
+                        if (want && got && got !== want) {
+                            fsBusy = false
+                            setStatus("down")
+                            plog("checksum mismatch for " + pick.asset + " — discarding the download")
+                            try { $storage.set("fs.solverReady", "") } catch (_e) {}
+                            try { $os.removeAll(dir) } catch (_e) {}
+                            setErr("The downloaded solver did not match the checksum published with the release, so it was discarded and not run. Press Start to try again.")
+                            setNote("Checksum mismatch — download discarded.")
+                            ctx.toast.error("Aqua's Utils: the downloaded solver failed its checksum and was discarded.")
+                            tray.update()
+                            return
                         }
-                    }
-                    if (!extractOk) {
-                        fsBusy = false
-                        setStatus("down")
-                        try { $os.removeAll(dir) } catch (_e) {}
-                        try { $storage.set("fs.solverReady", "") } catch (_e) {}
-                        setErr("Couldn't extract the solver: " + extractErr + ". Press Start to retry; if it keeps failing, copy the diagnostics (Advanced) and report it.")
-                        setNote("Extraction failed - see logs.")
-                        tray.update()
-                        return
-                    }
-                    try { $os.removeAll(archive) } catch (_e) {}
-                    let exeSize = 0
-                    let exeOk = false
-                    try {
-                        const stb = $os.stat(binPath)
-                        if (stb) { exeOk = true; try { exeSize = stb.size() } catch (_e) { exeSize = -1 } }
-                    } catch (_e) {}
-                    plog("extracted " + pick.bin + " " + (exeSize >= 0 ? fmtSize(exeSize) : "size?") + " (archive " + fmtSize(archiveSize) + (expected ? " of " + fmtSize(expected) : "") + ")")
-                    const okBin = exeOk && (exeSize < 0 || (exeSize >= 1024 && (archiveSize === 0 || exeSize >= archiveSize)))
-                    if (!okBin) {
-                        fsBusy = false
-                        setStatus("down")
-                        try { $storage.set("fs.solverReady", "") } catch (_e) {}
-                        try { $os.removeAll(dir) } catch (_e) {}
-                        setErr("The downloaded solver is incomplete" + (exeSize > 0 ? " (" + fmtSize(exeSize) + ")" : "") + " — the download is being cut short. Press Start to try again.")
-                        setNote("Download incomplete — press Start to retry.")
-                        tray.update()
-                        return
-                    }
-                    try { $storage.set("fs.solverReady", FS_VERSION) } catch (_e) {}
-                    markInstalled()
-                    fsBusy = false
-                    binaryLaunch(binPath)
+                        if (!want) plog("no published checksum for " + pick.asset + " — continuing unverified")
+                        else if (!got) plog("no working sha256 tool on this machine — continuing unverified")
+                        else plog("checksum verified for " + pick.asset)
+                        finishInstall(archiveSize, expected)
+                    }).catch(() => { finishInstall(archiveSize, expected) })
                 } else if (p.status === "error") {
                     cancel()
                     fsDownloadId = ""
@@ -2684,8 +2765,12 @@ function init() {
         }
         plog("aquatils loaded (managing solver " + SOLVER_VERSION + ")")
 
-        ctx.jobs.poll("aquatils-seh-poll", sehPoll, SEH_POLL_MS, { immediate: true })
-        ctx.jobs.poll("aquatils-fs-poll", fsRefresh, FS_POLL_MS, { immediate: true })
+        // Wrapped in singleflight because a tick is not skipped when the previous
+        // one is still running. fsRefresh can restart the solver, so two overlapping
+        // runs both see it down and both act on that, doubling the restart count and
+        // racing each other's launches.
+        ctx.jobs.poll("aquatils-seh-poll", () => ctx.jobs.singleflight("aquatils-seh-poll-run", sehPoll), SEH_POLL_MS, { immediate: true })
+        ctx.jobs.poll("aquatils-fs-poll", () => ctx.jobs.singleflight("aquatils-fs-poll-run", fsRefresh), FS_POLL_MS, { immediate: true })
 
         if (fsAutoStart.get()) {
             if (uiMode.get() !== "advanced") {
