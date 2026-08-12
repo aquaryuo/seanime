@@ -1,0 +1,10 @@
+# Agent and tooling state, never part of the published extensions or plugin.
+.claude/
+.playwright-mcp/
+
+# A stray nested checkout that collected browser-automation dumps.
+/seanime/
+
+node_modules/
+*.log
+.DS_Store
