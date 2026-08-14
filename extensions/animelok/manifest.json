@@ -1,7 +1,7 @@
 {
   "id": "aq-animelok-beta",
   "name": "Animelok - BETA",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/animelok/manifest.json",
   "language": "typescript",
   "type": "onlinestream-provider",

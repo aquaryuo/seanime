@@ -1,7 +1,12 @@
 declare const console: { log(...args: any[]): void; info(...args: any[]): void; warn(...args: any[]): void; error(...args: any[]): void }
 
 type VibeTrack = { url?: string; lang?: string; label?: string; kind?: string; default?: boolean }
-type VibeResult = { status: "ok" | "notfound" | "nosource" | "fail"; url: string; tracks: VibeTrack[]; headers: { [key: string]: string } }
+type VibeData = { sources?: { url: string }[]; tracks?: VibeTrack[]; headers?: { [key: string]: string } }
+type Availability = { exists: boolean; audio: string; subOrDub: SubOrDub; broken?: boolean }
+// "badshape" is the one answer the site cannot mean: a 200 whose body is not JSON, or is
+// JSON without the `sources` array the player reads from. Absence is a 404 ("notfound")
+// and an episode the extractor could not fill is a 500 ("nosource").
+type VibeResult = { status: "ok" | "notfound" | "nosource" | "fail" | "badshape"; url: string; tracks: VibeTrack[]; headers: { [key: string]: string } }
 
 class Provider {
     private baseUrl = "{{baseUrl}}"
@@ -18,6 +23,9 @@ class Provider {
         if (!anilistId || anilistId <= 0) anilistId = this.parseAnilistId(opts.query)
         if (!anilistId || anilistId <= 0) return []
         const av = await this.availability(anilistId, opts.dub)
+        // An answer nobody can read is not an absent one, and returning [] for it looks
+        // exactly like a title this site does not carry.
+        if (av.broken) throw this.fail("search", `animelok: ${this.normBase()} answered for AniList id ${anilistId} in a shape this extension does not understand — the site changed its API; this extension needs an update.`)
         if (!av.exists) return []
         const epCount = opts.media.episodeCount && opts.media.episodeCount > 0 ? opts.media.episodeCount : 0
         const title = opts.media.englishTitle || opts.media.romajiTitle || `Anime ${anilistId}`
@@ -67,6 +75,7 @@ class Provider {
         }
         if (v.status === "notfound") throw this.fail("server", `animelok: episode ${meta.num} is not available on this site`)
         if (v.status === "nosource") throw this.fail("server", `animelok: no source for episode ${meta.num} right now (the site returned an error; try again later)`)
+        if (v.status === "badshape") throw this.fail("server", `animelok: the site answered for episode ${meta.num} in a shape this extension does not understand — the site changed its API; this extension needs an update.`)
         throw this.fail("server", `animelok: source temporarily unavailable (failed to extract episode ${meta.num}; try again)`)
     }
 
@@ -105,12 +114,12 @@ class Provider {
         return out.filter((s) => s.isDefault).concat(out.filter((s) => !s.isDefault))
     }
 
-    private async availability(anilistId: number, wantDub: boolean): Promise<{ exists: boolean; audio: string; subOrDub: SubOrDub }> {
+    private async availability(anilistId: number, wantDub: boolean): Promise<Availability> {
         const cacheKey = `animelok:avail:${anilistId}:${wantDub ? "d" : "s"}`
-        const cached = this.readCache<{ exists: boolean; audio: string; subOrDub: SubOrDub }>(cacheKey, this.cacheTtl)
+        const cached = this.readCache<Availability>(cacheKey, this.cacheTtl)
         if (cached) return cached
         const failKey = `animelok:availfail:${anilistId}`
-        const negativeCached = this.readCache<{ exists: boolean; audio: string; subOrDub: SubOrDub }>(failKey, this.availFailTtl)
+        const negativeCached = this.readCache<Availability>(failKey, this.availFailTtl)
         if (negativeCached) return negativeCached
         const sub = await this.getVibe(anilistId, 1, "sub")
         const dub = await this.getVibe(anilistId, 1, "dub")
@@ -126,7 +135,8 @@ class Provider {
             audio = wantDub ? "dub" : "sub"
             subOrDub = "both"
         }
-        const result = { exists, audio, subOrDub }
+        const broken = !exists && (sub.status === "badshape" || dub.status === "badshape")
+        const result = { exists, audio, subOrDub, broken }
         const definitelyAbsent = sub.status === "notfound" && dub.status === "notfound"
         if (exists || definitelyAbsent) {
             this.writeCache(cacheKey, result)
@@ -153,15 +163,23 @@ class Provider {
             if (res.status === 404) return { status: "notfound", url: "", tracks: [], headers: {} }
             if (res.status === 500 && this.noSources(res)) return { status: "nosource", url: "", tracks: [], headers: {} }
             if (res.ok) {
+                let data: VibeData | undefined
+                try {
+                    data = res.json<VibeData>()
+                } catch (_e) {}
+                // Every 200 the site means to send carries a `sources` array — an empty one when
+                // it has nothing to offer. A body without one is the API changing shape, which
+                // would otherwise reach the user as this episode simply not existing.
+                if (!data || !Array.isArray(data.sources)) {
+                    this.reportError("parse", `animelok: API returned ${res.status} with no sources list for ${anilistId} ep ${ep} (${audio}) — the site changed its API`)
+                    return { status: "badshape", url: "", tracks: [], headers: {} }
+                }
                 let url = ""
                 let tracks: VibeTrack[] = []
                 let headers: { [key: string]: string } = {}
-                try {
-                    const data = res.json<{ sources?: { url: string }[]; tracks?: VibeTrack[]; headers?: { [key: string]: string } }>()
-                    if (data && data.sources && data.sources.length > 0 && data.sources[0]) url = data.sources[0].url || ""
-                    if (data && data.tracks && data.tracks.length > 0) tracks = data.tracks
-                    if (data && data.headers) headers = data.headers
-                } catch (_e) {}
+                if (data.sources.length > 0 && data.sources[0]) url = data.sources[0].url || ""
+                if (data.tracks && data.tracks.length > 0) tracks = data.tracks
+                if (data.headers) headers = data.headers
                 if (url) {
                     const ok: VibeResult = { status: "ok", url, tracks, headers }
                     this.writeCache(cacheKey, ok)

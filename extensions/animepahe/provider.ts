@@ -31,13 +31,15 @@ class Provider {
 
         for (const q of queries) {
             let data: AnimeData[] | undefined
+            let shapeErr = ""
             const ckey = `apahe:srch:${q.toLowerCase()}`
             const cachedData = this.readCache<AnimeData[]>(ckey, 300000)
             if (cachedData && cachedData.length > 0) {
                 data = cachedData
             } else {
                 try {
-                    const json = await this.getJson<{ data?: AnimeData[] }>(`${this.baseUrl}/api?m=search&q=${encodeURIComponent(q)}`)
+                    const json = await this.getJson<SearchResponse>(`${this.baseUrl}/api?m=search&q=${encodeURIComponent(q)}`)
+                    shapeErr = this.searchShapeError(json)
                     data = json && json.data ? json.data : []
                     if (data.length > 0) this.writeCache(ckey, data)
                 } catch (e) {
@@ -48,6 +50,10 @@ class Provider {
                     if (blocked || msg.indexOf("reachable") !== -1 || msg.indexOf("endpoint not set") !== -1 || msg.indexOf("protection") !== -1 || msg.indexOf("expected JSON") !== -1) break
                 }
             }
+            // A 200 with parseable JSON but no recognisable result list is not
+            // "this title isn't here" — it reads as zero results all the way up
+            // to the user, so nothing would ever flag the layout change.
+            if (shapeErr) throw this.fail("parse", shapeErr)
             if (!data) continue
             for (const item of data) {
                 if (!item || !item.session || seen[item.session]) continue
@@ -66,6 +72,26 @@ class Provider {
             throw lastErr
         }
         return this.filterBySeason(results, opts)
+    }
+
+    // The API wraps every search in the same pagination envelope: a numeric
+    // `total` and a `data` array, `total:0` with `data:[]` when there really is
+    // no match. Anything outside that is the site changing under us.
+    private searchShapeError(json: SearchResponse | undefined): string {
+        const what = "AnimePahe's search API answered, but "
+        const tail = " — the site changed its API; this extension needs an update."
+        if (!json) return what + "with nothing readable" + tail
+        if (!Array.isArray(json.data)) return what + "without a result list" + tail
+        const total = typeof json.total === "number" ? json.total : -1
+        if (json.data.length === 0) {
+            if (total < 0) return what + "without a result count" + tail
+            if (total > 0) return what + "listed " + total + " matches while returning none" + tail
+            return ""
+        }
+        for (const item of json.data) {
+            if (item && typeof item.session === "string" && item.session) return ""
+        }
+        return what + "none of its " + json.data.length + " results carry an id" + tail
     }
 
     private filterBySeason(results: SearchResult[], opts: SearchOptions): SearchResult[] {
@@ -786,6 +812,11 @@ type EpisodeData = {
     title?: string
     session: string
     audio?: string
+}
+
+type SearchResponse = {
+    total?: number
+    data?: AnimeData[]
 }
 
 type ReleaseResponse = {
