@@ -198,6 +198,10 @@ class Provider {
         const nums: { [key: number]: boolean } = {}
         this.collectEps(html, shortid, nums)
         if (/gotoPage\(\d+\)/.test(html)) {
+            try {
+                const first = await fetch(`${this.normBase()}/anime/${shortid}?page=1`, { headers: this.pageHeaders(), timeout: 12 })
+                if (first && first.ok) this.collectEps(first.text(), shortid, nums)
+            } catch (_e) {}
             for (let p = 2; p <= 60; p++) {
                 let pr: FetchResponse | undefined
                 try {
