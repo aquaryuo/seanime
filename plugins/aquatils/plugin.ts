@@ -185,7 +185,6 @@ function init() {
         const fsCustomTls = ctx.state<boolean>(sget<boolean>("fs.customTls", false))
         const fsMetrics = ctx.state<any>(null)
         const fsStatus = ctx.state<string>("unknown")
-        const fsSessions = ctx.state<string[]>([])
         const fsNote = ctx.state<string>("")
         const fsHostRef = ctx.fieldRef<string>(fsHost.get())
         const fsPortRef = ctx.fieldRef<string>(fsPort.get())
@@ -908,10 +907,7 @@ function init() {
                     const mr = await fsApi("metrics", {}, 8)
                     if (mr && mr.metrics) fsMetrics.set(mr.metrics)
                 }
-                if (p.sessions) {
-                    fsSessions.set(p.sessions)
-                    if (fsSession.get() && p.sessions.indexOf(fsSession.get()) < 0) await fsEnsureSession()
-                }
+                if (p.sessions && fsSession.get() && p.sessions.indexOf(fsSession.get()) < 0) await fsEnsureSession()
                 if (solverUpdatePending() && fsMode.get() !== "remote" && !fsManualStop) {
                     if (fsAutoUpdate.get() && !fsAutoUpgradeTried) {
                         fsAutoUpgradeTried = true
@@ -945,7 +941,6 @@ function init() {
                     fsDownStreak++
                     if (fsDownStreak >= 2) {
                         setStatus("down")
-                        fsSessions.set([])
                         if (fsAutoStart.get() && !fsManualStop && fsMode.get() !== "remote" && !fsAvBlocked && !solverQuarantined()) {
                             const backoff = Math.min(fsAutoRestarts, 4) * 5000
                             if (fsAutoRestarts >= 5) {
@@ -1068,13 +1063,13 @@ function init() {
             tray.update()
         }
 
-        function binaryAsset(): { asset: string; zip: boolean; bin: string } | null {
+        function binaryAsset(): { asset: string; bin: string } | null {
             const p = "solver-browser_"
-            if ($os.platform === "linux" && $os.arch === "amd64") return { asset: p + "linux_x64.zip", zip: true, bin: "solver" }
-            if ($os.platform === "linux" && $os.arch === "arm64") return { asset: p + "linux_arm64.zip", zip: true, bin: "solver" }
-            if ($os.platform === "darwin" && $os.arch === "amd64") return { asset: p + "darwin_x64.zip", zip: true, bin: "solver" }
-            if ($os.platform === "darwin" && $os.arch === "arm64") return { asset: p + "darwin_arm64.zip", zip: true, bin: "solver" }
-            if ($os.platform === "windows" && $os.arch === "amd64") return { asset: p + "windows_x64.zip", zip: true, bin: "solver.exe" }
+            if ($os.platform === "linux" && $os.arch === "amd64") return { asset: p + "linux_x64.zip", bin: "solver" }
+            if ($os.platform === "linux" && $os.arch === "arm64") return { asset: p + "linux_arm64.zip", bin: "solver" }
+            if ($os.platform === "darwin" && $os.arch === "amd64") return { asset: p + "darwin_x64.zip", bin: "solver" }
+            if ($os.platform === "darwin" && $os.arch === "arm64") return { asset: p + "darwin_arm64.zip", bin: "solver" }
+            if ($os.platform === "windows" && $os.arch === "amd64") return { asset: p + "windows_x64.zip", bin: "solver.exe" }
             return null
         }
 
@@ -1237,6 +1232,9 @@ function init() {
             try { $os.mkdirAll(dir, 493) } catch (_e) {}
             const zip = $filepath.join(dir, "chrome.zip")
             let id = ""
+            // The .5 is load-bearing: the host asserts the option to float64, and a
+            // whole number arrives from goja as an int64 and is dropped — writing
+            // 900 here silently means no timeout at all.
             try { id = dl.download(st.url, zip, { timeout: 900.5 }) } catch (_e) { setErr("Chromium download couldn't start: " + String(_e)); done(false); return }
             plog("downloading Chromium" + (st.version ? " " + st.version : "") + " (browser solver)")
             dlLogAt = 0
@@ -1810,6 +1808,8 @@ function init() {
             const wantSha = publishedSha256(pick.asset)
             let id = ""
             try {
+                // The .5 is load-bearing — see downloadChromium: a whole 900 fails
+                // the host's float64 assertion and leaves the transfer untimed.
                 id = dl.download(url, archive, { timeout: 900.5 })
                 fsDownloadId = id
             } catch (_e) {
@@ -1835,21 +1835,11 @@ function init() {
                 let extractOk = true
                 let extractErr = ""
                 try {
-                    if (chosen.zip) $osExtra.unzip(archive, dir)
-                    else $osExtra.unwrapAndMove(archive, dir)
+                    $osExtra.unzip(archive, dir)
                 } catch (e) {
                     extractOk = false
                     extractErr = String(e)
-                    plog("extract via " + (chosen.zip ? "unzip" : "unwrapAndMove") + " failed: " + extractErr)
-                }
-                if (!extractOk && !chosen.zip && $os.platform !== "windows") {
-                    try {
-                        $os.cmd("sh", "-c", "tar -xzf " + shq(archive) + " -C " + shq(dir)).combinedOutput()
-                        if (solverBinExists()) { extractOk = true; plog("recovered via system tar") }
-                        else plog("system tar ran but the binary is still missing")
-                    } catch (e2) {
-                        plog("system tar fallback failed: " + String(e2))
-                    }
+                    plog("extract via unzip failed: " + extractErr)
                 }
                 if (!extractOk) {
                     fsBusy = false
