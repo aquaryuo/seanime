@@ -1,0 +1,30 @@
+name: typecheck
+# Users pull provider.ts and plugin.ts straight from this branch, so a type error
+# reaches them before anyone runs the code. Every payload has its own tsconfig
+# (strict, noEmit); check them all.
+on:
+  push:
+    branches: [main, beta]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  tsc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      # Pinned to the major the payloads were verified against; a silent bump to a
+      # stricter compiler would fail the gate on unchanged code.
+      - run: npm install --no-save typescript@6
+      - name: Typecheck every payload
+        run: |
+          set -euo pipefail
+          rc=0
+          for cfg in plugins/*/tsconfig.json extensions/*/tsconfig.json; do
+            [ -f "$cfg" ] || continue
+            echo "--- $cfg"
+            npx tsc --noEmit --project "$cfg" || rc=1
+          done
+          exit $rc
