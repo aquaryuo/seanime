@@ -233,9 +233,11 @@ class Provider {
             const res = await fetch(`${this.normBase()}/anime/${shortid}/${n}`, { headers: this.pageHeaders(), timeout: 14 })
             if (!res.ok) throw this.fail("server", `anizone: episode page failed (status ${res.status})`)
             const html = res.text()
-            const found = this.firstMatch(html, /https?:\/\/[^"'\s]+\/master\.m3u8[^"'\s]*/)
+            const player = this.parsePlayer(html)
+            const found = player.m3u8 || this.firstMatch(html, /https?:\/\/[^"'\s]+\/master\.m3u8[^"'\s]*/)
             if (!found) throw this.fail("server", "anizone: no stream found for this episode")
-            cached = { m3u8: found, subs: this.extractSubs(html) }
+            const subs = player.subs.length > 0 ? player.subs : this.extractSubs(html)
+            cached = { m3u8: found, subs }
             this.writeCache(cacheKey, cached)
         }
         const m3u8 = cached.m3u8
@@ -323,6 +325,40 @@ class Provider {
                 subOrDub: "both",
             })
         }
+    }
+
+    private parsePlayer(html: string): { m3u8: string; subs: { origin: string; lang: string; ext: string; label?: string; def?: boolean; forced?: boolean }[] } {
+        const empty = { m3u8: "", subs: [] as { origin: string; lang: string; ext: string; label?: string; def?: boolean; forced?: boolean }[] }
+        const m = /vidstackPlayer\(JSON\.parse\('((?:[^'\\]|\\.)*)'\)/.exec(html)
+        if (!m) return empty
+        let cfg: any = null
+        try {
+            cfg = JSON.parse(this.unescapeJs(this.decodeEntities(m[1] || "")))
+        } catch (_e) {
+            return empty
+        }
+        if (!cfg || typeof cfg !== "object") return empty
+        const src = typeof cfg.src === "string" ? cfg.src : ""
+        const subs: { origin: string; lang: string; ext: string; label?: string; def?: boolean; forced?: boolean }[] = []
+        const list = cfg.subtitles
+        if (list && typeof list.length === "number") {
+            for (let i = 0; i < list.length; i++) {
+                const t = list[i]
+                if (!t || typeof t !== "object") continue
+                const file = typeof t.file === "string" ? t.file : ""
+                if (!/^https?:\/\//i.test(file)) continue
+                const forced = t.forced === true || String(t.forced || "").toLowerCase() === "yes"
+                subs.push({
+                    origin: file,
+                    lang: String(t.language || "en").toLowerCase(),
+                    ext: String(t.format || "ass").toLowerCase(),
+                    label: String(t.title || ""),
+                    def: t.default === true,
+                    forced: forced,
+                })
+            }
+        }
+        return { m3u8: src, subs }
     }
 
     private hasCardShape(html: string): boolean {
@@ -502,8 +538,9 @@ class Provider {
         return /\b(?:sdh|cc|closed[\s-]?captions?|hearing[\s-]?impaired|dub[\s-]?titles?)\b/i.test(label || "")
     }
 
-    private trackScore(label: string, isEnglish: boolean, def: boolean): number {
-        const base = this.isNonDialogue(label) ? (isEnglish ? 3 : 0) : this.isMachine(label) ? (isEnglish ? 4 : 1) : this.isAltDialogue(label) ? (isEnglish ? 5 : 1) : isEnglish ? 6 : 2
+    private trackScore(label: string, isEnglish: boolean, def: boolean, nonDialogue?: boolean): number {
+        const nd = nonDialogue === undefined ? this.isNonDialogue(label) : nonDialogue
+        const base = nd ? (isEnglish ? 3 : 0) : this.isMachine(label) ? (isEnglish ? 4 : 1) : this.isAltDialogue(label) ? (isEnglish ? 5 : 1) : isEnglish ? 6 : 2
         return def ? base * 10 + 1 : base * 10
     }
 
@@ -517,7 +554,7 @@ class Provider {
         return `${name} - ${label}`
     }
 
-    private async buildSubs(subs: { origin: string; lang: string; ext: string; label?: string; def?: boolean }[], anilistId: number, episode: number): Promise<VideoSubtitle[]> {
+    private async buildSubs(subs: { origin: string; lang: string; ext: string; label?: string; def?: boolean; forced?: boolean }[], anilistId: number, episode: number): Promise<VideoSubtitle[]> {
         const out: VideoSubtitle[] = []
         const nonDialogue: boolean[] = []
         const seen: { [key: string]: boolean } = {}
@@ -531,8 +568,9 @@ class Provider {
             const label = (s.label || "").trim()
             const idx = out.length
             out.push({ id: `${code}-${idx}`, url: origin, language: this.displayName(code, label), isDefault: false })
-            const score = this.trackScore(label, code.split("-")[0] === "en", s.def === true)
-            nonDialogue.push(this.isNonDialogue(label))
+            const isForced = s.forced === true || this.isNonDialogue(label)
+            const score = this.trackScore(label, code.split("-")[0] === "en", s.def === true, isForced)
+            nonDialogue.push(isForced)
             if (score > best) {
                 best = score
                 pick = idx
