@@ -14,6 +14,7 @@ class Provider {
         const results: SearchResult[] = []
         const seen: { [key: string]: boolean } = {}
         let anyOk = false
+        let anyShape = false
         const run = async (queries: string[]): Promise<void> => {
             for (const q of queries) {
                 if (!q || results.length >= 12) continue
@@ -30,12 +31,16 @@ class Provider {
                 } catch (_e) {
                     html = ""
                 }
-                if (html) this.parseCards(html, opts, seen, results)
+                if (html) {
+                    if (this.hasCardShape(html)) anyShape = true
+                    this.parseCards(html, opts, seen, results)
+                }
             }
         }
         await run(sq.primary)
         if (results.length === 0) await run(sq.fallback)
         if (!anyOk) throw this.fail("search", "anizone: search failed (site unreachable)")
+        if (!anyShape) throw this.fail("search", "anizone: search page layout not recognized")
         return this.pickBest(results, opts.media, sq.season, sq.part)
     }
 
@@ -304,19 +309,75 @@ class Provider {
     }
 
     private parseCards(html: string, opts: SearchOptions, seen: { [key: string]: boolean }, results: SearchResult[]): void {
+        const cards = this.parseItems(html).concat(this.parseLegacyCards(html))
+        const target = opts.media.romajiTitle || opts.media.englishTitle || ""
+        for (const c of cards) {
+            if (!c.sid || seen[c.sid]) continue
+            seen[c.sid] = true
+            const alId = opts.media && opts.media.id > 0 ? opts.media.id : 0
+            const audio = opts.dub ? "dub" : "sub"
+            results.push({
+                id: (alId > 0 ? `${c.sid}$al${alId}` : c.sid) + `$${audio}`,
+                title: this.bestTitle(c.titles, target),
+                url: `${this.normBase()}/anime/${c.sid}`,
+                subOrDub: "both",
+            })
+        }
+    }
+
+    private hasCardShape(html: string): boolean {
+        return /items:\s*(?:JSON\.parse\(|\[)/.test(html) || /anmTitles:\s*JSON\.parse\(/.test(html)
+    }
+
+    private parseItems(html: string): { sid: string; titles: string[] }[] {
+        const out: { sid: string; titles: string[] }[] = []
+        const m = /items:\s*JSON\.parse\('((?:[^'\\]|\\.)*)'\)/.exec(html)
+        if (!m) return out
+        let list: any = null
+        try {
+            list = JSON.parse(this.unescapeJs(m[1] || ""))
+        } catch (_e) {
+            return out
+        }
+        if (!list || typeof list.length !== "number") return out
+        for (let i = 0; i < list.length; i++) {
+            const it = list[i]
+            if (!it || typeof it !== "object") continue
+            const sid = String(it.slug || "")
+            if (!sid) continue
+            const titles: string[] = []
+            const seenT: { [key: string]: boolean } = {}
+            const add = (t: any): void => {
+                const v = typeof t === "string" ? t.trim() : ""
+                if (v && !seenT[v]) {
+                    seenT[v] = true
+                    titles.push(v)
+                }
+            }
+            add(it.main_title)
+            const tl = it.title_list
+            if (tl && typeof tl === "object") for (const k in tl) add(tl[k])
+            if (titles.length === 0) continue
+            out.push({ sid, titles })
+        }
+        return out
+    }
+
+    private parseLegacyCards(html: string): { sid: string; titles: string[] }[] {
+        const out: { sid: string; titles: string[] }[] = []
         const titleRe = /anmTitles:\s*JSON\.parse\('((?:[^'\\]|\\.)*)'\)/g
         const blocks: { idx: number; titles: string[] }[] = []
         let tm: RegExpExecArray | null
         while ((tm = titleRe.exec(html)) !== null) {
             blocks.push({ idx: tm.index, titles: this.decodeTitles(tm[1] || "") })
         }
+        if (blocks.length === 0) return out
         const hrefRe = /href="https?:\/\/[a-z0-9.-]+\/anime\/([a-z0-9]+)"/g
         const hrefs: { idx: number; sid: string }[] = []
         let hm: RegExpExecArray | null
         while ((hm = hrefRe.exec(html)) !== null) {
             hrefs.push({ idx: hm.index, sid: hm[1] })
         }
-        const target = opts.media.romajiTitle || opts.media.englishTitle || ""
         for (const b of blocks) {
             let sid = ""
             for (const h of hrefs) {
@@ -325,26 +386,22 @@ class Provider {
                     break
                 }
             }
-            if (!sid || seen[sid]) continue
-            seen[sid] = true
-            const alId = opts.media && opts.media.id > 0 ? opts.media.id : 0
-            const audio = opts.dub ? "dub" : "sub"
-            results.push({
-                id: (alId > 0 ? `${sid}$al${alId}` : sid) + `$${audio}`,
-                title: this.bestTitle(b.titles, target),
-                url: `${this.normBase()}/anime/${sid}`,
-                subOrDub: "both",
-            })
+            if (sid) out.push({ sid, titles: b.titles })
         }
+        return out
     }
 
-    private decodeTitles(escaped: string): string[] {
-        const json = escaped.replace(/\\(u[0-9a-fA-F]{4}|.)/g, (_m: string, esc: string) => {
+    private unescapeJs(escaped: string): string {
+        return escaped.replace(/\\(u[0-9a-fA-F]{4}|.)/g, (_m: string, esc: string) => {
             if (esc.charAt(0) === "u") return String.fromCharCode(parseInt(esc.slice(1), 16))
             if (esc === "n") return "\n"
             if (esc === "t") return "\t"
             return esc
         })
+    }
+
+    private decodeTitles(escaped: string): string[] {
+        const json = this.unescapeJs(escaped)
         const out: string[] = []
         const seen: { [key: string]: boolean } = {}
         const add = (t: string): void => {
