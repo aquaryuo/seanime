@@ -126,6 +126,8 @@ function init() {
         const SEH_MAX_KEEP = 100
         const SEH_MAX_SEEN = 500
         const SEH_POLL_MS = 6000
+        // How long one distinct error message stays quiet after being announced.
+        const SEH_NOTIFY_COOLDOWN_MS = 10 * 60 * 1000
         const SEH_TTL = 21600000
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
@@ -149,8 +151,18 @@ function init() {
         const seen = ctx.state<string[]>(sget<string[]>("seh.seen", []))
         const notify = ctx.state<boolean>(sget<boolean>("seh.notify", false))
         const appRef = ctx.fieldRef<string>(appBase.get())
+        // Assume the tray is on screen until an event says otherwise.
+        let trayVisible = true
+        // Last time each distinct message was announced, so a provider that keeps
+        // failing is reported once rather than on every poll.
+        const sehNotifiedAt: { [label: string]: number } = {}
         let sehAuthWarned = false
         let sehRetryAfter = 0
+        // How much of the log has already been parsed. The endpoint hands back the
+        // whole file every time, and it only ever grows, so re-parsing all of it
+        // every few seconds is work that gets more expensive the longer Seanime
+        // has been running.
+        let sehSeenChars = 0
         let sehMaxT = sget<number>("seh.maxT", 0)
 
         const _storedMode = sget<string>("fs.mode", "")
@@ -683,10 +695,27 @@ function init() {
             }
             if (fresh.length === 0) return
             if (notify.get()) {
+                // Every occurrence is a distinct id, so a provider failing on each
+                // poll used to raise a toast and a desktop notification every time.
+                // The user only ever needs to be told a thing is broken once: group
+                // by the message they actually see, and stay quiet about it for a
+                // while afterwards.
+                const counts: { [label: string]: number } = {}
+                const order: string[] = []
                 for (let i = 0; i < fresh.length; i++) {
-                    ctx.toast.error(sehLabel(fresh[i]))
+                    const label = sehLabel(fresh[i])
+                    if (counts[label] === undefined) { counts[label] = 0; order.push(label) }
+                    counts[label]++
+                }
+                const now = nowMs()
+                for (let i = 0; i < order.length; i++) {
+                    const label = order[i]
+                    if (now - (sehNotifiedAt[label] || 0) < SEH_NOTIFY_COOLDOWN_MS) continue
+                    sehNotifiedAt[label] = now
+                    const text = counts[label] > 1 ? label + " (×" + counts[label] + ")" : label
+                    ctx.toast.error(text)
                     try {
-                        ctx.notification.send(sehLabel(fresh[i]))
+                        ctx.notification.send(text)
                     } catch (_e) {}
                 }
             }
@@ -721,7 +750,19 @@ function init() {
                 sehRetryAfter = 0
                 const body = res.json<{ data?: string }>()
                 const content = body && typeof body.data === "string" ? body.data : ""
-                if (content) sehIngest(sehParse(content))
+                if (!content) return
+                // Only the part that appeared since last time. A file shorter than
+                // what we already read has been rotated or truncated, so start over.
+                let from = content.length >= sehSeenChars ? sehSeenChars : 0
+                let chunk = content.slice(from)
+                if (chunk === "") return
+                // Stop at the last complete line so a half-written entry is not
+                // parsed now and skipped when the rest of it arrives.
+                const lastNL = chunk.lastIndexOf("\n")
+                if (lastNL < 0) return
+                chunk = chunk.slice(0, lastNL + 1)
+                sehSeenChars = from + chunk.length
+                sehIngest(sehParse(chunk))
             } catch (_e) {
                 return
             }
@@ -760,6 +801,13 @@ function init() {
             } catch (_e) {}
         }
 
+        // NOTE: the `timeout` option on ctx.fetch is currently discarded by Seanime
+        // — it reads the value as a Go int while goja hands it an int64, so the
+        // assertion never succeeds and every request runs to the 35s default
+        // (internal/goja/goja_bindings/fetch.go). The values below are kept because
+        // they are the intent and will apply once that is fixed upstream, but do
+        // not design anything around a short fetch timeout: bound work by how many
+        // requests are made, which we do control.
         async function fsApi(cmd: string, extra: { [k: string]: any }, timeoutSec?: number): Promise<any> {
             try {
                 const res = await ctx.fetch(fsBase() + "/v1", {
@@ -823,6 +871,13 @@ function init() {
             if (before !== fsCanHard.get()) tray.update()
         }
 
+        // The polled refresh runs whether or not the tray is on screen, and a
+        // re-render pushes the whole tray to the client. Opening it triggers a full
+        // update, so nothing stale is ever shown.
+        function trayPoke(): void {
+            if (trayVisible) tray.update()
+        }
+
         async function fsRefresh(): Promise<void> {
             if (fsTesting && nowMs() < fsTestUntil) return
             if (!fsDepsChecked) checkChromiumDeps()
@@ -842,7 +897,7 @@ function init() {
                     }
                     refreshTrayBadge()
                     refreshAnimeBtn()
-                    tray.update()
+                    trayPoke()
                     return
                 }
                 if (p.version) fsVersion.set(p.version)
@@ -915,7 +970,7 @@ function init() {
             if (fsStatus.get() !== "starting") fsRestarting = false
             refreshTrayBadge()
             refreshAnimeBtn()
-            tray.update()
+            trayPoke()
         }
 
         async function runTest(): Promise<void> {
@@ -923,17 +978,17 @@ function init() {
             fsTestUntil = nowMs() + 70000
             try {
                 setTest("Testing…")
-                tray.update()
+                trayPoke()
                 const ping = await fsProbe()
                 if (!ping.up) {
                     setTest("Not reachable at " + fsBase() + " — it may still be starting; wait for the green Running badge.")
-                    tray.update()
+                    trayPoke()
                     return
                 }
                 if (ping.version) fsVersion.set(ping.version)
                 setStatus("up")
                 fsDownStreak = 0
-                tray.update()
+                trayPoke()
                 const extra: { [k: string]: any } = { url: "https://nowsecure.nl", maxTimeout: 32000 }
                 if (ping.sessions) {
                     const sess = (fsSession.get() || FS_DEFAULT_SESSION).trim()
@@ -2764,6 +2819,15 @@ function init() {
             } catch (_e) {}
         }
         plog("aquatils loaded (managing solver " + SOLVER_VERSION + ")")
+
+        // Re-rendering the tray pushes its whole contents to the client. The poll
+        // did that every few seconds whether or not anyone had it open. Starts
+        // true so that if these events never arrive the behaviour is exactly what
+        // it was — a stale tray would be a worse bug than the wasted work.
+        try {
+            tray.onOpen(() => { trayVisible = true; tray.update() })
+            tray.onClose(() => { trayVisible = false })
+        } catch (_e) {}
 
         // Wrapped in singleflight because a tick is not skipped when the previous
         // one is still running. fsRefresh can restart the solver, so two overlapping
