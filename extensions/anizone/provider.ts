@@ -14,6 +14,7 @@ class Provider {
         const results: SearchResult[] = []
         const seen: { [key: string]: boolean } = {}
         let anyOk = false
+        let anyShape = false
         const run = async (queries: string[]): Promise<void> => {
             for (const q of queries) {
                 if (!q || results.length >= 12) continue
@@ -30,12 +31,16 @@ class Provider {
                 } catch (_e) {
                     html = ""
                 }
-                if (html) this.parseCards(html, opts, seen, results)
+                if (html) {
+                    if (this.hasCardShape(html)) anyShape = true
+                    this.parseCards(html, opts, seen, results)
+                }
             }
         }
         await run(sq.primary)
         if (results.length === 0) await run(sq.fallback)
         if (!anyOk) throw this.fail("search", "anizone: search failed (site unreachable)")
+        if (!anyShape) throw this.fail("search", "anizone: search page layout not recognized")
         return this.pickBest(results, opts.media, sq.season, sq.part)
     }
 
@@ -193,6 +198,10 @@ class Provider {
         const nums: { [key: number]: boolean } = {}
         this.collectEps(html, shortid, nums)
         if (/gotoPage\(\d+\)/.test(html)) {
+            try {
+                const first = await fetch(`${this.normBase()}/anime/${shortid}?page=1`, { headers: this.pageHeaders(), timeout: 12 })
+                if (first && first.ok) this.collectEps(first.text(), shortid, nums)
+            } catch (_e) {}
             for (let p = 2; p <= 60; p++) {
                 let pr: FetchResponse | undefined
                 try {
@@ -228,9 +237,11 @@ class Provider {
             const res = await fetch(`${this.normBase()}/anime/${shortid}/${n}`, { headers: this.pageHeaders(), timeout: 14 })
             if (!res.ok) throw this.fail("server", `anizone: episode page failed (status ${res.status})`)
             const html = res.text()
-            const found = this.firstMatch(html, /https?:\/\/[^"'\s]+\/master\.m3u8[^"'\s]*/)
+            const player = this.parsePlayer(html)
+            const found = player.m3u8 || this.firstMatch(html, /https?:\/\/[^"'\s]+\/master\.m3u8[^"'\s]*/)
             if (!found) throw this.fail("server", "anizone: no stream found for this episode")
-            cached = { m3u8: found, subs: this.extractSubs(html) }
+            const subs = player.subs.length > 0 ? player.subs : this.extractSubs(html)
+            cached = { m3u8: found, subs }
             this.writeCache(cacheKey, cached)
         }
         const m3u8 = cached.m3u8
@@ -304,19 +315,109 @@ class Provider {
     }
 
     private parseCards(html: string, opts: SearchOptions, seen: { [key: string]: boolean }, results: SearchResult[]): void {
+        const cards = this.parseItems(html).concat(this.parseLegacyCards(html))
+        const target = opts.media.romajiTitle || opts.media.englishTitle || ""
+        for (const c of cards) {
+            if (!c.sid || seen[c.sid]) continue
+            seen[c.sid] = true
+            const alId = opts.media && opts.media.id > 0 ? opts.media.id : 0
+            const audio = opts.dub ? "dub" : "sub"
+            results.push({
+                id: (alId > 0 ? `${c.sid}$al${alId}` : c.sid) + `$${audio}`,
+                title: this.bestTitle(c.titles, target),
+                url: `${this.normBase()}/anime/${c.sid}`,
+                subOrDub: "both",
+            })
+        }
+    }
+
+    private parsePlayer(html: string): { m3u8: string; subs: { origin: string; lang: string; ext: string; label?: string; def?: boolean; forced?: boolean }[] } {
+        const empty = { m3u8: "", subs: [] as { origin: string; lang: string; ext: string; label?: string; def?: boolean; forced?: boolean }[] }
+        const m = /vidstackPlayer\(JSON\.parse\('((?:[^'\\]|\\.)*)'\)/.exec(html)
+        if (!m) return empty
+        let cfg: any = null
+        try {
+            cfg = JSON.parse(this.unescapeJs(this.decodeEntities(m[1] || "")))
+        } catch (_e) {
+            return empty
+        }
+        if (!cfg || typeof cfg !== "object") return empty
+        const src = typeof cfg.src === "string" ? cfg.src : ""
+        const subs: { origin: string; lang: string; ext: string; label?: string; def?: boolean; forced?: boolean }[] = []
+        const list = cfg.subtitles
+        if (list && typeof list.length === "number") {
+            for (let i = 0; i < list.length; i++) {
+                const t = list[i]
+                if (!t || typeof t !== "object") continue
+                const file = typeof t.file === "string" ? t.file : ""
+                if (!/^https?:\/\//i.test(file)) continue
+                const forced = t.forced === true || String(t.forced || "").toLowerCase() === "yes"
+                subs.push({
+                    origin: file,
+                    lang: String(t.language || "en").toLowerCase(),
+                    ext: String(t.format || "ass").toLowerCase(),
+                    label: String(t.title || ""),
+                    def: t.default === true,
+                    forced: forced,
+                })
+            }
+        }
+        return { m3u8: src, subs }
+    }
+
+    private hasCardShape(html: string): boolean {
+        return /items:\s*(?:JSON\.parse\(|\[)/.test(html) || /anmTitles:\s*JSON\.parse\(/.test(html)
+    }
+
+    private parseItems(html: string): { sid: string; titles: string[] }[] {
+        const out: { sid: string; titles: string[] }[] = []
+        const m = /items:\s*JSON\.parse\('((?:[^'\\]|\\.)*)'\)/.exec(html)
+        if (!m) return out
+        let list: any = null
+        try {
+            list = JSON.parse(this.unescapeJs(m[1] || ""))
+        } catch (_e) {
+            return out
+        }
+        if (!list || typeof list.length !== "number") return out
+        for (let i = 0; i < list.length; i++) {
+            const it = list[i]
+            if (!it || typeof it !== "object") continue
+            const sid = String(it.slug || "")
+            if (!sid) continue
+            const titles: string[] = []
+            const seenT: { [key: string]: boolean } = {}
+            const add = (t: any): void => {
+                const v = typeof t === "string" ? t.trim() : ""
+                if (v && !seenT[v]) {
+                    seenT[v] = true
+                    titles.push(v)
+                }
+            }
+            add(it.main_title)
+            const tl = it.title_list
+            if (tl && typeof tl === "object") for (const k in tl) add(tl[k])
+            if (titles.length === 0) continue
+            out.push({ sid, titles })
+        }
+        return out
+    }
+
+    private parseLegacyCards(html: string): { sid: string; titles: string[] }[] {
+        const out: { sid: string; titles: string[] }[] = []
         const titleRe = /anmTitles:\s*JSON\.parse\('((?:[^'\\]|\\.)*)'\)/g
         const blocks: { idx: number; titles: string[] }[] = []
         let tm: RegExpExecArray | null
         while ((tm = titleRe.exec(html)) !== null) {
             blocks.push({ idx: tm.index, titles: this.decodeTitles(tm[1] || "") })
         }
+        if (blocks.length === 0) return out
         const hrefRe = /href="https?:\/\/[a-z0-9.-]+\/anime\/([a-z0-9]+)"/g
         const hrefs: { idx: number; sid: string }[] = []
         let hm: RegExpExecArray | null
         while ((hm = hrefRe.exec(html)) !== null) {
             hrefs.push({ idx: hm.index, sid: hm[1] })
         }
-        const target = opts.media.romajiTitle || opts.media.englishTitle || ""
         for (const b of blocks) {
             let sid = ""
             for (const h of hrefs) {
@@ -325,26 +426,22 @@ class Provider {
                     break
                 }
             }
-            if (!sid || seen[sid]) continue
-            seen[sid] = true
-            const alId = opts.media && opts.media.id > 0 ? opts.media.id : 0
-            const audio = opts.dub ? "dub" : "sub"
-            results.push({
-                id: (alId > 0 ? `${sid}$al${alId}` : sid) + `$${audio}`,
-                title: this.bestTitle(b.titles, target),
-                url: `${this.normBase()}/anime/${sid}`,
-                subOrDub: "both",
-            })
+            if (sid) out.push({ sid, titles: b.titles })
         }
+        return out
     }
 
-    private decodeTitles(escaped: string): string[] {
-        const json = escaped.replace(/\\(u[0-9a-fA-F]{4}|.)/g, (_m: string, esc: string) => {
+    private unescapeJs(escaped: string): string {
+        return escaped.replace(/\\(u[0-9a-fA-F]{4}|.)/g, (_m: string, esc: string) => {
             if (esc.charAt(0) === "u") return String.fromCharCode(parseInt(esc.slice(1), 16))
             if (esc === "n") return "\n"
             if (esc === "t") return "\t"
             return esc
         })
+    }
+
+    private decodeTitles(escaped: string): string[] {
+        const json = this.unescapeJs(escaped)
         const out: string[] = []
         const seen: { [key: string]: boolean } = {}
         const add = (t: string): void => {
@@ -445,8 +542,9 @@ class Provider {
         return /\b(?:sdh|cc|closed[\s-]?captions?|hearing[\s-]?impaired|dub[\s-]?titles?)\b/i.test(label || "")
     }
 
-    private trackScore(label: string, isEnglish: boolean, def: boolean): number {
-        const base = this.isNonDialogue(label) ? (isEnglish ? 3 : 0) : this.isMachine(label) ? (isEnglish ? 4 : 1) : this.isAltDialogue(label) ? (isEnglish ? 5 : 1) : isEnglish ? 6 : 2
+    private trackScore(label: string, isEnglish: boolean, def: boolean, nonDialogue?: boolean): number {
+        const nd = nonDialogue === undefined ? this.isNonDialogue(label) : nonDialogue
+        const base = nd ? (isEnglish ? 3 : 0) : this.isMachine(label) ? (isEnglish ? 4 : 1) : this.isAltDialogue(label) ? (isEnglish ? 5 : 1) : isEnglish ? 6 : 2
         return def ? base * 10 + 1 : base * 10
     }
 
@@ -460,7 +558,7 @@ class Provider {
         return `${name} - ${label}`
     }
 
-    private async buildSubs(subs: { origin: string; lang: string; ext: string; label?: string; def?: boolean }[], anilistId: number, episode: number): Promise<VideoSubtitle[]> {
+    private async buildSubs(subs: { origin: string; lang: string; ext: string; label?: string; def?: boolean; forced?: boolean }[], anilistId: number, episode: number): Promise<VideoSubtitle[]> {
         const out: VideoSubtitle[] = []
         const nonDialogue: boolean[] = []
         const seen: { [key: string]: boolean } = {}
@@ -474,8 +572,9 @@ class Provider {
             const label = (s.label || "").trim()
             const idx = out.length
             out.push({ id: `${code}-${idx}`, url: origin, language: this.displayName(code, label), isDefault: false })
-            const score = this.trackScore(label, code.split("-")[0] === "en", s.def === true)
-            nonDialogue.push(this.isNonDialogue(label))
+            const isForced = s.forced === true || this.isNonDialogue(label)
+            const score = this.trackScore(label, code.split("-")[0] === "en", s.def === true, isForced)
+            nonDialogue.push(isForced)
             if (score > best) {
                 best = score
                 pick = idx
