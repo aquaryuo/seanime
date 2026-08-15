@@ -44,9 +44,10 @@ jobs:
             npx esbuild --loader=ts --target=es2018 --minify-whitespace --minify-syntax < "$f" > /dev/null || rc=1
           done
           # A glob that matches nothing would otherwise report success having checked
-          # nothing at all, which is the failure this gate exists to catch.
-          if [ "$n" -lt 7 ]; then
-            echo "expected at least 7 payloads, found $n" >&2
+          # nothing at all, which is the failure this gate exists to catch. The count
+          # itself differs per branch — beta carries payloads main does not.
+          if [ "$n" -eq 0 ]; then
+            echo "no payloads matched — the layout moved and this gate checked nothing" >&2
             rc=1
           fi
           exit $rc
