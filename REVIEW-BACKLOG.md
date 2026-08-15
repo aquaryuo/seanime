@@ -740,7 +740,32 @@ The four highest-stakes unverified entries were re-checked by hand after the rev
 
 | Entry | Outcome |
 |---|---|
-| tsconfig `target`/`lib` = ES2018 in all 7 projects | **Confirmed.** Every one of the seven reads `target=ES2018 lib=['ES2018']`. The only static gate this repo has is calibrated to a runtime it does not run on, so `Object.entries`, `padStart`, `Array.flat` and friends typecheck clean and then throw in goja. |
+| tsconfig `target`/`lib` = ES2018 in all 7 projects | **This row was wrong — see the correction below.** `target` is not miscalibrated; ES2018 is exactly what the host transforms to. The body of this document (`tsconfig-and-goja-gate`) already said so and was correct. |
 | Manifest version not bumped with the payload | **Confirmed, and worse than filed.** `plugins/aquatils/manifest.json` is `0.10.5`, last touched by `50a91b2`. Two commits have changed `plugin.ts` since — `c9d0fa2` and `5c385fd`. `5c385fd` *is* the download-verification fix, so the fix that retired this review's original critical is itself undelivered to users. |
 | `useLibassRenderer === true` can never be true | **Unresolved — do not act on it yet.** The claim needs the Go declaration to be `*bool`; only the Seanime binary is on disk and its type metadata does not yield pointer-ness. Two data points, neither decisive: the `d.ts` declares the field optional (`useLibassRenderer?: boolean`), and Seanime's own bundled frontend tests it for truthiness (`t.useLibassRenderer && …`) rather than identity. A parallel review refuted a structurally identical claim about a different field, so treat this as open until someone reads the upstream Go source. |
 | Release checksum not verified before execution | **Refuted — already fixed.** `5c385fd` added it; `plugin.ts:1868` discards the archive on mismatch. Listed under *Considered and dismissed*. |
+
+## Correction (2026-08-15): the runtime model in the row above was wrong
+
+The claim that ES2018 constructs "throw in goja" is false, and it was mine, not the review's. Verified at source and by execution:
+
+- `internal/extension_repo/goja.go:260` transforms every payload with **esbuild at `Target: api.ES2018`** before `goja.Compile`, via `goja_base.go:45` (providers) and `goja_plugin.go:166` (plugins).
+- A Go harness against the pinned goja (`v0.0.0-20260216154549`) ran **0/31 failures** across the whole supposed ban list: `?.`, `??`, object spread, `**`, lookbehind, `/u`, `/s`, named groups, `replaceAll`, `flat`/`flatMap`, `Object.entries`/`values`/`fromEntries`, `.at()`, `padStart`, `matchAll`, `trimStart`.
+
+ES2019+ syntax is downlevelled by esbuild and never reaches goja; ES2018-and-below is natively supported; the lib members are runtime and goja has them. Acting on the wrong row, I retargeted all seven tsconfigs to ES2015 and then reverted it (`4424c75`, `688b298`). `tsconfig-and-goja-gate` had the right answer the whole time — read the body before acting on the addendum.
+
+## Shipped since this document was written
+
+| id | commit |
+|---|---|
+| `anizone-search-parser-dead` | `896e5d7` — parse the embedded `items:` blob, legacy path kept as fallback |
+| `anizone-rank-on-card-metadata` | `9e0ac0f` — score over all card titles, real `start_year`, format as a soft signal |
+| `anikoto-season-evidence` | `9e0ac0f` — episode-count/format evidence, guarded on `episodeCount > 0` |
+| `anikoto-layout-change-invisible` | `9e0ac0f` — zero recognisable cards now raises `fail()` |
+| `anizone-truncated-list` | `fff0aa7` — page 1 fetched explicitly; the walk started at page 2 |
+| `animelok-probe-boundary`, `animelok-outage-reads-as-not-found` | `9e0ac0f` — shape sentinel, narrowed so a bad dub probe cannot fail a sub request |
+| `animepahe-truncated-list` | landed separately — refuses a partial list instead of caching it |
+| `fixtures-assert-substrings` | private repo `64fb5ff` — per-provider search canaries, `startsAt`/`contiguous`, `urlMatches` |
+| `tsconfig-and-goja-gate` (part 2) | `883e122`, `47e7807` — CI runs the host's own esbuild transform over every payload |
+
+Also fixed, not filed here: the AniZone **player** layout change (`9a9f4a3`), which broke every stream and all subtitles the same day as the search change.
