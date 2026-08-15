@@ -104,6 +104,7 @@ class Provider {
         const audio = wantDub ? "dub" : "sub"
         const sq = this.searchQueries(opts)
         let challenged = false
+        let unrecognized = false
         this.deadline = this.now() + this.searchBudget
 
         for (const base of this.candidateBases()) {
@@ -111,7 +112,10 @@ class Provider {
             this.baseUrl = base
             const results: SearchResult[] = []
             const seen: { [key: string]: boolean } = {}
+            const evidence: { [key: string]: { episodes: number; movie: boolean } } = {}
             let anyOk = false
+            let cards = 0
+            let emptyList = false
 
             let hardFail = false
             for (const q of sq.queries) {
@@ -131,18 +135,31 @@ class Provider {
                 } catch (_e) {
                     hardFail = true
                 }
-                if (html) this.parseSearchInto(LoadDoc(html), audio, wantDub, opts.media.id, seen, results)
+                if (html) {
+                    const doc = LoadDoc(html)
+                    cards += this.parseSearchInto(doc, audio, wantDub, opts.media.id, seen, results, evidence)
+                    if (this.resultListIsEmpty(doc)) emptyList = true
+                }
                 if (hardFail) break
             }
 
             if (anyOk) {
+                // A restyle makes every card selector miss, which reads as "no results"
+                // instead of an error. The site's own result container is what separates
+                // the two: a keyword with no matches still ships it, empty.
+                if (cards === 0 && !emptyList) {
+                    unrecognized = true
+                    continue
+                }
                 this.rememberBase(base)
                 const best = this.dominantMatch(results, opts.media)
-                return best ? [best] : this.filterBySeason(results, sq.season, sq.part, opts.media)
+                if (best) return [best]
+                return this.preferByEvidence(this.filterBySeason(results, sq.season, sq.part, opts.media), evidence, opts.media)
             }
         }
 
         this.invalidateBase()
+        if (unrecognized) throw this.fail("search", "the site's search layout was not recognized — the page loaded but carried neither result cards nor an empty result list, so this extension needs updating")
         if (challenged) throw this.fail("search", "search blocked by the site's anti-bot challenge on all mirrors — retry later or switch mirrors (the custom solver does not affect search)")
         throw this.fail("search", "search failed (site unreachable)")
     }
@@ -292,9 +309,12 @@ class Provider {
         dub: boolean,
         anilistId: number,
         seen: { [key: string]: boolean },
-        results: SearchResult[]
-    ): void {
+        results: SearchResult[],
+        evidence: { [key: string]: { episodes: number; movie: boolean } }
+    ): number {
+        let cards = 0
         $("div.item").each((_i, card) => {
+            cards++
             const titleLink = card.find("a.name.d-title").first()
             if (titleLink.length() === 0) return
 
@@ -317,8 +337,53 @@ class Provider {
 
             seen[seriesUrl] = true
             const subOrDub: SubOrDub = hasSub && hasDub ? "both" : hasDub ? "dub" : "sub"
+            const total = parseInt(card.find(".ep-status.total").first().text().replace(/[^0-9]/g, ""), 10)
+            const format = card.find(".ani.poster .meta .right").first().text().trim().toLowerCase()
+            evidence[seriesUrl] = {
+                episodes: !isNaN(total) && total > 0 && total <= 10000 ? total : 0,
+                movie: format === "movie",
+            }
             results.push({ id: this.withMeta(seriesUrl, audio, anilistId), title, url: seriesUrl, subOrDub })
         })
+        return cards
+    }
+
+    // An empty "#list-items" is how the site says "no matches", so its presence with no
+    // children is the one reading that must never be mistaken for a layout change.
+    private resultListIsEmpty($: DocSelectionFunction): boolean {
+        try {
+            const list = $("#list-items")
+            return list.length() > 0 && list.children().length() === 0
+        } catch (_e) {
+            return false
+        }
+    }
+
+    // $scannerUtils reports season -1 when the marker is a word ("The Final Season"), so
+    // filterBySeason cannot narrow those and hands back the whole show; the card's own
+    // episode count is then the only evidence left that tells the seasons apart.
+    private preferByEvidence(
+        pool: SearchResult[],
+        evidence: { [key: string]: { episodes: number; movie: boolean } },
+        media: Media
+    ): SearchResult[] {
+        if (pool.length < 2) return pool
+        // Upstream reports -1 for airing or unknown counts, and a card with no count
+        // element carries no signal either — neither may drop a candidate.
+        const want = media.episodeCount || 0
+        if (want > 0) {
+            const byCount = pool.filter((r) => {
+                const e = evidence[r.url]
+                return !e || e.episodes === 0 || e.episodes === want
+            })
+            if (byCount.length > 0) return byCount
+        }
+        const isMovie = (media.format || "").toUpperCase() === "MOVIE"
+        const byFormat = pool.filter((r) => {
+            const e = evidence[r.url]
+            return !e || e.movie === isMovie
+        })
+        return byFormat.length > 0 ? byFormat : pool
     }
 
     private async resolveFromServer(anilistId: number, audio: string): Promise<EpisodeDetails[] | null> {
