@@ -17,7 +17,7 @@ jobs:
           node-version: "20"
       # Pinned to the major the payloads were verified against; a silent bump to a
       # stricter compiler would fail the gate on unchanged code.
-      - run: npm install --no-save typescript@6
+      - run: npm install --no-save typescript@6 esbuild@0.28
       - name: Typecheck every payload
         run: |
           set -euo pipefail
@@ -27,4 +27,26 @@ jobs:
             echo "--- $cfg"
             npx tsc --noEmit --project "$cfg" || rc=1
           done
+          exit $rc
+      # The host transforms every payload with esbuild before running it, reading the
+      # source as a string. Reproducing that transform exactly is the only check that
+      # cannot disagree with production: whatever it rejects would fail to load.
+      - name: Transform every payload the way the host does
+        if: always()
+        run: |
+          set -euo pipefail
+          rc=0
+          n=0
+          for f in extensions/*/provider.ts plugins/*/plugin.ts; do
+            [ -f "$f" ] || continue
+            echo "--- $f"
+            n=$((n + 1))
+            npx esbuild --loader=ts --target=es2018 --minify-whitespace --minify-syntax < "$f" > /dev/null || rc=1
+          done
+          # A glob that matches nothing would otherwise report success having checked
+          # nothing at all, which is the failure this gate exists to catch.
+          if [ "$n" -lt 7 ]; then
+            echo "expected at least 7 payloads, found $n" >&2
+            rc=1
+          fi
           exit $rc
