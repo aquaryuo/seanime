@@ -139,12 +139,22 @@ class Provider {
         if (first.data) for (const d of first.data) all.push(d)
 
         const lastPage = first.last_page && first.last_page > 1 ? first.last_page : 1
-        let pageFail = false
+        // Stop at the first page that will not come, and refuse to answer at all.
+        // A short list is indistinguishable from a series that really is short, and
+        // the app stores what it is given for a day — so a half-fetched list looks
+        // like a broken site until the cache expires, while an error is something
+        // the user can simply retry. Carrying on also meant walking every remaining
+        // page through the full retry-and-escalate ladder once the site had already
+        // made its position clear.
+        let failedPage = 0
         for (let page = 2; page <= lastPage; page++) {
             try {
                 const next = await this.getJson<ReleaseResponse>(`${this.baseUrl}/api?m=release&id=${animeSession}&sort=episode_asc&page=${page}`)
                 if (next && next.data) for (const d of next.data) all.push(d)
-            } catch (_e) { pageFail = true }
+            } catch (_e) { failedPage = page; break }
+        }
+        if (failedPage > 0) {
+            throw this.fail("episodes", `only got ${failedPage - 1} of ${lastPage} pages of the episode list — the site is refusing this connection right now, so the list would have been incomplete. Try again.`)
         }
 
         const collected: { session: string; num: number; title?: string }[] = []
@@ -175,7 +185,7 @@ class Provider {
         })
 
         episodes.sort((a, b) => a.number - b.number)
-        if (!pageFail) this.writeCache(cacheKey, episodes)
+        this.writeCache(cacheKey, episodes)
         return episodes
     }
 
