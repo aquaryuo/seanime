@@ -1,5 +1,10 @@
 declare const console: { log(...args: any[]): void; info(...args: any[]): void; warn(...args: any[]): void; error(...args: any[]): void }
 
+type Card = { sid: string; titles: string[]; type: string; year: number; eps: number }
+type Cand = { r: SearchResult; card: Card }
+type Target = { t: string; w: number }
+type Scored = { c: Cand; s: number; adj: number; ep: number }
+
 class Provider {
     private baseUrl = "{{baseUrl}}"
     private cacheTtl = 900000
@@ -11,13 +16,13 @@ class Provider {
 
     async search(opts: SearchOptions): Promise<SearchResult[]> {
         const sq = this.searchQueries(opts)
-        const results: SearchResult[] = []
+        const cands: Cand[] = []
         const seen: { [key: string]: boolean } = {}
         let anyOk = false
         let anyShape = false
         const run = async (queries: string[]): Promise<void> => {
             for (const q of queries) {
-                if (!q || results.length >= 12) continue
+                if (!q || cands.length >= 12) continue
                 let html = ""
                 try {
                     const res = await fetch(`${this.normBase()}/anime?search=${encodeURIComponent(q)}`, {
@@ -33,98 +38,151 @@ class Provider {
                 }
                 if (html) {
                     if (this.hasCardShape(html)) anyShape = true
-                    this.parseCards(html, opts, seen, results)
+                    this.parseCards(html, opts, seen, cands)
                 }
             }
         }
         await run(sq.primary)
-        if (results.length === 0) await run(sq.fallback)
+        if (cands.length === 0) await run(sq.fallback)
         if (!anyOk) throw this.fail("search", "anizone: search failed (site unreachable)")
         if (!anyShape) throw this.fail("search", "anizone: search page layout not recognized")
-        return this.pickBest(results, opts.media, sq.season, sq.part)
+        return this.pickBest(cands, opts.media, sq.season, sq.part)
     }
 
-    private pickBest(results: SearchResult[], media: Media, season: number, part: number): SearchResult[] {
-        if (results.length === 0) return []
+    private pickBest(cands: Cand[], media: Media, season: number, part: number): SearchResult[] {
+        if (cands.length === 0) return []
         const targets = this.matchTargets(media)
-        if (targets.length === 0) return results
-        const scored = results.map((r) => ({ r, s: this.scoreTitle(r.title, targets) })).sort((a, b) => b.s - a.s)
-        const plausible = scored.filter((x) => x.s >= 0.5)
-        if (plausible.length === 0) return []
+        if (targets.length === 0) return cands.map((c) => c.r)
         const year = (media.startDate && media.startDate.year) || 0
+        const eps = media.episodeCount && media.episodeCount > 0 ? media.episodeCount : 0
+        const format = media.format || ""
+        const scored: Scored[] = []
+        const conflicted: Scored[] = []
+        for (const c of cands) {
+            const s = this.scoreTitles(c.card.titles, targets)
+            const adj = s - this.yearPenalty(this.cardYear(c), year)
+            const row = { c, s, adj, ep: eps > 0 && c.card.eps > 0 && c.card.eps === eps ? 1 : 0 }
+            if (this.formatConflict(format, c.card.type)) conflicted.push(row)
+            else scored.push(row)
+        }
+        if (scored.length === 0) for (const row of conflicted) scored.push(row)
+        scored.sort((a, b) => b.adj - a.adj || b.ep - a.ep || b.s - a.s)
+        const plausible = scored.filter((x) => x.adj >= 0.5)
+        if (plausible.length === 0) return []
         const picked = this.disambiguate(plausible, season, part, year)
         if (picked.length === 0) return []
-        if (picked[0].s >= 0.85 && (picked.length === 1 || picked[0].s - picked[1].s >= 0.12)) {
-            return [picked[0].r]
+        if (picked[0].adj >= 0.85 && (picked.length === 1 || picked[0].adj - picked[1].adj >= 0.12)) {
+            return [picked[0].c.r]
         }
-        return picked.map((x) => x.r)
+        return picked.map((x) => x.c.r)
     }
 
-    private matchTargets(media: Media): string[] {
-        const out: string[] = []
+    private matchTargets(media: Media): Target[] {
+        const out: Target[] = []
         const seen: { [key: string]: boolean } = {}
-        const push = (s: string): void => {
+        const push = (s: string, w: number): void => {
             const n = this.normTitle(s)
             if (n.length >= 3 && !seen[n]) {
                 seen[n] = true
-                out.push(n)
+                out.push({ t: n, w })
             }
         }
         for (const t of [media.romajiTitle, media.englishTitle]) {
             if (!t) continue
-            push(t)
-            push(t.split(/[:,;~]/)[0])
+            push(t, 1)
+            // A bare parent-series name is only weak evidence for an "X: Subtitle" media:
+            // at full weight "Chainsaw Man" scored 1.0 for the Reze Arc movie.
+            push(t.split(/[:,;~]/)[0], 0.8)
             try {
                 const nz = $scannerUtils.normalizeTitle(t)
                 if (nz) {
-                    push(nz.cleanBaseTitle)
-                    push(nz.denoisedTitle)
+                    push(nz.cleanBaseTitle, 1)
+                    push(nz.denoisedTitle, 1)
                 }
             } catch (_e) {}
         }
-        if (media.synonyms) for (const s of media.synonyms) push(s)
+        if (media.synonyms) for (const s of media.synonyms) push(s, 1)
         return out
     }
 
-    private scoreTitle(title: string, targets: string[]): number {
-        const c = this.normTitle(title)
-        if (!c) return 0
+    private scoreTitles(titles: string[], targets: Target[]): number {
         let best = 0
-        for (const t of targets) {
-            const v = this.simNorm(c, t)
-            if (v > best) best = v
+        for (const title of titles) {
+            const c = this.normTitle(title)
+            if (!c) continue
+            for (const t of targets) {
+                const v = this.simNorm(c, t.t) * t.w
+                if (v > best) best = v
+            }
         }
         return best
     }
 
-    private disambiguate(scored: { r: SearchResult; s: number }[], season: number, part: number, year: number): { r: SearchResult; s: number }[] {
-        const anyYear = scored.some((x) => this.yearOf(x.r.title) > 0)
-        if (year > 0 && anyYear) {
-            const ym = scored.filter((x) => this.yearOf(x.r.title) === year)
+    // The card's own start_year, falling back to a year in the display title for legacy cards.
+    private cardYear(c: Cand): number {
+        if (c.card.year > 0) return c.card.year
+        return this.yearOf(c.r.title)
+    }
+
+    // Soft: a wrong year lowers confidence, it never removes a candidate on its own.
+    private yearPenalty(cardYear: number, mediaYear: number): number {
+        if (cardYear <= 0 || mediaYear <= 0) return 0
+        const d = Math.abs(cardYear - mediaYear)
+        if (d <= 1) return 0
+        if (d === 2) return 0.1
+        return 0.35
+    }
+
+    // Upstream sends format "TV" when it doesn't know, so "TV" is never evidence of anything.
+    private formatConflict(mediaFormat: string, cardType: string): boolean {
+        const f = (mediaFormat || "").toUpperCase()
+        const t = (cardType || "").toLowerCase()
+        if (!f || !t || f === "TV" || f === "TV_SHORT") return false
+        const cardMovie = t.indexOf("movie") !== -1
+        const cardSeries = t.indexOf("tv series") !== -1
+        return f === "MOVIE" ? cardSeries : cardMovie
+    }
+
+    private disambiguate(scored: Scored[], season: number, part: number, year: number): Scored[] {
+        // An exact start_year match outranks the season marker: anizone labels a sequel
+        // "Jujutsu Kaisen (2023)", so a season filter on the title alone would drop it.
+        if (year > 0) {
+            const ym = scored.filter((x) => this.cardYear(x.c) === year)
             if (ym.length > 0) return this.byPart(ym, part)
-            if (season < 2 && part < 2) {
-                const bare = scored.filter((x) => this.yearOf(x.r.title) === 0)
-                if (bare.length > 0) return bare
-                return []
-            }
         }
-        if (season < 2 && part < 2) return scored
+        if (season < 2 && part < 2) return this.byPart(scored, part)
         return scored.filter((x) => {
-            const rs = this.seasonOf(x.r.title)
-            const rp = this.partOf(x.r.title)
-            const seasonOk = season < 2 || rs === season
-            const partOk = part < 2 || rp === part
+            const seasonOk = season < 2 || this.cardSeason(x.c) === season
+            const partOk = part < 2 || this.cardPart(x.c) === part
             return seasonOk && partOk
         })
     }
 
-    private byPart(list: { r: SearchResult; s: number }[], part: number): { r: SearchResult; s: number }[] {
+    private byPart(list: Scored[], part: number): Scored[] {
         if (part < 2) {
-            const main = list.filter((x) => this.partOf(x.r.title) < 2)
+            const main = list.filter((x) => this.cardPart(x.c) < 2)
             return main.length > 0 ? main : list
         }
-        const pm = list.filter((x) => this.partOf(x.r.title) === part)
+        const pm = list.filter((x) => this.cardPart(x.c) === part)
         return pm.length > 0 ? pm : list
+    }
+
+    private cardSeason(c: Cand): number {
+        let s = 0
+        for (const t of c.card.titles) {
+            const v = this.seasonOf(t)
+            if (v > s) s = v
+        }
+        return s
+    }
+
+    private cardPart(c: Cand): number {
+        let p = 0
+        for (const t of c.card.titles) {
+            const v = this.partOf(t)
+            if (v > p) p = v
+        }
+        return p
     }
 
     private yearOf(title: string): number {
@@ -314,7 +372,7 @@ class Provider {
         return cleaned.split(" ").slice(0, n).join(" ")
     }
 
-    private parseCards(html: string, opts: SearchOptions, seen: { [key: string]: boolean }, results: SearchResult[]): void {
+    private parseCards(html: string, opts: SearchOptions, seen: { [key: string]: boolean }, out: Cand[]): void {
         const cards = this.parseItems(html).concat(this.parseLegacyCards(html))
         const target = opts.media.romajiTitle || opts.media.englishTitle || ""
         for (const c of cards) {
@@ -322,11 +380,14 @@ class Provider {
             seen[c.sid] = true
             const alId = opts.media && opts.media.id > 0 ? opts.media.id : 0
             const audio = opts.dub ? "dub" : "sub"
-            results.push({
-                id: (alId > 0 ? `${c.sid}$al${alId}` : c.sid) + `$${audio}`,
-                title: this.bestTitle(c.titles, target),
-                url: `${this.normBase()}/anime/${c.sid}`,
-                subOrDub: "both",
+            out.push({
+                r: {
+                    id: (alId > 0 ? `${c.sid}$al${alId}` : c.sid) + `$${audio}`,
+                    title: this.bestTitle(c.titles, target),
+                    url: `${this.normBase()}/anime/${c.sid}`,
+                    subOrDub: "both",
+                },
+                card: c,
             })
         }
     }
@@ -369,8 +430,8 @@ class Provider {
         return /items:\s*(?:JSON\.parse\(|\[)/.test(html) || /anmTitles:\s*JSON\.parse\(/.test(html)
     }
 
-    private parseItems(html: string): { sid: string; titles: string[] }[] {
-        const out: { sid: string; titles: string[] }[] = []
+    private parseItems(html: string): Card[] {
+        const out: Card[] = []
         const m = /items:\s*JSON\.parse\('((?:[^'\\]|\\.)*)'\)/.exec(html)
         if (!m) return out
         let list: any = null
@@ -398,13 +459,18 @@ class Provider {
             const tl = it.title_list
             if (tl && typeof tl === "object") for (const k in tl) add(tl[k])
             if (titles.length === 0) continue
-            out.push({ sid, titles })
+            out.push({ sid, titles, type: String(it.type || ""), year: this.toInt(it.start_year), eps: this.toInt(it.episode_count) })
         }
         return out
     }
 
-    private parseLegacyCards(html: string): { sid: string; titles: string[] }[] {
-        const out: { sid: string; titles: string[] }[] = []
+    private toInt(v: any): number {
+        const n = typeof v === "number" ? v : parseInt(String(v || "0"), 10)
+        return isNaN(n) || n < 0 ? 0 : Math.floor(n)
+    }
+
+    private parseLegacyCards(html: string): Card[] {
+        const out: Card[] = []
         const titleRe = /anmTitles:\s*JSON\.parse\('((?:[^'\\]|\\.)*)'\)/g
         const blocks: { idx: number; titles: string[] }[] = []
         let tm: RegExpExecArray | null
@@ -426,7 +492,7 @@ class Provider {
                     break
                 }
             }
-            if (sid) out.push({ sid, titles: b.titles })
+            if (sid) out.push({ sid, titles: b.titles, type: "", year: 0, eps: 0 })
         }
         return out
     }
