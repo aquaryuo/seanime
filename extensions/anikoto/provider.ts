@@ -10,6 +10,7 @@ class Provider {
     private cacheTtl = 900000
     private serverCacheTtl = 300000
     private tokenTtl = 18000000
+    private idCacheTtl = 86400000
     private resolveDownTtl = 60000
     private serverBudget = 75000
     private searchBudget = 60000
@@ -343,6 +344,7 @@ class Provider {
                 episodes: !isNaN(total) && total > 0 && total <= 10000 ? total : 0,
                 movie: format === "movie",
             }
+            if (anilistId > 0) this.writeCache(`anikoto:al:${seriesUrl}`, anilistId)
             results.push({ id: this.withMeta(seriesUrl, audio, anilistId), title, url: seriesUrl, subOrDub })
         })
         return cards
@@ -1077,6 +1079,13 @@ class Provider {
             rest = rest.slice(0, rest.length - m[0].length)
         }
         const sa = this.splitAudio(rest)
+        // Manual matching hands the provider a zero Media, so withMeta never wrote the
+        // suffix and it is absent from the id the app then stores. Recovering it from
+        // what an earlier automatic search learned keeps the metadata path working.
+        if (anilistId === 0) {
+            const known = this.readCache<number>(`anikoto:al:${this.seriesUrl(sa.base)}`, this.idCacheTtl)
+            if (known && known > 0) anilistId = known
+        }
         return { base: sa.base, audio: sa.audio, anilistId }
     }
 
