@@ -15,9 +15,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      # Pinned to the major the payloads were verified against; a silent bump to a
+      # Pinned to the major the payloads are verified against locally; a silent bump to a
       # stricter compiler would fail the gate on unchanged code.
-      - run: npm install --no-save typescript@6 esbuild@0.28
+      - run: npm install --no-save typescript@7 esbuild@0.28
       - name: Typecheck every payload
         run: |
           set -euo pipefail
