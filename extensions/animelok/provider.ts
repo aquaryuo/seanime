@@ -201,17 +201,27 @@ class Provider {
         }
     }
 
+    // A transient answer is not an answer. 429, a 5xx or a dropped connection say
+    // nothing about whether the episode exists, and the search below used to read
+    // one as the edge of the series — silently returning a short list. Ask again
+    // before believing it; only a definitive verdict moves a bound.
+    private async probeVibe(anilistId: number, num: number, audio: string): Promise<VibeResult> {
+        const first = await this.getVibe(anilistId, num, audio)
+        if (first.status === "ok" || first.status === "notfound" || first.status === "nosource") return first
+        return await this.getVibe(anilistId, num, audio)
+    }
+
     private async probeEpisodeCount(anilistId: number, audio: string): Promise<number> {
         const cacheKey = `animelok:epcount:${anilistId}:${audio}`
         const cached = this.readCache<number>(cacheKey, this.cacheTtl)
         if (cached !== undefined && cached > 0) return cached
-        const first = await this.getVibe(anilistId, 1, audio)
+        const first = await this.probeVibe(anilistId, 1, audio)
         if (first.status !== "ok") return 0
         let lo = 1
         let hi = 2
         let bounded = false
         while (hi <= 2048) {
-            const v = await this.getVibe(anilistId, hi, audio)
+            const v = await this.probeVibe(anilistId, hi, audio)
             if (v.status === "ok") {
                 lo = hi
                 hi = hi * 2
@@ -226,7 +236,7 @@ class Provider {
         if (!bounded) return lo
         while (hi - lo > 1) {
             const mid = Math.floor((lo + hi) / 2)
-            const v = await this.getVibe(anilistId, mid, audio)
+            const v = await this.probeVibe(anilistId, mid, audio)
             if (v.status === "ok") lo = mid
             else if (v.status === "notfound" || v.status === "nosource") hi = mid
             else return lo
