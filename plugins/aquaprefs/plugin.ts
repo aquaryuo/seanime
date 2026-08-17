@@ -222,7 +222,22 @@ function init() {
         const curTrack: any = { sub: -999, cap: -999 }
         const enforceTok: any = { sub: 0, cap: 0 }
 
-        function pinfo(): any { try { return VC.getCurrentPlaybackInfo() || null } catch (_e) { return null } }
+        // The host hands this over as the Go value, so fields declared as pointers
+        // arrive wrapped rather than as plain booleans and compare unequal to both
+        // true and false. Normalising once here keeps every reader below honest.
+        function pinfo(): any {
+            try {
+                const raw = VC.getCurrentPlaybackInfo()
+                if (!raw) return null
+                try {
+                    return JSON.parse(JSON.stringify(raw))
+                } catch (_e) {
+                    return raw
+                }
+            } catch (_e) {
+                return null
+            }
+        }
         function curMediaId(): number {
             try { const m = VC.getCurrentMedia(); if (m && typeof m.id === "number") return m.id } catch (_e) {}
             const pi = pinfo()
