@@ -201,10 +201,8 @@ class Provider {
         }
     }
 
-    // A transient answer is not an answer. 429, a 5xx or a dropped connection say
-    // nothing about whether the episode exists, and the search below used to read
-    // one as the edge of the series — silently returning a short list. Ask again
-    // before believing it; only a definitive verdict moves a bound.
+    // A transient answer is not an answer: ask again rather than let it move a
+    // bound, or one bad moment shortens the list.
     private async probeVibe(anilistId: number, num: number, audio: string): Promise<VibeResult> {
         const first = await this.getVibe(anilistId, num, audio)
         if (first.status === "ok" || first.status === "notfound" || first.status === "nosource") return first

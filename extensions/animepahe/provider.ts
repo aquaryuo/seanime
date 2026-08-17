@@ -139,13 +139,8 @@ class Provider {
         if (first.data) for (const d of first.data) all.push(d)
 
         const lastPage = first.last_page && first.last_page > 1 ? first.last_page : 1
-        // Stop at the first page that will not come, and refuse to answer at all.
-        // A short list is indistinguishable from a series that really is short, and
-        // the app stores what it is given for a day — so a half-fetched list looks
-        // like a broken site until the cache expires, while an error is something
-        // the user can simply retry. Carrying on also meant walking every remaining
-        // page through the full retry-and-escalate ladder once the site had already
-        // made its position clear.
+        // A short list cannot be told from a series that is short, and the app
+        // stores it for a day, so answer with an error rather than a partial list.
         let failedPage = 0
         for (let page = 2; page <= lastPage; page++) {
             try {

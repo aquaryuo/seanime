@@ -732,13 +732,9 @@ class Provider {
             }
             this.writeCache("anikoto:solverdown", 0)
             const data = res.json<{ status?: string; gate?: string; solution?: { userAgent?: string; cookies?: { name: string; value: string }[] } }>()
-            // The solver answers HTTP 200 whether or not it got through; the verdict
-            // is in the envelope. A failed solve still carries __cf_bm, which the
-            // cookie test below happily accepted — so a failure was cached and
-            // replayed as though it were clearance. Since solver-v0.1.92 `gate`
-            // also says what stood in the way, which is worth logging.
+            // HTTP 200 only means it answered; the outcome is in the envelope.
             if (!data || data.status !== "ok") {
-                this.reportError("solver", "the solver could not clear this site" + (data && data.gate ? " (" + data.gate + ")" : ""))
+                this.reportError("solver", "the helper did not succeed" + (data && data.gate ? " (" + data.gate + ")" : ""))
                 return undefined
             }
             const sol = data.solution
