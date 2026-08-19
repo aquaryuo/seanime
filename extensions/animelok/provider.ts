@@ -42,8 +42,12 @@ class Provider {
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {
         const meta = this.decode(id)
         if (meta.anilistId <= 0) return []
-        let count = meta.num
-        if (count <= 0) count = await this.probeEpisodeCount(meta.anilistId, meta.audio)
+        // The announced total describes the series, not this site's copy of it, so
+        // on its own it invents entries for anything not carried yet and hides any
+        // extra. Ask the site; keep the announced figure only for when it cannot
+        // answer, which is where it was already being used.
+        let count = await this.probeEpisodeCount(meta.anilistId, meta.audio)
+        if (count <= 0) count = meta.num
         if (count <= 0) return []
         const episodes: EpisodeDetails[] = []
         for (let n = 1; n <= count; n++) {
