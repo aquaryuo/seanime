@@ -255,6 +255,12 @@ class Provider {
         const html = res.text()
         const nums: { [key: number]: boolean } = {}
         this.collectEps(html, shortid, nums)
+        this.collectItemEps(html, nums)
+        // The list is rendered a batch at a time and the rest arrives on scroll, so
+        // the markup only ever carries the first batch. The page states its own total,
+        // which is a steadier source than trying to drive the scroll from here.
+        const stated = this.statedEpisodeCount(html)
+        if (stated > 0) for (let n = 1; n <= stated; n++) nums[n] = true
         if (/gotoPage\(\d+\)/.test(html)) {
             try {
                 const first = await fetch(`${this.normBase()}/anime/${shortid}?page=1`, { headers: this.pageHeaders(), timeout: 12 })
@@ -424,6 +430,31 @@ class Provider {
             }
         }
         return { m3u8: src, subs }
+    }
+
+    private statedEpisodeCount(html: string): number {
+        const m = /(\d+)\s+Episodes?</i.exec(html || "")
+        if (!m) return 0
+        const n = parseInt(m[1] || "0", 10)
+        return n > 0 && n <= 10000 ? n : 0
+    }
+
+    private collectItemEps(html: string, nums: { [key: number]: boolean }): void {
+        const m = /items:\s*JSON\.parse\('((?:[^'\\]|\\.)*)'\)/.exec(html)
+        if (!m) return
+        let list: any = null
+        try {
+            list = JSON.parse(this.unescapeJs(m[1] || ""))
+        } catch (_e) {
+            return
+        }
+        if (!list || typeof list.length !== "number") return
+        for (let i = 0; i < list.length; i++) {
+            const it = list[i]
+            if (!it) continue
+            const n = parseInt(String(it.slug || ""), 10)
+            if (!isNaN(n) && n > 0) nums[n] = true
+        }
     }
 
     private hasCardShape(html: string): boolean {
