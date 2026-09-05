@@ -147,8 +147,6 @@ function init() {
 
         let logs: string[] = sget<string[]>(LOG_KEY, [])
         if (!Array.isArray(logs)) logs = []
-        // Call sites mark severity with a leading glyph; deriving the level
-        // from it keeps them unchanged while still colouring the tray.
         function glyphLevel(msg: string): AqLevel {
             const c = msg.charAt(0)
             if (c === "⚠") return "WRN"
@@ -222,9 +220,6 @@ function init() {
         const curTrack: any = { sub: -999, cap: -999 }
         const enforceTok: any = { sub: 0, cap: 0 }
 
-        // The host hands this over as the Go value, so fields declared as pointers
-        // arrive wrapped rather than as plain booleans and compare unequal to both
-        // true and false. Normalising once here keeps every reader below honest.
         function pinfo(): any {
             try {
                 const raw = VC.getCurrentPlaybackInfo()

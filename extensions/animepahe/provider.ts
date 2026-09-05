@@ -50,9 +50,6 @@ class Provider {
                     if (blocked || msg.indexOf("reachable") !== -1 || msg.indexOf("endpoint not set") !== -1 || msg.indexOf("protection") !== -1 || msg.indexOf("expected JSON") !== -1) break
                 }
             }
-            // A 200 with parseable JSON but no recognisable result list is not
-            // "this title isn't here" — it reads as zero results all the way up
-            // to the user, so nothing would ever flag the layout change.
             if (shapeErr) throw this.fail("parse", shapeErr)
             if (!data) continue
             for (const item of data) {
@@ -74,9 +71,6 @@ class Provider {
         return this.filterBySeason(results, opts)
     }
 
-    // The API wraps every search in the same pagination envelope: a numeric
-    // `total` and a `data` array, `total:0` with `data:[]` when there really is
-    // no match. Anything outside that is the site changing under us.
     private searchShapeError(json: SearchResponse | undefined): string {
         const what = "AnimePahe's search API answered, but "
         const tail = " — the site changed its API; this extension needs an update."
@@ -139,8 +133,6 @@ class Provider {
         if (first.data) for (const d of first.data) all.push(d)
 
         const lastPage = first.last_page && first.last_page > 1 ? first.last_page : 1
-        // A short list cannot be told from a series that is short, and the app
-        // stores it for a day, so answer with an error rather than a partial list.
         let failedPage = 0
         for (let page = 2; page <= lastPage; page++) {
             try {

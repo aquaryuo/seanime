@@ -177,10 +177,6 @@ function init() {
         rebuildMaps()
 
         let dErr = ""
-        // dErr used to be write-only: every failure was recorded and surfaced
-        // nowhere. Route it through the shared reporter so it reaches the error
-        // panel that already aggregates extension failures. Each distinct code
-        // reports once per session, since the observers can fire repeatedly.
         const dErrSeen: { [k: string]: boolean } = {}
         function dsetErr(code: string): void {
             dErr = code
@@ -209,7 +205,6 @@ function init() {
         const PERSON_SVG = "<svg width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2'></path><circle cx='12' cy='7' r='4'></circle></svg>"
         const ICON_CLASS = "UI-Input__addons--icon pointer-events-none absolute inset-y-0 left-0 w-12 grid place-content-center text-gray-500 dark:text-gray-300"
 
-        // ---------- helpers ----------
         function tagsOf(e: Entry): string[] {
             const t: string[] = []
             if (e.brokenTag) t.push("broken")
@@ -259,7 +254,6 @@ function init() {
             return m ? m[1].trim() : ""
         }
 
-        // ---------- card decoration ----------
         async function rebuildBadges(card: any, info: Entry, tags: string[]): Promise<void> {
             let badges: any[] = [], block: any = null, existing: any[] = []
             try {
@@ -308,8 +302,6 @@ function init() {
         }
         function decorateCards(cards: any[]): void {
             if (!cards) return
-            // Decorate in small chunks with a yield so a large marketplace (~200 cards) doesn't flood the
-            // op scheduler and delay the toolbar controls. The first (visible) cards finish immediately.
             const CHUNK = 15
             let i = 0
             function step(): void {
@@ -320,8 +312,6 @@ function init() {
             step()
         }
 
-        // After a fetch changes the data, strip already-decorated cards (the observer won't re-deliver
-        // them while they still carry [data-seatags]) so the re-armed observer re-decorates with fresh tags.
         async function refreshDecorated(): Promise<void> {
             let cards: any[] = [], blocks: any[] = []
             try {
@@ -335,7 +325,6 @@ function init() {
             for (let i = 0; i < cards.length; i++) { try { cards[i].removeAttribute("data-seatags") } catch (_e) {} }
         }
 
-        // ---------- injected stylesheets ----------
         async function ensureFilterStyle(): Promise<void> {
             if (filterStyle) return
             try {
@@ -360,7 +349,6 @@ function init() {
             try { filterStyle.setText(css) } catch (e) { dsetErr("filter") }
         }
 
-        // ---------- toolbar controls (Author search + Status dropdown) ----------
         let authorToken = 0
         function onAuthorInput(el: any): void {
             const t = ++authorToken
@@ -426,8 +414,6 @@ function init() {
             return cachedBody
         }
 
-        // Builds a div-based dropdown that reuses Seanime's own Select classes (looks identical).
-        // Parallelizes the blocking reads (createElement / query) to minimize insertion latency.
         async function buildStatusDropdown(boxClass: string, gen: number, eid: string): Promise<any> {
             await ensureHoverStyle()
             const body = await getBody()
@@ -553,11 +539,9 @@ function init() {
                 const gen = ++genSeq
                 genById[eid] = gen
 
-                // The search input's class is the InputAnatomy box (same box the language Select uses) — read once.
                 if (!cachedInputClass) { try { const c = await input.getAttribute("class"); cachedInputClass = c ? String(c) : "" } catch (_e) {} }
                 const cls = cachedInputClass
 
-                // Resolve anchors AND build both controls concurrently (builds don't depend on anchors)
                 let anchors: any = { ic: null, langRoot: [], hasLang: false }
                 let statusEl: any = null, author: any = null
                 try {
@@ -599,9 +583,6 @@ function init() {
             }
         }
 
-        // ---------- startup ----------
-        // Observers are (re-)armed on every ready/navigate. On a client reload the server-side plugin
-        // persists, so we cancel the stale observer and register a fresh one for the new client.
         function startControls(): void {
             if (!domReady) return
             if (controlsCancel) { try { controlsCancel() } catch (_e) {} controlsCancel = null }
@@ -621,18 +602,11 @@ function init() {
             applyFilter().catch(() => {})
         }
         async function resetForReady(): Promise<void> {
-            // A client reload resets the frontend's element-id counter, so our persisted handles and the
-            // injected-id cache go stale and can collide with new elements (a recycled id can now point at a
-            // live element, so calling .remove() on a stale handle would delete real UI). Drop the refs
-            // WITHOUT removing through them; the old client's DOM is already gone on reload. For a same-tab
-            // reset (no reload) clear any leftover styles by querying fresh handles instead.
             filterStyle = null
             hoverStyle = null
             cachedBody = null
             injectedIds = {}
             genById = {}
-            // ctx.dom.query never settles off the main/disposed tab; awaiting it here would block the
-            // resets above and (via .then) onDomReady. Clean up leftover styles fire-and-forget instead.
             try {
                 ctx.dom.query("[data-seatags-style]").then((olds: any[]) => {
                     if (olds) for (let i = 0; i < olds.length; i++) { try { olds[i].remove() } catch (_e) {} }
@@ -649,7 +623,6 @@ function init() {
         try { ctx.dom.onMainTabReady(() => { resetForReady().then(() => onDomReady(), () => onDomReady()) }) } catch (_e) {}
         try { ctx.screen.onNavigate(() => { startControls(); startCards() }) } catch (_e) {}
 
-        // ---------- load the marketplace tag list ----------
         let inflight = false
         async function load(force: boolean): Promise<void> {
             if (inflight) return

@@ -3,9 +3,6 @@ declare const console: { log(...args: any[]): void; info(...args: any[]): void; 
 type VibeTrack = { url?: string; lang?: string; label?: string; kind?: string; default?: boolean }
 type VibeData = { sources?: { url: string }[]; tracks?: VibeTrack[]; headers?: { [key: string]: string } }
 type Availability = { exists: boolean; audio: string; subOrDub: SubOrDub; broken?: boolean }
-// "badshape" is the one answer the site cannot mean: a 200 whose body is not JSON, or is
-// JSON without the `sources` array the player reads from. Absence is a 404 ("notfound")
-// and an episode the extractor could not fill is a 500 ("nosource").
 type VibeResult = { status: "ok" | "notfound" | "nosource" | "fail" | "badshape"; url: string; tracks: VibeTrack[]; headers: { [key: string]: string } }
 
 class Provider {
@@ -23,8 +20,6 @@ class Provider {
         if (!anilistId || anilistId <= 0) anilistId = this.parseAnilistId(opts.query)
         if (!anilistId || anilistId <= 0) return []
         const av = await this.availability(anilistId, opts.dub)
-        // An answer nobody can read is not an absent one, and returning [] for it looks
-        // exactly like a title this site does not carry.
         if (av.broken) throw this.fail("search", `animelok: ${this.normBase()} answered for AniList id ${anilistId} in a shape this extension does not understand — the site changed its API; this extension needs an update.`)
         if (!av.exists) return []
         const epCount = opts.media.episodeCount && opts.media.episodeCount > 0 ? opts.media.episodeCount : 0
@@ -42,10 +37,6 @@ class Provider {
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {
         const meta = this.decode(id)
         if (meta.anilistId <= 0) return []
-        // The announced total describes the series, not this site's copy of it, so
-        // on its own it invents entries for anything not carried yet and hides any
-        // extra. Ask the site; keep the announced figure only for when it cannot
-        // answer, which is where it was already being used.
         let count = await this.probeEpisodeCount(meta.anilistId, meta.audio)
         if (count <= 0) count = meta.num
         if (count <= 0) return []
@@ -171,9 +162,6 @@ class Provider {
                 try {
                     data = res.json<VibeData>()
                 } catch (_e) {}
-                // Every 200 the site means to send carries a `sources` array — an empty one when
-                // it has nothing to offer. A body without one is the API changing shape, which
-                // would otherwise reach the user as this episode simply not existing.
                 if (!data || !Array.isArray(data.sources)) {
                     this.reportError("parse", `animelok: API returned ${res.status} with no sources list for ${anilistId} ep ${ep} (${audio}) — the site changed its API`)
                     return { status: "badshape", url: "", tracks: [], headers: {} }
@@ -205,8 +193,6 @@ class Provider {
         }
     }
 
-    // A transient answer is not an answer: ask again rather than let it move a
-    // bound, or one bad moment shortens the list.
     private async probeVibe(anilistId: number, num: number, audio: string): Promise<VibeResult> {
         const first = await this.getVibe(anilistId, num, audio)
         if (first.status === "ok" || first.status === "notfound" || first.status === "nosource") return first

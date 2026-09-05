@@ -145,9 +145,6 @@ class Provider {
             }
 
             if (anyOk) {
-                // A restyle makes every card selector miss, which reads as "no results"
-                // instead of an error. The site's own result container is what separates
-                // the two: a keyword with no matches still ships it, empty.
                 if (cards === 0 && !emptyList) {
                     unrecognized = true
                     continue
@@ -350,8 +347,6 @@ class Provider {
         return cards
     }
 
-    // An empty "#list-items" is how the site says "no matches", so its presence with no
-    // children is the one reading that must never be mistaken for a layout change.
     private resultListIsEmpty($: DocSelectionFunction): boolean {
         try {
             const list = $("#list-items")
@@ -361,17 +356,12 @@ class Provider {
         }
     }
 
-    // $scannerUtils reports season -1 when the marker is a word ("The Final Season"), so
-    // filterBySeason cannot narrow those and hands back the whole show; the card's own
-    // episode count is then the only evidence left that tells the seasons apart.
     private preferByEvidence(
         pool: SearchResult[],
         evidence: { [key: string]: { episodes: number; movie: boolean } },
         media: Media
     ): SearchResult[] {
         if (pool.length < 2) return pool
-        // Upstream reports -1 for airing or unknown counts, and a card with no count
-        // element carries no signal either — neither may drop a candidate.
         const want = media.episodeCount || 0
         if (want > 0) {
             const byCount = pool.filter((r) => {
@@ -684,10 +674,6 @@ class Provider {
             if (body === undefined) return false
             const variants = this.variantLevelUrls(body, src.url)
             if (variants.length === 0) return true
-            // One playable rendition is the whole question, so ask one at a time and
-            // stop on the first yes. Asking for all of them at once waited on the
-            // slowest of them — the per-request timeout does not apply here — and put
-            // a burst on a host that answers a burst with 429s.
             for (const v of variants) {
                 if (this.outOfTime()) break
                 try {
@@ -740,7 +726,6 @@ class Provider {
             }
             this.writeCache("anikoto:solverdown", 0)
             const data = res.json<{ status?: string; gate?: string; solution?: { userAgent?: string; cookies?: { name: string; value: string }[] } }>()
-            // HTTP 200 only means it answered; the outcome is in the envelope.
             if (!data || data.status !== "ok") {
                 this.reportError("solver", "the helper did not succeed" + (data && data.gate ? " (" + data.gate + ")" : ""))
                 return undefined
@@ -1083,9 +1068,6 @@ class Provider {
             rest = rest.slice(0, rest.length - m[0].length)
         }
         const sa = this.splitAudio(rest)
-        // Manual matching hands the provider a zero Media, so withMeta never wrote the
-        // suffix and it is absent from the id the app then stores. Recovering it from
-        // what an earlier automatic search learned keeps the metadata path working.
         if (anilistId === 0) {
             const known = this.readCache<number>(`anikoto:al:${this.seriesUrl(sa.base)}`, this.idCacheTtl)
             if (known && known > 0) anilistId = known

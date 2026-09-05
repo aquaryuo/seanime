@@ -90,8 +90,6 @@ class Provider {
         for (const t of [media.romajiTitle, media.englishTitle]) {
             if (!t) continue
             push(t, 1)
-            // A bare parent-series name is only weak evidence for an "X: Subtitle" media:
-            // at full weight "Chainsaw Man" scored 1.0 for the Reze Arc movie.
             push(t.split(/[:,;~]/)[0], 0.8)
             try {
                 const nz = $scannerUtils.normalizeTitle(t)
@@ -118,13 +116,11 @@ class Provider {
         return best
     }
 
-    // The card's own start_year, falling back to a year in the display title for legacy cards.
     private cardYear(c: Cand): number {
         if (c.card.year > 0) return c.card.year
         return this.yearOf(c.r.title)
     }
 
-    // Soft: a wrong year lowers confidence, it never removes a candidate on its own.
     private yearPenalty(cardYear: number, mediaYear: number): number {
         if (cardYear <= 0 || mediaYear <= 0) return 0
         const d = Math.abs(cardYear - mediaYear)
@@ -133,7 +129,6 @@ class Provider {
         return 0.35
     }
 
-    // Upstream sends format "TV" when it doesn't know, so "TV" is never evidence of anything.
     private formatConflict(mediaFormat: string, cardType: string): boolean {
         const f = (mediaFormat || "").toUpperCase()
         const t = (cardType || "").toLowerCase()
@@ -144,8 +139,6 @@ class Provider {
     }
 
     private disambiguate(scored: Scored[], season: number, part: number, year: number): Scored[] {
-        // An exact start_year match outranks the season marker: anizone labels a sequel
-        // "Jujutsu Kaisen (2023)", so a season filter on the title alone would drop it.
         if (year > 0) {
             const ym = scored.filter((x) => this.cardYear(x.c) === year)
             if (ym.length > 0) return this.byPart(ym, part)
@@ -256,9 +249,6 @@ class Provider {
         const nums: { [key: number]: boolean } = {}
         this.collectEps(html, shortid, nums)
         this.collectItemEps(html, nums)
-        // The list is rendered a batch at a time and the rest arrives on scroll, so
-        // the markup only ever carries the first batch. The page states its own total,
-        // which is a steadier source than trying to drive the scroll from here.
         const stated = this.statedEpisodeCount(html)
         if (stated > 0) for (let n = 1; n <= stated; n++) nums[n] = true
         if (/gotoPage\(\d+\)/.test(html)) {
