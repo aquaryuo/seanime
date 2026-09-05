@@ -126,7 +126,6 @@ function init() {
         const SEH_MAX_KEEP = 100
         const SEH_MAX_SEEN = 500
         const SEH_POLL_MS = 6000
-        // How long one distinct error message stays quiet after being announced.
         const SEH_NOTIFY_COOLDOWN_MS = 10 * 60 * 1000
         const SEH_TTL = 21600000
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
@@ -151,17 +150,10 @@ function init() {
         const seen = ctx.state<string[]>(sget<string[]>("seh.seen", []))
         const notify = ctx.state<boolean>(sget<boolean>("seh.notify", false))
         const appRef = ctx.fieldRef<string>(appBase.get())
-        // Assume the tray is on screen until an event says otherwise.
         let trayVisible = true
-        // Last time each distinct message was announced, so a provider that keeps
-        // failing is reported once rather than on every poll.
         const sehNotifiedAt: { [label: string]: number } = {}
         let sehAuthWarned = false
         let sehRetryAfter = 0
-        // How much of the log has already been parsed. The endpoint hands back the
-        // whole file every time, and it only ever grows, so re-parsing all of it
-        // every few seconds is work that gets more expensive the longer Seanime
-        // has been running.
         let sehSeenChars = 0
         let sehMaxT = sget<number>("seh.maxT", 0)
 
@@ -221,10 +213,7 @@ function init() {
         const fsHint = ctx.state<string>("")
         const fsDepsCmd = ctx.state<string>("")
         const fsDepsPkgs = ctx.state<string[]>([])
-        // What the solver says about its own ability to clear a hard challenge on
-        // this machine. Without it a box that cannot do the job looks healthy and
-        // only fails later, silently, per episode.
-        const fsCanHard = ctx.state<string>("")   // "" unknown | "yes" | "no"
+        const fsCanHard = ctx.state<string>("")
         const fsHardWhy = ctx.state<string>("")
         let fsCapAt = 0
         const fsDepsInstalling = ctx.state<boolean>(false)
@@ -322,14 +311,8 @@ function init() {
             if (fsDepsChecked && !force) return
             let chrome = ""
             try { chrome = chromiumCachedPath() } catch (_e) {}
-            // Run once the browser is in play (cached or opted into), so a gap shows
-            // up before use, not after; Stage-A-only users are never nagged.
             if (!chrome && !fsWantChromium.get()) return
             fsDepsChecked = true
-            // Two signals: a shared library Chromium links against is missing (ldd),
-            // and the Xvfb executable is absent (ldd can't see it — it's a binary, not
-            // a library). On apt systems list the exact missing packages; else surface
-            // the tool name.
             const script = "c=" + shq(chrome) + "; miss=; "
                 + "for t in Xvfb; do command -v \"$t\" >/dev/null 2>&1 || miss=\"$miss $t\"; done; "
                 + "lib=0; [ -n \"$c\" ] && ldd \"$c\" 2>/dev/null | grep -q 'not found' && lib=1; "
@@ -409,8 +392,6 @@ function init() {
             }
         }
 
-        // Install missing packages ourselves when we can act without interaction (root
-        // or passwordless sudo), once; otherwise fall back to the tray prompt.
         function maybeAutoInstallDeps(): void {
             if (typeof $osExtra === "undefined") return
             const pkgs = fsDepsPkgs.get() || []
@@ -462,8 +443,6 @@ function init() {
             let all = ""
             let clean = ""
             for (let i = 0; i < lines.length; i++) {
-                // The solver emits its own "date LEVEL [subsystem] msg"; plog
-                // already produces canonical lines, which pass through untouched.
                 const l = aqNormalize(lines[i], "solver")
                 if (!l) continue
                 all += l + "\n"
@@ -694,11 +673,6 @@ function init() {
             }
             if (fresh.length === 0) return
             if (notify.get()) {
-                // Every occurrence is a distinct id, so a provider failing on each
-                // poll used to raise a toast and a desktop notification every time.
-                // The user only ever needs to be told a thing is broken once: group
-                // by the message they actually see, and stay quiet about it for a
-                // while afterwards.
                 const counts: { [label: string]: number } = {}
                 const order: string[] = []
                 for (let i = 0; i < fresh.length; i++) {
@@ -728,9 +702,6 @@ function init() {
         }
 
         async function sehPoll(): Promise<void> {
-            // A password-protected Seanime returns 401/403 on the log API; back off
-            // instead of retrying every few seconds. Auto-retries later; a URL save
-            // retries immediately.
             if (nowMs() < sehRetryAfter) return
             try {
                 const url = (appBase.get() || SEH_DEFAULT_APP).replace(/\/+$/, "") + "/api/v1/logs/latest"
@@ -750,13 +721,9 @@ function init() {
                 const body = res.json<{ data?: string }>()
                 const content = body && typeof body.data === "string" ? body.data : ""
                 if (!content) return
-                // Only the part that appeared since last time. A file shorter than
-                // what we already read has been rotated or truncated, so start over.
                 let from = content.length >= sehSeenChars ? sehSeenChars : 0
                 let chunk = content.slice(from)
                 if (chunk === "") return
-                // Stop at the last complete line so a half-written entry is not
-                // parsed now and skipped when the rest of it arrives.
                 const lastNL = chunk.lastIndexOf("\n")
                 if (lastNL < 0) return
                 chunk = chunk.slice(0, lastNL + 1)
@@ -768,11 +735,6 @@ function init() {
         }
 
         function fsBase(): string {
-            // The bundled solver refuses to bind anywhere but loopback, so in that
-            // mode the host field cannot be right and must not be consulted. It is
-            // left holding whatever Remote mode was pointed at, and honouring it
-            // sent every request to a machine that was not running our solver —
-            // with no way to notice or undo it from the tray.
             const host = fsMode.get() === "remote" ? (fsHost.get() || FS_DEFAULT_HOST) : FS_DEFAULT_HOST
             return "http://" + host + ":" + (fsPort.get() || FS_DEFAULT_PORT)
         }
@@ -800,13 +762,6 @@ function init() {
             } catch (_e) {}
         }
 
-        // NOTE: the `timeout` option on ctx.fetch is currently discarded by Seanime
-        // — it reads the value as a Go int while goja hands it an int64, so the
-        // assertion never succeeds and every request runs to the 35s default
-        // (internal/goja/goja_bindings/fetch.go). The values below are kept because
-        // they are the intent and will apply once that is fixed upstream, but do
-        // not design anything around a short fetch timeout: bound work by how many
-        // requests are made, which we do control.
         async function fsApi(cmd: string, extra: { [k: string]: any }, timeoutSec?: number): Promise<any> {
             try {
                 const res = await ctx.fetch(fsBase() + "/v1", {
@@ -838,10 +793,6 @@ function init() {
                 })
                 let data: any = null
                 try { data = res.json<any>() } catch (_e) {}
-                // Something answering on the port is not the same as our solver
-                // answering: a wrong host, a stale process, or another service
-                // all reply, and reporting those as running shows a green badge
-                // while nothing works.
                 const ours = !!data && (data.version !== undefined || Array.isArray(data.sessions))
                 if (!res.ok || !ours) return { up: false }
                 return {
@@ -854,8 +805,6 @@ function init() {
             }
         }
 
-        // Re-asks periodically so installing a missing package clears the warning
-        // without a restart.
         async function refreshCapability(): Promise<void> {
             if (fsMode.get() === "remote") return
             const stale = fsCanHard.get() === "" ? 20000 : 300000
@@ -870,9 +819,6 @@ function init() {
             if (before !== fsCanHard.get()) tray.update()
         }
 
-        // The polled refresh runs whether or not the tray is on screen, and a
-        // re-render pushes the whole tray to the client. Opening it triggers a full
-        // update, so nothing stale is ever shown.
         function trayPoke(): void {
             if (trayVisible) tray.update()
         }
@@ -1116,8 +1062,6 @@ function init() {
             try { return $storage.get<string>("fs.solverReady") === FS_VERSION && !solverBinExists() } catch (_e) { return false }
         }
 
-        // Deliberately not under FS_VERSION: this directory holds the solved-site
-        // cookies, which stay valid across solver builds and are expensive to earn.
         function fsStateDir(): string {
             try {
                 return $filepath.join($os.cacheDir(), "aquatils-beta", "state")
@@ -1232,9 +1176,6 @@ function init() {
             try { $os.mkdirAll(dir, 493) } catch (_e) {}
             const zip = $filepath.join(dir, "chrome.zip")
             let id = ""
-            // The .5 is load-bearing: the host asserts the option to float64, and a
-            // whole number arrives from goja as an int64 and is dropped — writing
-            // 900 here silently means no timeout at all.
             try { id = dl.download(st.url, zip, { timeout: 900.5 }) } catch (_e) { setErr("Chromium download couldn't start: " + String(_e)); done(false); return }
             plog("downloading Chromium" + (st.version ? " " + st.version : "") + " (browser solver)")
             dlLogAt = 0
@@ -1272,12 +1213,6 @@ function init() {
             })
         }
 
-        // Some platforms have no build to fetch — ARM Linux most of all — and there
-        // the tier simply did not exist, while the message told the user to enable
-        // a download that could never appear. Look for a browser the machine
-        // already has and hand its path to the solver explicitly; the solver still
-        // launches only what it is given, and always in its own profile directory,
-        // never the user's.
         let systemChromeAt = ""
         let systemChromeDone = false
         function findSystemChrome(cb: (path: string) => void): void {
@@ -1399,18 +1334,11 @@ function init() {
                 env.push("PORT=" + port)
                 env.push("LOG_LEVEL=" + (fsVerbose.get() ? "debug" : "info"))
                 if (logPath) env.push("LOG_FILE=" + logPath)
-                // Outside the version directory on purpose: the cleared-site
-                // cookies are the whole point of running this, and keeping them
-                // beside the binary threw them away on every update.
                 const statePath = fsStateDir()
                 if (statePath) env.push("SOLVER_STATE_DIR=" + statePath)
                 if (chromiumOverride) env.push("SOLVER_CHROME=" + chromiumOverride)
                 env.push("SOLVER_BROWSER_MODE=" + (fsBrowserMode.get() === "headed" ? "headed" : fsBrowserMode.get() === "headless" ? "headless" : $os.platform === "windows" ? "offscreen" : "auto"))
                 if (fsBrowserMode.get() === "headless") env.push("SOLVER_HEADLESS=1")
-                // On Linux ask for a display of our own. Sharing the machine's
-                // screen means the browser cannot take over the pointer, which is
-                // what completing an interactive check needs — and it keeps us
-                // from moving the operator's real cursor.
                 else if ($os.platform === "linux") env.push("SOLVER_XVFB=1")
                 if ($os.platform === "windows" && fsEngine.get() && fsEngine.get() !== "chrome") env.push("SOLVER_BROWSER_ENGINE=" + fsEngine.get())
                 if (!fsWv2Warm.get()) env.push("SOLVER_WV2_WARM=0")
@@ -1627,10 +1555,6 @@ function init() {
             return "'" + String(s).replace(/'/g, "'\\''") + "'"
         }
 
-        // The runtime's CryptoJS.SHA256 takes a string, and the host re-encodes it
-        // on the way in, so any byte above 0x7f is mangled — an archive cannot be
-        // hashed through it (measured: both a Uint8Array and a latin1 string give
-        // the wrong digest). Ask the OS instead; every platform ships a tool.
         function sha256OfFile(path: string): string {
             try {
                 const c = $os.platform === "windows"
@@ -1638,8 +1562,6 @@ function init() {
                     : $os.cmd("sh", "-c", ($os.platform === "darwin" ? "shasum -a 256 " : "sha256sum ") + shq(path))
                 const raw = c.output()
                 const text = typeof raw === "string" ? raw : ""
-                // sha256sum/shasum lead with the digest; certutil puts it on its own
-                // line, sometimes spaced. Take the first 64-hex run either way.
                 const m = String(text).replace(/\s+/g, "").match(/[0-9a-fA-F]{64}/)
                 return m ? m[0].toLowerCase() : ""
             } catch (_e) {
@@ -1647,8 +1569,6 @@ function init() {
             }
         }
 
-        // Returns the expected digest for an asset from the release's checksums
-        // file, or "" when it cannot be obtained.
         async function publishedSha256(asset: string): Promise<string> {
             try {
                 const url = "https://github.com/" + SOLVER_REPO + "/releases/download/solver-v"
@@ -1658,7 +1578,6 @@ function init() {
                 const lines = String(res.text()).split("\n")
                 for (const line of lines) {
                     const parts = line.trim().split(/\s+/)
-                    // "<digest>  <name>", name possibly prefixed with "*".
                     if (parts.length >= 2 && parts[1].replace(/^\*/, "") === asset) return parts[0].toLowerCase()
                 }
             } catch (_e) {}
@@ -1757,8 +1676,6 @@ function init() {
                 tray.update()
                 return
             }
-            // Held as its own const so the null check above still applies inside
-            // finishInstall, which tsc treats as callable later.
             const chosen = pick
             let cacheDir = ""
             try {
@@ -1803,13 +1720,9 @@ function init() {
             const url = "https://github.com/" + SOLVER_REPO + "/releases/download/solver-v" + SOLVER_VERSION + "/" + pick.asset
             plog("downloading solver binary " + pick.asset + " from github.com/" + SOLVER_REPO)
             dlLogAt = 0
-            // Started alongside the download so the digest is in hand by the time
-            // there is something to check it against.
             const wantSha = publishedSha256(pick.asset)
             let id = ""
             try {
-                // The .5 is load-bearing — see downloadChromium: a whole 900 fails
-                // the host's float64 assertion and leaves the transfer untimed.
                 id = dl.download(url, archive, { timeout: 900.5 })
                 fsDownloadId = id
             } catch (_e) {
@@ -1827,8 +1740,6 @@ function init() {
                 tray.update()
                 return
             }
-            // Unpack, sanity-check and start. Split out of the download callback so
-            // the checksum can be awaited before any of it happens.
             function finishInstall(archiveSize: number, expected: number): void {
                 setNote("Extracting solver " + SOLVER_VERSION + "…")
                 tray.update()
@@ -1903,12 +1814,6 @@ function init() {
                         tray.update()
                         return
                     }
-                    // This archive is about to be unpacked, made executable and run.
-                    // The release publishes a digest for exactly that reason, and
-                    // until now nothing read it. A mismatch is fatal; being unable
-                    // to check (no digest published, no hash tool) is only noted,
-                    // since refusing to run then would strand the user over a
-                    // missing coreutil rather than a real problem.
                     wantSha.then((want) => {
                         const got = want ? sha256OfFile(archive) : ""
                         if (want && got && got !== want) {
@@ -2810,19 +2715,11 @@ function init() {
         }
         plog("aquatils loaded (managing solver " + SOLVER_VERSION + ")")
 
-        // Re-rendering the tray pushes its whole contents to the client. The poll
-        // did that every few seconds whether or not anyone had it open. Starts
-        // true so that if these events never arrive the behaviour is exactly what
-        // it was — a stale tray would be a worse bug than the wasted work.
         try {
             tray.onOpen(() => { trayVisible = true; tray.update() })
             tray.onClose(() => { trayVisible = false })
         } catch (_e) {}
 
-        // Wrapped in singleflight because a tick is not skipped when the previous
-        // one is still running. fsRefresh can restart the solver, so two overlapping
-        // runs both see it down and both act on that, doubling the restart count and
-        // racing each other's launches.
         ctx.jobs.poll("aquatils-seh-poll", () => ctx.jobs.singleflight("aquatils-seh-poll-run", sehPoll), SEH_POLL_MS, { immediate: true })
         ctx.jobs.poll("aquatils-fs-poll", () => ctx.jobs.singleflight("aquatils-fs-poll-run", fsRefresh), FS_POLL_MS, { immediate: true })
 
