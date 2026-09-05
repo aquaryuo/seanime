@@ -684,10 +684,18 @@ class Provider {
             if (body === undefined) return false
             const variants = this.variantLevelUrls(body, src.url)
             if (variants.length === 0) return true
-            const checks = await Promise.all(
-                variants.map((v) => fetch(v, { headers: server.headers, timeout: 4 }).then((r) => r.ok).catch(() => false))
-            )
-            return checks.some((ok) => ok)
+            // One playable rendition is the whole question, so ask one at a time and
+            // stop on the first yes. Asking for all of them at once waited on the
+            // slowest of them — the per-request timeout does not apply here — and put
+            // a burst on a host that answers a burst with 429s.
+            for (const v of variants) {
+                if (this.outOfTime()) break
+                try {
+                    const r = await fetch(v, { headers: server.headers })
+                    if (r.ok) return true
+                } catch (_e) {}
+            }
+            return false
         } catch (_e) {
             return false
         }
