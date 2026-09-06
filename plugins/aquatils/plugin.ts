@@ -126,11 +126,12 @@ function init() {
         const SEH_MAX_KEEP = 100
         const SEH_MAX_SEEN = 500
         const SEH_POLL_MS = 6000
+        const SEH_NOTIFY_COOLDOWN_MS = 10 * 60 * 1000
         const SEH_TTL = 21600000
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.86"
+        const SOLVER_VERSION = "0.1.93"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -149,8 +150,11 @@ function init() {
         const seen = ctx.state<string[]>(sget<string[]>("seh.seen", []))
         const notify = ctx.state<boolean>(sget<boolean>("seh.notify", false))
         const appRef = ctx.fieldRef<string>(appBase.get())
+        let trayVisible = true
+        const sehNotifiedAt: { [label: string]: number } = {}
         let sehAuthWarned = false
         let sehRetryAfter = 0
+        let sehSeenChars = 0
         let sehMaxT = sget<number>("seh.maxT", 0)
 
         const _storedMode = sget<string>("fs.mode", "")
@@ -173,7 +177,6 @@ function init() {
         const fsCustomTls = ctx.state<boolean>(sget<boolean>("fs.customTls", false))
         const fsMetrics = ctx.state<any>(null)
         const fsStatus = ctx.state<string>("unknown")
-        const fsSessions = ctx.state<string[]>([])
         const fsNote = ctx.state<string>("")
         const fsHostRef = ctx.fieldRef<string>(fsHost.get())
         const fsPortRef = ctx.fieldRef<string>(fsPort.get())
@@ -210,10 +213,7 @@ function init() {
         const fsHint = ctx.state<string>("")
         const fsDepsCmd = ctx.state<string>("")
         const fsDepsPkgs = ctx.state<string[]>([])
-        // What the solver says about its own ability to clear a hard challenge on
-        // this machine. Without it a box that cannot do the job looks healthy and
-        // only fails later, silently, per episode.
-        const fsCanHard = ctx.state<string>("")   // "" unknown | "yes" | "no"
+        const fsCanHard = ctx.state<string>("")
         const fsHardWhy = ctx.state<string>("")
         let fsCapAt = 0
         const fsDepsInstalling = ctx.state<boolean>(false)
@@ -311,14 +311,8 @@ function init() {
             if (fsDepsChecked && !force) return
             let chrome = ""
             try { chrome = chromiumCachedPath() } catch (_e) {}
-            // Run once the browser is in play (cached or opted into), so a gap shows
-            // up before use, not after; Stage-A-only users are never nagged.
             if (!chrome && !fsWantChromium.get()) return
             fsDepsChecked = true
-            // Two signals: a shared library Chromium links against is missing (ldd),
-            // and the Xvfb executable is absent (ldd can't see it — it's a binary, not
-            // a library). On apt systems list the exact missing packages; else surface
-            // the tool name.
             const script = "c=" + shq(chrome) + "; miss=; "
                 + "for t in Xvfb; do command -v \"$t\" >/dev/null 2>&1 || miss=\"$miss $t\"; done; "
                 + "lib=0; [ -n \"$c\" ] && ldd \"$c\" 2>/dev/null | grep -q 'not found' && lib=1; "
@@ -398,8 +392,6 @@ function init() {
             }
         }
 
-        // Install missing packages ourselves when we can act without interaction (root
-        // or passwordless sudo), once; otherwise fall back to the tray prompt.
         function maybeAutoInstallDeps(): void {
             if (typeof $osExtra === "undefined") return
             const pkgs = fsDepsPkgs.get() || []
@@ -451,8 +443,6 @@ function init() {
             let all = ""
             let clean = ""
             for (let i = 0; i < lines.length; i++) {
-                // The solver emits its own "date LEVEL [subsystem] msg"; plog
-                // already produces canonical lines, which pass through untouched.
                 const l = aqNormalize(lines[i], "solver")
                 if (!l) continue
                 all += l + "\n"
@@ -683,10 +673,22 @@ function init() {
             }
             if (fresh.length === 0) return
             if (notify.get()) {
+                const counts: { [label: string]: number } = {}
+                const order: string[] = []
                 for (let i = 0; i < fresh.length; i++) {
-                    ctx.toast.error(sehLabel(fresh[i]))
+                    const label = sehLabel(fresh[i])
+                    if (counts[label] === undefined) { counts[label] = 0; order.push(label) }
+                    counts[label]++
+                }
+                const now = nowMs()
+                for (let i = 0; i < order.length; i++) {
+                    const label = order[i]
+                    if (now - (sehNotifiedAt[label] || 0) < SEH_NOTIFY_COOLDOWN_MS) continue
+                    sehNotifiedAt[label] = now
+                    const text = counts[label] > 1 ? label + " (×" + counts[label] + ")" : label
+                    ctx.toast.error(text)
                     try {
-                        ctx.notification.send(sehLabel(fresh[i]))
+                        ctx.notification.send(text)
                     } catch (_e) {}
                 }
             }
@@ -700,9 +702,6 @@ function init() {
         }
 
         async function sehPoll(): Promise<void> {
-            // A password-protected Seanime returns 401/403 on the log API; back off
-            // instead of retrying every few seconds. Auto-retries later; a URL save
-            // retries immediately.
             if (nowMs() < sehRetryAfter) return
             try {
                 const url = (appBase.get() || SEH_DEFAULT_APP).replace(/\/+$/, "") + "/api/v1/logs/latest"
@@ -721,14 +720,23 @@ function init() {
                 sehRetryAfter = 0
                 const body = res.json<{ data?: string }>()
                 const content = body && typeof body.data === "string" ? body.data : ""
-                if (content) sehIngest(sehParse(content))
+                if (!content) return
+                let from = content.length >= sehSeenChars ? sehSeenChars : 0
+                let chunk = content.slice(from)
+                if (chunk === "") return
+                const lastNL = chunk.lastIndexOf("\n")
+                if (lastNL < 0) return
+                chunk = chunk.slice(0, lastNL + 1)
+                sehSeenChars = from + chunk.length
+                sehIngest(sehParse(chunk))
             } catch (_e) {
                 return
             }
         }
 
         function fsBase(): string {
-            return "http://" + (fsHost.get() || FS_DEFAULT_HOST) + ":" + (fsPort.get() || FS_DEFAULT_PORT)
+            const host = fsMode.get() === "remote" ? (fsHost.get() || FS_DEFAULT_HOST) : FS_DEFAULT_HOST
+            return "http://" + host + ":" + (fsPort.get() || FS_DEFAULT_PORT)
         }
 
         function fsPersist(): void {
@@ -785,10 +793,6 @@ function init() {
                 })
                 let data: any = null
                 try { data = res.json<any>() } catch (_e) {}
-                // Something answering on the port is not the same as our solver
-                // answering: a wrong host, a stale process, or another service
-                // all reply, and reporting those as running shows a green badge
-                // while nothing works.
                 const ours = !!data && (data.version !== undefined || Array.isArray(data.sessions))
                 if (!res.ok || !ours) return { up: false }
                 return {
@@ -801,8 +805,6 @@ function init() {
             }
         }
 
-        // Re-asks periodically so installing a missing package clears the warning
-        // without a restart.
         async function refreshCapability(): Promise<void> {
             if (fsMode.get() === "remote") return
             const stale = fsCanHard.get() === "" ? 20000 : 300000
@@ -815,6 +817,10 @@ function init() {
             fsCanHard.set(c.canStageB ? "yes" : "no")
             fsHardWhy.set(c.canStageB ? "" : String(c.reason || ""))
             if (before !== fsCanHard.get()) tray.update()
+        }
+
+        function trayPoke(): void {
+            if (trayVisible) tray.update()
         }
 
         async function fsRefresh(): Promise<void> {
@@ -836,7 +842,7 @@ function init() {
                     }
                     refreshTrayBadge()
                     refreshAnimeBtn()
-                    tray.update()
+                    trayPoke()
                     return
                 }
                 if (p.version) fsVersion.set(p.version)
@@ -847,10 +853,7 @@ function init() {
                     const mr = await fsApi("metrics", {}, 8)
                     if (mr && mr.metrics) fsMetrics.set(mr.metrics)
                 }
-                if (p.sessions) {
-                    fsSessions.set(p.sessions)
-                    if (fsSession.get() && p.sessions.indexOf(fsSession.get()) < 0) await fsEnsureSession()
-                }
+                if (p.sessions && fsSession.get() && p.sessions.indexOf(fsSession.get()) < 0) await fsEnsureSession()
                 if (solverUpdatePending() && fsMode.get() !== "remote" && !fsManualStop) {
                     if (fsAutoUpdate.get() && !fsAutoUpgradeTried) {
                         fsAutoUpgradeTried = true
@@ -884,7 +887,6 @@ function init() {
                     fsDownStreak++
                     if (fsDownStreak >= 2) {
                         setStatus("down")
-                        fsSessions.set([])
                         if (fsAutoStart.get() && !fsManualStop && fsMode.get() !== "remote" && !fsAvBlocked && !solverQuarantined()) {
                             const backoff = Math.min(fsAutoRestarts, 4) * 5000
                             if (fsAutoRestarts >= 5) {
@@ -909,7 +911,7 @@ function init() {
             if (fsStatus.get() !== "starting") fsRestarting = false
             refreshTrayBadge()
             refreshAnimeBtn()
-            tray.update()
+            trayPoke()
         }
 
         async function runTest(): Promise<void> {
@@ -917,17 +919,17 @@ function init() {
             fsTestUntil = nowMs() + 70000
             try {
                 setTest("Testing…")
-                tray.update()
+                trayPoke()
                 const ping = await fsProbe()
                 if (!ping.up) {
                     setTest("Not reachable at " + fsBase() + " — it may still be starting; wait for the green Running badge.")
-                    tray.update()
+                    trayPoke()
                     return
                 }
                 if (ping.version) fsVersion.set(ping.version)
                 setStatus("up")
                 fsDownStreak = 0
-                tray.update()
+                trayPoke()
                 const extra: { [k: string]: any } = { url: "https://nowsecure.nl", maxTimeout: 32000 }
                 if (ping.sessions) {
                     const sess = (fsSession.get() || FS_DEFAULT_SESSION).trim()
@@ -1007,13 +1009,13 @@ function init() {
             tray.update()
         }
 
-        function binaryAsset(): { asset: string; zip: boolean; bin: string } | null {
+        function binaryAsset(): { asset: string; bin: string } | null {
             const p = "solver-browser_"
-            if ($os.platform === "linux" && $os.arch === "amd64") return { asset: p + "linux_x64.zip", zip: true, bin: "solver" }
-            if ($os.platform === "linux" && $os.arch === "arm64") return { asset: p + "linux_arm64.zip", zip: true, bin: "solver" }
-            if ($os.platform === "darwin" && $os.arch === "amd64") return { asset: p + "darwin_x64.zip", zip: true, bin: "solver" }
-            if ($os.platform === "darwin" && $os.arch === "arm64") return { asset: p + "darwin_arm64.zip", zip: true, bin: "solver" }
-            if ($os.platform === "windows" && $os.arch === "amd64") return { asset: p + "windows_x64.zip", zip: true, bin: "solver.exe" }
+            if ($os.platform === "linux" && $os.arch === "amd64") return { asset: p + "linux_x64.zip", bin: "solver" }
+            if ($os.platform === "linux" && $os.arch === "arm64") return { asset: p + "linux_arm64.zip", bin: "solver" }
+            if ($os.platform === "darwin" && $os.arch === "amd64") return { asset: p + "darwin_x64.zip", bin: "solver" }
+            if ($os.platform === "darwin" && $os.arch === "arm64") return { asset: p + "darwin_arm64.zip", bin: "solver" }
+            if ($os.platform === "windows" && $os.arch === "amd64") return { asset: p + "windows_x64.zip", bin: "solver.exe" }
             return null
         }
 
@@ -1058,6 +1060,14 @@ function init() {
 
         function solverQuarantined(): boolean {
             try { return $storage.get<string>("fs.solverReady") === FS_VERSION && !solverBinExists() } catch (_e) { return false }
+        }
+
+        function fsStateDir(): string {
+            try {
+                return $filepath.join($os.cacheDir(), "aquatils", "state")
+            } catch (_e) {
+                return ""
+            }
         }
 
         function fsLogPath(): string {
@@ -1169,6 +1179,7 @@ function init() {
             try { id = dl.download(st.url, zip, { timeout: 900.5 }) } catch (_e) { setErr("Chromium download couldn't start: " + String(_e)); done(false); return }
             plog("downloading Chromium" + (st.version ? " " + st.version : "") + " (browser solver)")
             dlLogAt = 0
+
             const cancel = dl.watch(id, (p: $downloader.DownloadProgress | undefined) => {
                 if (!p) return
                 if (p.status === "downloading") {
@@ -1202,12 +1213,6 @@ function init() {
             })
         }
 
-        // Some platforms have no build to fetch — ARM Linux most of all — and there
-        // the tier simply did not exist, while the message told the user to enable
-        // a download that could never appear. Look for a browser the machine
-        // already has and hand its path to the solver explicitly; the solver still
-        // launches only what it is given, and always in its own profile directory,
-        // never the user's.
         let systemChromeAt = ""
         let systemChromeDone = false
         function findSystemChrome(cb: (path: string) => void): void {
@@ -1329,13 +1334,11 @@ function init() {
                 env.push("PORT=" + port)
                 env.push("LOG_LEVEL=" + (fsVerbose.get() ? "debug" : "info"))
                 if (logPath) env.push("LOG_FILE=" + logPath)
+                const statePath = fsStateDir()
+                if (statePath) env.push("SOLVER_STATE_DIR=" + statePath)
                 if (chromiumOverride) env.push("SOLVER_CHROME=" + chromiumOverride)
                 env.push("SOLVER_BROWSER_MODE=" + (fsBrowserMode.get() === "headed" ? "headed" : fsBrowserMode.get() === "headless" ? "headless" : $os.platform === "windows" ? "offscreen" : "auto"))
                 if (fsBrowserMode.get() === "headless") env.push("SOLVER_HEADLESS=1")
-                // On Linux ask for a display of our own. Sharing the machine's
-                // screen means the browser cannot take over the pointer, which is
-                // what completing an interactive check needs — and it keeps us
-                // from moving the operator's real cursor.
                 else if ($os.platform === "linux") env.push("SOLVER_XVFB=1")
                 if ($os.platform === "windows" && fsEngine.get() && fsEngine.get() !== "chrome") env.push("SOLVER_BROWSER_ENGINE=" + fsEngine.get())
                 if (!fsWv2Warm.get()) env.push("SOLVER_WV2_WARM=0")
@@ -1552,6 +1555,35 @@ function init() {
             return "'" + String(s).replace(/'/g, "'\\''") + "'"
         }
 
+        function sha256OfFile(path: string): string {
+            try {
+                const c = $os.platform === "windows"
+                    ? $os.cmd("cmd", "/c", "certutil -hashfile " + winCmdArg(path) + " SHA256")
+                    : $os.cmd("sh", "-c", ($os.platform === "darwin" ? "shasum -a 256 " : "sha256sum ") + shq(path))
+                const raw = c.output()
+                const text = typeof raw === "string" ? raw : ""
+                const m = String(text).replace(/\s+/g, "").match(/[0-9a-fA-F]{64}/)
+                return m ? m[0].toLowerCase() : ""
+            } catch (_e) {
+                return ""
+            }
+        }
+
+        async function publishedSha256(asset: string): Promise<string> {
+            try {
+                const url = "https://github.com/" + SOLVER_REPO + "/releases/download/solver-v"
+                    + SOLVER_VERSION + "/aquatils-solver_checksums.txt"
+                const res = await ctx.fetch(url, { method: "GET" })
+                if (!res.ok) return ""
+                const lines = String(res.text()).split("\n")
+                for (const line of lines) {
+                    const parts = line.trim().split(/\s+/)
+                    if (parts.length >= 2 && parts[1].replace(/^\*/, "") === asset) return parts[0].toLowerCase()
+                }
+            } catch (_e) {}
+            return ""
+        }
+
         function winCmdArg(s: string): string {
             if (/[ \t]/.test(s)) return s
             return s.replace(/[&^()<>|]/g, "^$&")
@@ -1644,6 +1676,7 @@ function init() {
                 tray.update()
                 return
             }
+            const chosen = pick
             let cacheDir = ""
             try {
                 cacheDir = $os.cacheDir()
@@ -1687,6 +1720,7 @@ function init() {
             const url = "https://github.com/" + SOLVER_REPO + "/releases/download/solver-v" + SOLVER_VERSION + "/" + pick.asset
             plog("downloading solver binary " + pick.asset + " from github.com/" + SOLVER_REPO)
             dlLogAt = 0
+            const wantSha = publishedSha256(pick.asset)
             let id = ""
             try {
                 id = dl.download(url, archive, { timeout: 900.5 })
@@ -1706,6 +1740,53 @@ function init() {
                 tray.update()
                 return
             }
+            function finishInstall(archiveSize: number, expected: number): void {
+                setNote("Extracting solver " + SOLVER_VERSION + "…")
+                tray.update()
+                let extractOk = true
+                let extractErr = ""
+                try {
+                    $osExtra.unzip(archive, dir)
+                } catch (e) {
+                    extractOk = false
+                    extractErr = String(e)
+                    plog("extract via unzip failed: " + extractErr)
+                }
+                if (!extractOk) {
+                    fsBusy = false
+                    setStatus("down")
+                    try { $os.removeAll(dir) } catch (_e) {}
+                    try { $storage.set("fs.solverReady", "") } catch (_e) {}
+                    setErr("Couldn't extract the solver: " + extractErr + ". Press Start to retry; if it keeps failing, copy the diagnostics (Advanced) and report it.")
+                    setNote("Extraction failed - see logs.")
+                    tray.update()
+                    return
+                }
+                try { $os.removeAll(archive) } catch (_e) {}
+                let exeSize = 0
+                let exeOk = false
+                try {
+                    const stb = $os.stat(binPath)
+                    if (stb) { exeOk = true; try { exeSize = stb.size() } catch (_e) { exeSize = -1 } }
+                } catch (_e) {}
+                plog("extracted " + chosen.bin + " " + (exeSize >= 0 ? fmtSize(exeSize) : "size?") + " (archive " + fmtSize(archiveSize) + (expected ? " of " + fmtSize(expected) : "") + ")")
+                const okBin = exeOk && (exeSize < 0 || (exeSize >= 1024 && (archiveSize === 0 || exeSize >= archiveSize)))
+                if (!okBin) {
+                    fsBusy = false
+                    setStatus("down")
+                    try { $storage.set("fs.solverReady", "") } catch (_e) {}
+                    try { $os.removeAll(dir) } catch (_e) {}
+                    setErr("The downloaded solver is incomplete" + (exeSize > 0 ? " (" + fmtSize(exeSize) + ")" : "") + " — the download is being cut short. Press Start to try again.")
+                    setNote("Download incomplete — press Start to retry.")
+                    tray.update()
+                    return
+                }
+                try { $storage.set("fs.solverReady", FS_VERSION) } catch (_e) {}
+                markInstalled()
+                fsBusy = false
+                binaryLaunch(binPath)
+            }
+
             const cancel = dl.watch(id, (p: $downloader.DownloadProgress | undefined) => {
                 if (!p) return
                 if (p.status === "downloading") {
@@ -1733,60 +1814,25 @@ function init() {
                         tray.update()
                         return
                     }
-                    setNote("Extracting solver " + SOLVER_VERSION + "…")
-                    tray.update()
-                    let extractOk = true
-                    let extractErr = ""
-                    try {
-                        if (pick.zip) $osExtra.unzip(archive, dir)
-                        else $osExtra.unwrapAndMove(archive, dir)
-                    } catch (e) {
-                        extractOk = false
-                        extractErr = String(e)
-                        plog("extract via " + (pick.zip ? "unzip" : "unwrapAndMove") + " failed: " + extractErr)
-                    }
-                    if (!extractOk && !pick.zip && $os.platform !== "windows") {
-                        try {
-                            $os.cmd("sh", "-c", "tar -xzf " + shq(archive) + " -C " + shq(dir)).combinedOutput()
-                            if (solverBinExists()) { extractOk = true; plog("recovered via system tar") }
-                            else plog("system tar ran but the binary is still missing")
-                        } catch (e2) {
-                            plog("system tar fallback failed: " + String(e2))
+                    wantSha.then((want) => {
+                        const got = want ? sha256OfFile(archive) : ""
+                        if (want && got && got !== want) {
+                            fsBusy = false
+                            setStatus("down")
+                            plog("checksum mismatch for " + pick.asset + " — discarding the download")
+                            try { $storage.set("fs.solverReady", "") } catch (_e) {}
+                            try { $os.removeAll(dir) } catch (_e) {}
+                            setErr("The downloaded solver did not match the checksum published with the release, so it was discarded and not run. Press Start to try again.")
+                            setNote("Checksum mismatch — download discarded.")
+                            ctx.toast.error("Aqua's Utils: the downloaded solver failed its checksum and was discarded.")
+                            tray.update()
+                            return
                         }
-                    }
-                    if (!extractOk) {
-                        fsBusy = false
-                        setStatus("down")
-                        try { $os.removeAll(dir) } catch (_e) {}
-                        try { $storage.set("fs.solverReady", "") } catch (_e) {}
-                        setErr("Couldn't extract the solver: " + extractErr + ". Press Start to retry; if it keeps failing, copy the diagnostics (Advanced) and report it.")
-                        setNote("Extraction failed - see logs.")
-                        tray.update()
-                        return
-                    }
-                    try { $os.removeAll(archive) } catch (_e) {}
-                    let exeSize = 0
-                    let exeOk = false
-                    try {
-                        const stb = $os.stat(binPath)
-                        if (stb) { exeOk = true; try { exeSize = stb.size() } catch (_e) { exeSize = -1 } }
-                    } catch (_e) {}
-                    plog("extracted " + pick.bin + " " + (exeSize >= 0 ? fmtSize(exeSize) : "size?") + " (archive " + fmtSize(archiveSize) + (expected ? " of " + fmtSize(expected) : "") + ")")
-                    const okBin = exeOk && (exeSize < 0 || (exeSize >= 1024 && (archiveSize === 0 || exeSize >= archiveSize)))
-                    if (!okBin) {
-                        fsBusy = false
-                        setStatus("down")
-                        try { $storage.set("fs.solverReady", "") } catch (_e) {}
-                        try { $os.removeAll(dir) } catch (_e) {}
-                        setErr("The downloaded solver is incomplete" + (exeSize > 0 ? " (" + fmtSize(exeSize) + ")" : "") + " — the download is being cut short. Press Start to try again.")
-                        setNote("Download incomplete — press Start to retry.")
-                        tray.update()
-                        return
-                    }
-                    try { $storage.set("fs.solverReady", FS_VERSION) } catch (_e) {}
-                    markInstalled()
-                    fsBusy = false
-                    binaryLaunch(binPath)
+                        if (!want) plog("no published checksum for " + pick.asset + " — continuing unverified")
+                        else if (!got) plog("no working sha256 tool on this machine — continuing unverified")
+                        else plog("checksum verified for " + pick.asset)
+                        finishInstall(archiveSize, expected)
+                    }).catch(() => { finishInstall(archiveSize, expected) })
                 } else if (p.status === "error") {
                     cancel()
                     fsDownloadId = ""
@@ -2669,8 +2715,13 @@ function init() {
         }
         plog("aquatils loaded (managing solver " + SOLVER_VERSION + ")")
 
-        ctx.jobs.poll("aquatils-seh-poll", sehPoll, SEH_POLL_MS, { immediate: true })
-        ctx.jobs.poll("aquatils-fs-poll", fsRefresh, FS_POLL_MS, { immediate: true })
+        try {
+            tray.onOpen(() => { trayVisible = true; tray.update() })
+            tray.onClose(() => { trayVisible = false })
+        } catch (_e) {}
+
+        ctx.jobs.poll("aquatils-seh-poll", () => ctx.jobs.singleflight("aquatils-seh-poll-run", sehPoll), SEH_POLL_MS, { immediate: true })
+        ctx.jobs.poll("aquatils-fs-poll", () => ctx.jobs.singleflight("aquatils-fs-poll-run", fsRefresh), FS_POLL_MS, { immediate: true })
 
         if (fsAutoStart.get()) {
             if (uiMode.get() !== "advanced") {

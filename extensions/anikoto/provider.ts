@@ -10,6 +10,7 @@ class Provider {
     private cacheTtl = 900000
     private serverCacheTtl = 300000
     private tokenTtl = 18000000
+    private idCacheTtl = 86400000
     private resolveDownTtl = 60000
     private serverBudget = 75000
     private searchBudget = 60000
@@ -144,9 +145,6 @@ class Provider {
             }
 
             if (anyOk) {
-                // A restyle makes every card selector miss, which reads as "no results"
-                // instead of an error. The site's own result container is what separates
-                // the two: a keyword with no matches still ships it, empty.
                 if (cards === 0 && !emptyList) {
                     unrecognized = true
                     continue
@@ -343,13 +341,12 @@ class Provider {
                 episodes: !isNaN(total) && total > 0 && total <= 10000 ? total : 0,
                 movie: format === "movie",
             }
+            if (anilistId > 0) this.writeCache(`anikoto:al:${seriesUrl}`, anilistId)
             results.push({ id: this.withMeta(seriesUrl, audio, anilistId), title, url: seriesUrl, subOrDub })
         })
         return cards
     }
 
-    // An empty "#list-items" is how the site says "no matches", so its presence with no
-    // children is the one reading that must never be mistaken for a layout change.
     private resultListIsEmpty($: DocSelectionFunction): boolean {
         try {
             const list = $("#list-items")
@@ -359,17 +356,12 @@ class Provider {
         }
     }
 
-    // $scannerUtils reports season -1 when the marker is a word ("The Final Season"), so
-    // filterBySeason cannot narrow those and hands back the whole show; the card's own
-    // episode count is then the only evidence left that tells the seasons apart.
     private preferByEvidence(
         pool: SearchResult[],
         evidence: { [key: string]: { episodes: number; movie: boolean } },
         media: Media
     ): SearchResult[] {
         if (pool.length < 2) return pool
-        // Upstream reports -1 for airing or unknown counts, and a card with no count
-        // element carries no signal either — neither may drop a candidate.
         const want = media.episodeCount || 0
         if (want > 0) {
             const byCount = pool.filter((r) => {
@@ -682,10 +674,14 @@ class Provider {
             if (body === undefined) return false
             const variants = this.variantLevelUrls(body, src.url)
             if (variants.length === 0) return true
-            const checks = await Promise.all(
-                variants.map((v) => fetch(v, { headers: server.headers, timeout: 4 }).then((r) => r.ok).catch(() => false))
-            )
-            return checks.some((ok) => ok)
+            for (const v of variants) {
+                if (this.outOfTime()) break
+                try {
+                    const r = await fetch(v, { headers: server.headers })
+                    if (r.ok) return true
+                } catch (_e) {}
+            }
+            return false
         } catch (_e) {
             return false
         }
@@ -729,8 +725,12 @@ class Provider {
                 return undefined
             }
             this.writeCache("anikoto:solverdown", 0)
-            const data = res.json<{ solution?: { userAgent?: string; cookies?: { name: string; value: string }[] } }>()
-            const sol = data && data.solution ? data.solution : undefined
+            const data = res.json<{ status?: string; gate?: string; solution?: { userAgent?: string; cookies?: { name: string; value: string }[] } }>()
+            if (!data || data.status !== "ok") {
+                this.reportError("solver", "the helper did not succeed" + (data && data.gate ? " (" + data.gate + ")" : ""))
+                return undefined
+            }
+            const sol = data.solution
             if (!sol || !Array.isArray(sol.cookies)) return undefined
             const parts: string[] = []
             for (const c of sol.cookies) {
@@ -1068,6 +1068,10 @@ class Provider {
             rest = rest.slice(0, rest.length - m[0].length)
         }
         const sa = this.splitAudio(rest)
+        if (anilistId === 0) {
+            const known = this.readCache<number>(`anikoto:al:${this.seriesUrl(sa.base)}`, this.idCacheTtl)
+            if (known && known > 0) anilistId = known
+        }
         return { base: sa.base, audio: sa.audio, anilistId }
     }
 
