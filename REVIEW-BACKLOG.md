@@ -756,16 +756,40 @@ ES2019+ syntax is downlevelled by esbuild and never reaches goja; ES2018-and-bel
 
 ## Shipped since this document was written
 
+Commit hashes are current as of 2026-09-06. Two history rewrites have happened since this
+document was first written, so any SHA quoted in the body above is dead — trust this table.
+
 | id | commit |
 |---|---|
-| `anizone-search-parser-dead` | `896e5d7` — parse the embedded `items:` blob, legacy path kept as fallback |
-| `anizone-rank-on-card-metadata` | `9e0ac0f` — score over all card titles, real `start_year`, format as a soft signal |
-| `anikoto-season-evidence` | `9e0ac0f` — episode-count/format evidence, guarded on `episodeCount > 0` |
-| `anikoto-layout-change-invisible` | `9e0ac0f` — zero recognisable cards now raises `fail()` |
-| `anizone-truncated-list` | `fff0aa7` — page 1 fetched explicitly; the walk started at page 2 |
-| `animelok-probe-boundary`, `animelok-outage-reads-as-not-found` | `9e0ac0f` — shape sentinel, narrowed so a bad dub probe cannot fail a sub request |
+| `anizone-search-parser-dead` | `eb106e8` — parse the embedded `items:` blob, legacy path kept as fallback |
+| `anizone-rank-on-card-metadata` | `e7602c8` — score over all card titles, real `start_year`, format as a soft signal |
+| `anikoto-season-evidence` | `e7602c8` — episode-count/format evidence, guarded on `episodeCount > 0` |
+| `anikoto-layout-change-invisible` | `e7602c8` — zero recognisable cards now raises `fail()` |
+| `animelok-probe-boundary`, `animelok-outage-reads-as-not-found` | `e7602c8` shape sentinel, then `3d17574` — take the episode count from the site rather than the metadata service |
+| `anizone-truncated-list` | `2ac9c7f` — page 1 fetched explicitly; the walk had started at page 2 |
 | `animepahe-truncated-list` | landed separately — refuses a partial list instead of caching it |
+| `anikoto-manual-mapping-loses-id` | `cfd2637` — cache the AniList id per series URL and recover it in `splitMeta` |
+| `aquaprefs-go-bool` | `1604797` — normalise the host playback object once in `pinfo()` |
 | `fixtures-assert-substrings` | private repo `64fb5ff` — per-provider search canaries, `startsAt`/`contiguous`, `urlMatches` |
-| `tsconfig-and-goja-gate` (part 2) | `883e122`, `47e7807` — CI runs the host's own esbuild transform over every payload |
+| `tsconfig-and-goja-gate` (part 2) | `5ae3426`, `b014c01` — CI runs the host's own esbuild transform over every payload |
+| `push-beta` | resolved — `beta` is pushed and in sync |
 
-Also fixed, not filed here: the AniZone **player** layout change (`9a9f4a3`), which broke every stream and all subtitles the same day as the search change.
+Not filed in this document, because they arrived as user reports rather than review findings:
+
+| what | commit |
+|---|---|
+| AniZone **player** layout change — broke every stream and all subtitles | `8e042be` |
+| AniZone moved series pages to infinite scroll — every series showed 1 episode | `70d1653` |
+| anikoto `isPlayable` probed every variant in parallel, tripping the CDN's rate limiter and hanging playback | `509b667` |
+| All comments stripped from the seven payloads, per the global no-comments rule | `6f227d9`, `bfcd958` |
+
+**Promoted to stable 2026-09-06 (`5c95f69`)**: anikoto 1.3.76, anizone 1.1.23, aquaprefs 1.1.63,
+aquatils 0.10.10. Verified against the live CDN by content, not manifest version. `animelok` and
+`animepahe` remain beta-only — animelok's upstream API is returning 500 for every title, and
+animepahe needs a solver.
+
+**Correction to the entry above on `aquaprefs-go-bool`:** the underlying claim was never proven.
+`UseLibassRenderer` is `*bool` and `getCurrentPlaybackInfo` returns `vm.ToValue(info)` with no JSON
+round-trip, but upstream's own test normalises through `JSON.parse(JSON.stringify(...))` before
+asserting, so it never exercises `===` on the raw value. The fix shipped because normalising is
+correct under either answer, not because the bug was confirmed.
