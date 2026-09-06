@@ -147,8 +147,6 @@ function init() {
 
         let logs: string[] = sget<string[]>(LOG_KEY, [])
         if (!Array.isArray(logs)) logs = []
-        // Call sites mark severity with a leading glyph; deriving the level
-        // from it keeps them unchanged while still colouring the tray.
         function glyphLevel(msg: string): AqLevel {
             const c = msg.charAt(0)
             if (c === "⚠") return "WRN"
@@ -222,7 +220,19 @@ function init() {
         const curTrack: any = { sub: -999, cap: -999 }
         const enforceTok: any = { sub: 0, cap: 0 }
 
-        function pinfo(): any { try { return VC.getCurrentPlaybackInfo() || null } catch (_e) { return null } }
+        function pinfo(): any {
+            try {
+                const raw = VC.getCurrentPlaybackInfo()
+                if (!raw) return null
+                try {
+                    return JSON.parse(JSON.stringify(raw))
+                } catch (_e) {
+                    return raw
+                }
+            } catch (_e) {
+                return null
+            }
+        }
         function curMediaId(): number {
             try { const m = VC.getCurrentMedia(); if (m && typeof m.id === "number") return m.id } catch (_e) {}
             const pi = pinfo()
