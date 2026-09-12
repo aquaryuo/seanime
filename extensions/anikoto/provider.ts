@@ -595,6 +595,7 @@ class Provider {
         const picked = this.collectServers($, [target.group]).filter((c) => c.name === target.name)[0]
         if (!picked) throw this.fail("server", "that server is not available for this episode")
         const resolved = await this.resolveServer(picked.linkId, target.label, ctx, audio)
+        await this.isPlayable(resolved)
         const cl = this.cachedClearance(this.hostOf(resolved.videoSources[0].url))
         if (cl) resolved.headers = this.withClearance(resolved.headers, cl)
         return resolved
@@ -744,7 +745,15 @@ class Provider {
                     body = await this.fetchPlaylist(src.url, server.headers)
                 }
             }
+            if (body === undefined) {
+                const swapped = await this.playableOnKnownHost(src.url, server.headers)
+                if (swapped) {
+                    src.url = swapped.url
+                    body = swapped.body
+                }
+            }
             if (body === undefined) return false
+            this.rememberCdnHost(this.hostOf(src.url))
             const variants = this.variantLevelUrls(body, src.url)
             if (variants.length === 0) return true
             for (const v of variants) {
@@ -758,6 +767,40 @@ class Provider {
         } catch (_e) {
             return false
         }
+    }
+
+    private cdnHosts(): string[] {
+        const out: string[] = []
+        const learned = this.readCache<string[]>("anikoto:cdnhosts", this.tokenTtl)
+        if (learned && typeof learned.length === "number") {
+            for (const h of learned) if (h && out.indexOf(h) === -1) out.push(h)
+        }
+        for (const h of ["ncdn.imgnex.top"]) if (out.indexOf(h) === -1) out.push(h)
+        return out
+    }
+
+    private rememberCdnHost(host: string): void {
+        if (!host) return
+        const list = this.cdnHosts()
+        if (list.indexOf(host) === 0) return
+        const next: string[] = [host]
+        for (const h of list) {
+            if (h !== host && next.length < 6) next.push(h)
+        }
+        this.writeCache("anikoto:cdnhosts", next)
+    }
+
+    private async playableOnKnownHost(url: string, headers: { [k: string]: string }): Promise<{ url: string; body: string } | undefined> {
+        const current = this.hostOf(url)
+        if (!current) return undefined
+        for (const h of this.cdnHosts()) {
+            if (h === current || this.outOfTime()) continue
+            const candidate = url.replace("://" + current + "/", "://" + h + "/")
+            if (candidate === url) continue
+            const body = await this.fetchPlaylist(candidate, headers)
+            if (body !== undefined) return { url: candidate, body: body }
+        }
+        return undefined
     }
 
     private async fetchPlaylist(url: string, headers: { [k: string]: string }): Promise<string | undefined> {
