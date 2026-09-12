@@ -606,6 +606,79 @@ class Provider {
         return { group: audio === "dub" ? "dub" : "sub", name: server, label: server, ok: true }
     }
 
+    private sourcePaths(origin: string): string[] {
+        const out: string[] = []
+        const learned = this.readCache<string>(`anikoto:srcpath:${origin}`, this.tokenTtl)
+        if (learned) out.push(learned)
+        for (const p of ["stream/getSourcesNew", "stream/getSources"]) {
+            if (out.indexOf(p) === -1) out.push(p)
+        }
+        return out
+    }
+
+    private rememberSourcePath(origin: string, path: string): void {
+        this.writeCache(`anikoto:srcpath:${origin}`, path)
+    }
+
+    private async trySourcePath(
+        origin: string,
+        path: string,
+        dataId: string,
+        embedUrl: string
+    ): Promise<{ sources?: { file: string } | { file: string }[]; tracks?: { file: string; label?: string; kind?: string; default?: boolean }[] } | undefined> {
+        try {
+            const res = await this.fetchRetry(`${origin}/${path}?id=${encodeURIComponent(dataId)}`, {
+                headers: { Referer: embedUrl, "X-Requested-With": "XMLHttpRequest" },
+            })
+            if (!res.ok) return undefined
+            return res.json<{ sources?: { file: string } | { file: string }[]; tracks?: { file: string; label?: string; kind?: string; default?: boolean }[] }>()
+        } catch (_e) {
+            return undefined
+        }
+    }
+
+    private async discoverSourcePaths(origin: string, embedUrl: string): Promise<string[]> {
+        const cacheKey = `anikoto:srcscan:${origin}`
+        if (this.readCache<number>(cacheKey, this.resolveDownTtl)) return []
+        this.writeCache(cacheKey, 1)
+        const out: string[] = []
+        const seen: { [key: string]: boolean } = {}
+        try {
+            const page = await this.fetchRetry(embedUrl, { headers: { Referer: `${this.baseUrl}/` } })
+            if (!page.ok) return out
+            const html = page.text()
+            const re = /<script[^>]+src="([^"]+)"/g
+            const scripts: string[] = []
+            let m: RegExpExecArray | null
+            while ((m = re.exec(html)) !== null) {
+                const u = this.absoluteUrl(m[1])
+                if (u.indexOf(origin) === 0 && scripts.length < 12) scripts.push(u)
+            }
+            for (const s of scripts) {
+                if (this.outOfTime()) break
+                let js: FetchResponse
+                try {
+                    js = await this.fetchRetry(s, { headers: { Referer: embedUrl } })
+                } catch (_e) {
+                    continue
+                }
+                if (!js.ok) continue
+                const body = js.text()
+                const pr = /["']((?:[\w-]+\/)+getSources[\w]*)["']/g
+                let pm: RegExpExecArray | null
+                while ((pm = pr.exec(body)) !== null) {
+                    const p = pm[1]
+                    if (!seen[p]) {
+                        seen[p] = true
+                        out.push(p)
+                    }
+                }
+            }
+        } catch (_e) {}
+        if (out.length > 0) this.reportError("server", "the source endpoint moved; found " + out.join(", "))
+        return out
+    }
+
     private async serverListDoc(dataIds: string): Promise<DocSelectionFunction> {
         const cacheKey = `anikoto:slist:${dataIds}`
         let html = this.readCache<string>(cacheKey, this.serverCacheTtl)
@@ -842,17 +915,24 @@ class Provider {
             tracks?: { file: string; label?: string; kind?: string; default?: boolean }[]
         }
         let data: SourcePayload | undefined = undefined
-        for (const path of ["getSourcesNew", "getSources"]) {
-            const srcRes = await this.fetchRetry(`${origin}/stream/${path}?id=${encodeURIComponent(dataId)}`, {
-                headers: { Referer: embedUrl, "X-Requested-With": "XMLHttpRequest" },
-            })
-            if (!srcRes.ok) continue
-            const body = srcRes.json<SourcePayload>()
+        for (const path of this.sourcePaths(origin)) {
+            const body = await this.trySourcePath(origin, path, dataId, embedUrl)
             if (body && body.sources) {
+                this.rememberSourcePath(origin, path)
                 data = body
                 break
             }
             if (body && !data) data = body
+        }
+        if (!data || !data.sources) {
+            for (const path of await this.discoverSourcePaths(origin, embedUrl)) {
+                const body = await this.trySourcePath(origin, path, dataId, embedUrl)
+                if (body && body.sources) {
+                    this.rememberSourcePath(origin, path)
+                    data = body
+                    break
+                }
+            }
         }
         if (!data || !data.sources) return undefined
         const raw = Array.isArray(data.sources) ? (data.sources[0] || ({} as any)).file : data.sources.file
