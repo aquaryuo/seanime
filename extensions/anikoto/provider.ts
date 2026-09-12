@@ -95,7 +95,7 @@ class Provider {
 
     getSettings(): Settings {
         return {
-            episodeServers: ["Auto", "VidPlay-1", "HD-1"],
+            episodeServers: ["Auto", "HD-1", "HD-2", "Vidstream-2"],
             supportsDub: true,
         }
     }
@@ -552,7 +552,7 @@ class Provider {
         if (server === "Auto" || server === "default" || !server) {
             const $ = await this.serverListDoc(dataIds)
             const groups = audio === "dub" ? ["dub"] : ["sub", "hsub"]
-            const KNOWN_SERVERS = audio === "dub" ? ["HD-1", "Vidstream-2", "VidCloud-1", "VidPlay-1"] : ["VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1"]
+            const KNOWN_SERVERS = ["HD-1", "HD-2", "Vidstream-2"]
             const candidates = this.collectServers($, groups)
                 .filter((c) => KNOWN_SERVERS.indexOf(c.name) !== -1)
                 .sort((a, b) => KNOWN_SERVERS.indexOf(a.name) - KNOWN_SERVERS.indexOf(b.name))
