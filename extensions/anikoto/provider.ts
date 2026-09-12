@@ -95,7 +95,7 @@ class Provider {
 
     getSettings(): Settings {
         return {
-            episodeServers: ["Auto", "VidPlay-1", "HD-1"],
+            episodeServers: ["Auto", "HD-1", "HD-2", "Vidstream-2"],
             supportsDub: true,
         }
     }
@@ -552,7 +552,7 @@ class Provider {
         if (server === "Auto" || server === "default" || !server) {
             const $ = await this.serverListDoc(dataIds)
             const groups = audio === "dub" ? ["dub"] : ["sub", "hsub"]
-            const KNOWN_SERVERS = audio === "dub" ? ["HD-1", "Vidstream-2", "VidCloud-1", "VidPlay-1"] : ["VidPlay-1", "HD-1", "Vidstream-2", "VidCloud-1"]
+            const KNOWN_SERVERS = ["HD-1", "HD-2", "Vidstream-2"]
             const candidates = this.collectServers($, groups)
                 .filter((c) => KNOWN_SERVERS.indexOf(c.name) !== -1)
                 .sort((a, b) => KNOWN_SERVERS.indexOf(a.name) - KNOWN_SERVERS.indexOf(b.name))
@@ -837,14 +837,23 @@ class Provider {
         }
         if (!dataId || !/^[\w.-]{1,256}$/.test(dataId)) return undefined
 
-        const srcRes = await this.fetchRetry(`${origin}/stream/getSources?id=${encodeURIComponent(dataId)}`, {
-            headers: { Referer: embedUrl, "X-Requested-With": "XMLHttpRequest" }, timeout: 3,
-        })
-        if (!srcRes.ok) return undefined
-        const data = srcRes.json<{
-            sources: { file: string } | { file: string }[]
+        type SourcePayload = {
+            sources?: { file: string } | { file: string }[]
             tracks?: { file: string; label?: string; kind?: string; default?: boolean }[]
-        }>()
+        }
+        let data: SourcePayload | undefined = undefined
+        for (const path of ["getSourcesNew", "getSources"]) {
+            const srcRes = await this.fetchRetry(`${origin}/stream/${path}?id=${encodeURIComponent(dataId)}`, {
+                headers: { Referer: embedUrl, "X-Requested-With": "XMLHttpRequest" },
+            })
+            if (!srcRes.ok) continue
+            const body = srcRes.json<SourcePayload>()
+            if (body && body.sources) {
+                data = body
+                break
+            }
+            if (body && !data) data = body
+        }
         if (!data || !data.sources) return undefined
         const raw = Array.isArray(data.sources) ? (data.sources[0] || ({} as any)).file : data.sources.file
         const file = typeof raw === "string" && /^https?:\/\//i.test(raw) ? raw : undefined
