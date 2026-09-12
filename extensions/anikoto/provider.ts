@@ -769,6 +769,78 @@ class Provider {
         }
     }
 
+    private async decodeEnc(origin: string, embedUrl: string, enc: string): Promise<{ file?: string } | undefined> {
+        if (!enc || enc.length > 65536) return undefined
+        let b64 = enc.replace(/-/g, "+").replace(/_/g, "/")
+        const pad = b64.length % 4
+        if (pad) b64 = b64 + "====".slice(pad)
+        for (const pair of await this.encKeys(origin, embedUrl)) {
+            try {
+                const keyBytes = new Uint8Array(32)
+                const raw = $toBytes(pair.key)
+                for (let i = 0; i < raw.length && i < 32; i++) keyBytes[i] = raw[i]
+                const out = CryptoJS.AES.decrypt(b64, keyBytes, { iv: $toBytes(pair.iv) })
+                const text = out.toString(CryptoJS.enc.Utf8)
+                if (!text || text.indexOf("http") === -1) continue
+                const obj = JSON.parse(text)
+                if (obj && typeof obj.file === "string") {
+                    this.writeCache(`anikoto:enckey:${origin}`, pair)
+                    return obj
+                }
+            } catch (_e) {}
+        }
+        return undefined
+    }
+
+    private async encKeys(origin: string, embedUrl: string): Promise<{ key: string; iv: string }[]> {
+        const out: { key: string; iv: string }[] = []
+        const learned = this.readCache<{ key: string; iv: string }>(`anikoto:enckey:${origin}`, this.tokenTtl)
+        if (learned && learned.key && learned.iv) out.push(learned)
+        out.push({ key: "i?LMTAx0Q6,:}50U", iv: "W0;27ToaUpl_P%'c" })
+        for (const pair of await this.scanEncKeys(origin, embedUrl)) {
+            if (!out.some((p) => p.key === pair.key && p.iv === pair.iv)) out.push(pair)
+        }
+        return out
+    }
+
+    private async scanEncKeys(origin: string, embedUrl: string): Promise<{ key: string; iv: string }[]> {
+        const guard = `anikoto:encscan:${origin}`
+        if (this.readCache<number>(guard, this.resolveDownTtl)) return []
+        this.writeCache(guard, 1)
+        const out: { key: string; iv: string }[] = []
+        try {
+            const page = await this.fetchRetry(embedUrl, { headers: { Referer: `${this.baseUrl}/` } })
+            if (!page.ok) return out
+            const html = page.text()
+            const sr = /<script[^>]+src="([^"]+)"/g
+            const scripts: string[] = []
+            let sm: RegExpExecArray | null
+            while ((sm = sr.exec(html)) !== null) {
+                const u = this.absoluteUrl(sm[1])
+                if (u.indexOf(origin) === 0 && scripts.length < 12) scripts.push(u)
+            }
+            for (const s of scripts) {
+                if (this.outOfTime() || out.length >= 24) break
+                let js: FetchResponse
+                try {
+                    js = await this.fetchRetry(s, { headers: { Referer: embedUrl } })
+                } catch (_e) {
+                    continue
+                }
+                if (!js.ok) continue
+                const body = js.text()
+                const re = /=\s*"([^"\\]{16,32})"\s*,\s*\w+\s*=\s*"([^"\\]{16,32})"/g
+                let m: RegExpExecArray | null
+                while ((m = re.exec(body)) !== null) {
+                    out.push({ key: m[1], iv: m[2] })
+                    if (out.length >= 24) break
+                }
+            }
+        } catch (_e) {}
+        if (out.length > 0) this.reportError("server", "the source cipher changed; trying recovered keys")
+        return out
+    }
+
     private cdnHosts(): string[] {
         const out: string[] = []
         const learned = this.readCache<string[]>("anikoto:cdnhosts", this.tokenTtl)
@@ -956,6 +1028,7 @@ class Provider {
         type SourcePayload = {
             sources?: { file: string } | { file: string }[]
             tracks?: { file: string; label?: string; kind?: string; default?: boolean }[]
+            enc?: string
         }
         let data: SourcePayload | undefined = undefined
         for (const path of this.sourcePaths(origin)) {
@@ -976,6 +1049,10 @@ class Provider {
                     break
                 }
             }
+        }
+        if (data && !data.sources && data.enc) {
+            const plain = await this.decodeEnc(origin, embedUrl, String(data.enc))
+            if (plain && plain.file) data.sources = { file: plain.file }
         }
         if (!data || !data.sources) return undefined
         const raw = Array.isArray(data.sources) ? (data.sources[0] || ({} as any)).file : data.sources.file
