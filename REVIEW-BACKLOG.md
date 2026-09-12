@@ -782,11 +782,25 @@ Not filed in this document, because they arrived as user reports rather than rev
 | AniZone moved series pages to infinite scroll — every series showed 1 episode | `70d1653` |
 | anikoto `isPlayable` probed every variant in parallel, tripping the CDN's rate limiter and hanging playback | `509b667` |
 | All comments stripped from the seven payloads, per the global no-comments rule | `6f227d9`, `bfcd958` |
+| megaplay stopped returning `sources` and moved the URL into an encrypted `enc` field — every anikoto stream failed on both channels | `9a93bb8` (beta), `2513cf7` (main) |
 
 **Promoted to stable 2026-09-06 (`5c95f69`)**: anikoto 1.3.76, anizone 1.1.23, aquaprefs 1.1.63,
 aquatils 0.10.10. Verified against the live CDN by content, not manifest version. `animelok` and
 `animepahe` remain beta-only — animelok's upstream API is returning 500 for every title, and
 animepahe needs a solver.
+
+**Promoted to stable 2026-09-13 (`2513cf7`)**: anikoto 1.3.81, carrying the `enc` fix. Both
+channels verified by content against the live CDN, and the promoted copy was run through the
+fixture suite before pushing (6/6).
+
+**Tester report of 2026-09-12, three extensions "stopped working at the same time":** only one
+was ours. anikoto was the megaplay `enc` migration above. anizone was not reproducible — 5/5 on
+both channels, and stable was already current at 1.1.23. animepahe is blocked upstream:
+animepahe.pw serves a hard Cloudflare interstitial that the solver's uTLS stage cannot clear
+(`needs-stronger-solver: no downloaded Chromium available`), so it needs the browser stage
+enabled in Aqua's Utils. The provider reports that precisely, but Seanime's search layer
+replaces the provider's message with `anime not found, try manual matching`, which is why a
+solver problem reads to users as an extension bug.
 
 **Correction to the entry above on `aquaprefs-go-bool`:** the underlying claim was never proven.
 `UseLibassRenderer` is `*bool` and `getCurrentPlaybackInfo` returns `vm.ToValue(info)` with no JSON
