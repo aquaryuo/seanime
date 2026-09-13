@@ -245,6 +245,9 @@ declare namespace $store {
     function get<T = any>(key: string): T
     function getUnsafe<T = any>(key: string): T
     function has(key: string): boolean
+    function remove(key: string): void
+    function removeAll(): void
+    const length: number
     function getOrSet<T = any>(key: string, setFunc: () => T): T
     function setIfLessThanLimit<T = any>(key: string, value: T, maxAllowedElements: number): boolean
     function unmarshalJSON(data: string): void
