@@ -908,6 +908,32 @@ series (Tsuredure Children: "My Brother's Girlfriend / Spring / Contact / Rain")
 placeholder `Episode N` for others (One Piece, AoT). The placeholder is now suppressed so
 Seanime falls back to its own AniList title instead of having it overridden by a useless one.
 
+**Resolved in-extension — the season window.** `findEpisodes` narrows the site's run to the
+episodes the tracker expects, so AoT S3 is 12 again rather than 22, with no metadata service. The
+offset is derived, not given: site count minus `episodeCount`, taking the leading window for
+part <= 1 and the trailing one for part >= 2, skipped when `episodeCount` is `-1` (long-running
+series) or the counts already agree. It reports through SEHERRv1 whenever it narrows a list, so
+the behaviour is visible rather than silent. **Known limit:** for a 3+ cour split it takes the
+final window — right for the last part, wrong for a middle one. Two-part splits are exact.
+
+**`$store` does not survive between provider method calls in the playground.** Written and read
+back inside one call it works (`wrote:12345`); the very next call reads `MISSING`. This is why
+the first attempt at the season window did nothing while the suite still reported 6/6 — the
+`search`→`findEpisodes` handoff went through `$store`. The working version carries
+`episodeCount` and the part number **in the id** (`$ec{n}$pt{p}`, placed before `$al` so
+end-anchored parsing of older ids is unaffected), which is the only channel guaranteed between
+those two calls. **Open:** `anikoto-manual-mapping-loses-id` recovers the AniList id through
+`anikoto:al:` written in `search` and read in `findEpisodes` — the same assumption. It may hold
+in the installed app, where the store is per-extension and long-lived, but that is unverified and
+the id-carrying approach is strictly more reliable.
+
+**Two fixture lessons from the same change.** `attack-on-titan-s3` asserted `episodes.min: 12`
+with a note saying the site lists 22 under one entry — so its *intent* was right, but a minimum
+passes at 22, and the recorded snapshot also said 22. A change that did nothing looked identical
+to one that worked. Pin counts that matter exactly rather than as a floor. Separately, a stale
+`anikoto:eps:` entry returned the pre-remap list before the new code could run; the key is now
+`anikoto:eps2:`, which also stops users getting pre-remap lists for 15 minutes after updating.
+
 **Consequence of removing `sub.ryuo.to` — episode numbering now follows the site, not AniList.**
 `/meta` carried two things that were not subtitles: episode titles, and the AniList↔site episode
 remap. With it gone, `findEpisodes` uses the site's own numbering, and `/resolve` — which was the

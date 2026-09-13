@@ -106,6 +106,7 @@ class Provider {
         const wantDub = opts.dub
         const audio = wantDub ? "dub" : "sub"
         const sq = this.searchQueries(opts)
+        const wantCount = opts.media.episodeCount && opts.media.episodeCount > 0 ? opts.media.episodeCount : 0
         let challenged = false
         let unrecognized = false
         this.deadline = this.now() + this.searchBudget
@@ -144,7 +145,7 @@ class Provider {
                     hardFail = true
                 }
                 if (pageDoc) {
-                    cards += this.parseSearchInto(pageDoc, audio, wantDub, opts.media.id, seen, results, evidence)
+                    cards += this.parseSearchInto(pageDoc, audio, wantDub, opts.media.id, seen, results, evidence, wantCount, sq.part || 0)
                     if (this.resultListIsEmpty(pageDoc)) emptyList = true
                 }
                 if (hardFail) break
@@ -335,7 +336,9 @@ class Provider {
         anilistId: number,
         seen: { [key: string]: boolean },
         results: SearchResult[],
-        evidence: { [key: string]: { episodes: number; movie: boolean } }
+        evidence: { [key: string]: { episodes: number; movie: boolean } },
+        epCount: number,
+        part: number
     ): number {
         let cards = 0
         $("div.item").each((_i, card) => {
@@ -369,7 +372,7 @@ class Provider {
                 movie: format === "movie",
             }
             if (anilistId > 0) this.writeCache(`anikoto:al:${seriesUrl}`, anilistId)
-            results.push({ id: this.withMeta(seriesUrl, audio, anilistId), title, url: seriesUrl, subOrDub })
+            results.push({ id: this.withMeta(seriesUrl, audio, anilistId, epCount, part), title, url: seriesUrl, subOrDub })
         })
         return cards
     }
@@ -412,7 +415,7 @@ class Provider {
 
         const seriesUrl = this.seriesUrl(this.absoluteUrl(parsed.base))
 
-        const cacheKey = `anikoto:eps:${seriesUrl}:${audio}:${parsed.anilistId}`
+        const cacheKey = `anikoto:eps2:${seriesUrl}:${audio}:${parsed.anilistId}`
         const cached = this.readCache<EpisodeDetails[]>(cacheKey)
         if (cached && cached.length > 0) return cached
 
@@ -470,7 +473,7 @@ class Provider {
             const title = /^episode\s*\d+$/i.test(rawTitle) ? "" : rawTitle
 
             episodes.push({
-                id: this.withMeta(dataIds, audio, parsed.anilistId),
+                id: this.withMeta(dataIds, audio, parsed.anilistId, parsed.epCount, parsed.part),
                 number,
                 url: `${seriesUrl}/ep-${slug}`,
                 title: title || undefined,
@@ -480,6 +483,7 @@ class Provider {
         if (episodes.length === 0) throw this.fail("episodes", "no episodes found")
 
         episodes.sort((x, y) => x.number - y.number)
+        this.applySeasonWindow(episodes, parsed.epCount, parsed.part)
         this.writeCache(cacheKey, episodes)
         return episodes
     }
@@ -1137,12 +1141,27 @@ class Provider {
         return { base: id, audio: "sub" }
     }
 
-    private withMeta(base: string, audio: string, anilistId: number): string {
-        const a = this.withAudio(base, audio)
+    private applySeasonWindow(episodes: EpisodeDetails[], epCount: number, part: number): void {
+        if (epCount <= 0 || episodes.length <= epCount) return
+        const offset = part >= 2 ? episodes.length - epCount : 0
+        if (offset < 0 || offset + epCount > episodes.length) return
+        const picked = episodes.slice(offset, offset + epCount)
+        if (picked.length !== epCount) return
+        const total = episodes.length
+        for (let i = 0; i < picked.length; i++) picked[i].number = i + 1
+        episodes.length = 0
+        for (const e of picked) episodes.push(e)
+        this.reportError("episodes", `the site lists this season as one run of ${total} episodes; showing the ${part >= 2 ? "last" : "first"} ${epCount} so the numbering matches the tracker`)
+    }
+
+    private withMeta(base: string, audio: string, anilistId: number, epCount?: number, part?: number): string {
+        let a = this.withAudio(base, audio)
+        const n = epCount && epCount > 0 ? epCount : 0
+        if (n > 0) a = `${a}$ec${n}$pt${part && part > 0 ? part : 0}`
         return anilistId > 0 ? `${a}$al${anilistId}` : a
     }
 
-    private splitMeta(id: string): { base: string; audio: string; anilistId: number } {
+    private splitMeta(id: string): { base: string; audio: string; anilistId: number; epCount: number; part: number } {
         let rest = id
         let anilistId = 0
         const m = rest.match(/\$al(\d+)$/)
@@ -1150,12 +1169,24 @@ class Provider {
             anilistId = parseInt(m[1], 10)
             rest = rest.slice(0, rest.length - m[0].length)
         }
+        let epCount = 0
+        let part = 0
+        const pm = rest.match(/\$pt(\d+)$/)
+        if (pm) {
+            part = parseInt(pm[1], 10)
+            rest = rest.slice(0, rest.length - pm[0].length)
+        }
+        const em = rest.match(/\$ec(\d+)$/)
+        if (em) {
+            epCount = parseInt(em[1], 10)
+            rest = rest.slice(0, rest.length - em[0].length)
+        }
         const sa = this.splitAudio(rest)
         if (anilistId === 0) {
             const known = this.readCache<number>(`anikoto:al:${this.seriesUrl(sa.base)}`, this.idCacheTtl)
             if (known && known > 0) anilistId = known
         }
-        return { base: sa.base, audio: sa.audio, anilistId }
+        return { base: sa.base, audio: sa.audio, anilistId, epCount, part }
     }
 
     private reportError(scope: string, message: string): void {
