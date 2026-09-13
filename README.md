@@ -11,12 +11,17 @@ Since you're here anyway: these are [Seanime](https://seanime.rahim.app) extensi
 
 The beta list is a superset — it carries the stable entries too, so you only ever need one URL.
 
+Two providers are beta-only and will stay that way. `animepahe` needs the `aquatils` solver plugin
+running to load anything at all, so it is not something to hand to someone who just wants a working
+provider; `animelok` is in the same bucket. They are not promoted to stable even when they are
+working.
+
 | payload | kind | channels | what it is |
 | --- | --- | --- | --- |
 | `anikoto` | onlinestream provider | stable + beta | anikototv.to |
 | `anizone` | onlinestream provider | stable + beta | anizone.to |
-| `animelok` | onlinestream provider | beta only | animelok.live |
-| `animepahe` | onlinestream provider | beta only | animepahe; needs the solver below |
+| `animelok` | onlinestream provider | beta only, permanently | animelok.live |
+| `animepahe` | onlinestream provider | beta only, permanently | animepahe; cannot load anything without the solver below |
 | `aquatils` | plugin | stable + beta | downloads and supervises a Cloudflare solver, and surfaces errors other extensions report |
 | `aquaprefs` | plugin | stable + beta | remembers player options |
 | `seatags` | plugin | stable + beta | tags marketplace cards and adds filters |
