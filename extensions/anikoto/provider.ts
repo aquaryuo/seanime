@@ -24,29 +24,22 @@ class Provider {
 
     private candidateBases(): string[] {
         const configured = this.normBase(this.baseUrl)
-        const out: string[] = [configured]
+        const out: string[] = []
         const seen: { [key: string]: boolean } = {}
-        seen[configured] = true
-        const cached = $store.get<string>("anikoto:base")
-        if (cached && !seen[cached]) {
-            seen[cached] = true
-            out.push(cached)
+        const push = (u: string): void => {
+            if (!u || seen["#" + u]) return
+            seen["#" + u] = true
+            out.push(u)
         }
-        for (const m of this.mirrors) {
-            const u = this.normBase(m)
-            if (!seen[u]) {
-                seen[u] = true
-                out.push(u)
-            }
-        }
+        const cached = this.normBase($store.get<string>("anikoto:base") || "")
+        if (cached && (cached === configured || this.mirrors.indexOf(cached) !== -1)) push(cached)
+        push(configured)
+        for (const m of this.mirrors) push(this.normBase(m))
         return out
     }
 
     private currentBase(): string {
-        const configured = this.normBase(this.baseUrl)
-        const cached = $store.get<string>("anikoto:base")
-        if (cached && (cached === configured || this.mirrors.indexOf(cached) !== -1)) return cached
-        return configured
+        return this.candidateBases()[0]
     }
 
     private rememberBase(base: string): void {
@@ -76,10 +69,10 @@ class Provider {
             try {
                 const res = await fetch(url, opts)
                 const retryable = res.status === 408 || res.status === 429 || res.status >= 500
-                if (!retryable || i === tries - 1) return res
+                if (!retryable || i === tries - 1 || this.outOfTime()) return res
             } catch (e) {
                 lastErr = e
-                if (i === tries - 1) throw e
+                if (i === tries - 1 || this.outOfTime()) throw e
             }
         }
         throw lastErr || `anikoto: fetch failed (${url})`
@@ -563,7 +556,7 @@ class Provider {
             let firstResolved: EpisodeServer | undefined
             let playableNoSubs: EpisodeServer | undefined
             for (const c of candidates) {
-                if (this.outOfTime() && (playableNoSubs || firstResolved)) break
+                if (this.outOfTime()) break
                 let resolved: EpisodeServer | undefined
                 try {
                     resolved = await this.resolveServer(c.linkId, c.name, ctx, audio)
