@@ -128,25 +128,25 @@ class Provider {
             let hardFail = false
             for (const q of sq.queries) {
                 if (this.outOfTime()) break
-                let html = ""
+                let pageDoc: DocSelectionFunction | undefined = undefined
                 try {
                     const res = await fetch(`${base}/filter?keyword=${encodeURIComponent(q)}`, {
                         headers: this.pageHeaders(),
                     })
                     const body = res.text()
-                    if (this.isChallengeResponse(res, body)) {
+                    const doc = body ? LoadDoc(body) : undefined
+                    if (this.isChallengeResponse(res, body, doc)) {
                         challenged = true
-                    } else if (res.ok && this.bodyIsSitePage(body)) {
+                    } else if (res.ok && doc && this.bodyIsSitePage(body, doc)) {
                         anyOk = true
-                        html = body
+                        pageDoc = doc
                     }
                 } catch (_e) {
                     hardFail = true
                 }
-                if (html) {
-                    const doc = LoadDoc(html)
-                    cards += this.parseSearchInto(doc, audio, wantDub, opts.media.id, seen, results, evidence)
-                    if (this.resultListIsEmpty(doc)) emptyList = true
+                if (pageDoc) {
+                    cards += this.parseSearchInto(pageDoc, audio, wantDub, opts.media.id, seen, results, evidence)
+                    if (this.resultListIsEmpty(pageDoc)) emptyList = true
                 }
                 if (hardFail) break
             }
@@ -1343,23 +1343,23 @@ class Provider {
         return ""
     }
 
-    private isChallengeResponse(res: FetchResponse, body: string): boolean {
+    private isChallengeResponse(res: FetchResponse, body: string, doc?: DocSelectionFunction): boolean {
         const h = res.headers || {}
         for (const k in h) {
             if (k.toLowerCase() === "cf-mitigated" && String(h[k]).toLowerCase().indexOf("challenge") !== -1) return true
         }
-        if (res.status === 403 || res.status === 503) return !this.bodyIsSitePage(body)
-        return this.bodyIsChallenge(body) && !this.bodyIsSitePage(body)
+        if (res.status === 403 || res.status === 503) return !this.bodyIsSitePage(body, doc)
+        return this.bodyIsChallenge(body) && !this.bodyIsSitePage(body, doc)
     }
 
     private bodyIsChallenge(body: string): boolean {
         return this.challengeToken(body) !== ""
     }
 
-    private bodyIsSitePage(body: string): boolean {
-        if (!body) return false
+    private bodyIsSitePage(body: string, doc?: DocSelectionFunction): boolean {
+        if (!body && !doc) return false
         try {
-            const $ = LoadDoc(body)
+            const $ = doc || LoadDoc(body)
             return $("footer").length() > 0 || $("div.item").length() > 0
         } catch (_e) {
             return false
