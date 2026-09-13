@@ -8,3 +8,7 @@
 node_modules/
 *.log
 .DS_Store
+
+# Upstream frontend sources kept locally for reference; not part of this repo.
+/hls.ts
+/RENAMED.md
