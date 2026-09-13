@@ -817,6 +817,11 @@ function init() {
             fsCanHard.set(c.canStageB ? "yes" : "no")
             fsHardWhy.set(c.canStageB ? "" : String(c.reason || ""))
             if (before !== fsCanHard.get()) tray.update()
+            if (fsCanHard.get() === "no" && fsHardWhy.get()) {
+                notifyOnce("nohard", "Aqua's Utils: some sites will not load until this is fixed — " + fsHardWhy.get())
+            } else if (fsCanHard.get() === "yes") {
+                fsNotified["nohard"] = false
+            }
         }
 
         function trayPoke(): void {
