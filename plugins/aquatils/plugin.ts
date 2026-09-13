@@ -1069,6 +1069,7 @@ function init() {
         }
 
         function fsResetRestartCap(): void {
+            if (fsMode.get() === "remote") return
             fsAutoRestarts = 0
             fsLastAutoRestart = 0
             fsBindRetries = 0
@@ -1631,6 +1632,12 @@ function init() {
             try { $storage.set("fs.manualStop", true) } catch (_e) {}
         }
 
+        function clearManualStop(): void {
+            if (fsMode.get() === "remote") return
+            fsManualStop = false
+            try { $storage.set("fs.manualStop", false) } catch (_e) {}
+        }
+
         function removeSolverDownloads(): void {
             latchManualStop()
             binaryStop(() => {
@@ -1883,38 +1890,36 @@ function init() {
         }
 
         function fsStart(): void {
-            fsManualStop = false
-            fsDepsCmd.set("")
-            fsDepsPkgs.set([])
-            fsDepsChecked = false
-            fsNotified["chromedeps"] = false
-            try { $storage.set("fs.manualStop", false) } catch (_e) {}
-            fsAvBlocked = false
-            try { $storage.set("fs.avBlocked", false) } catch (_e) {}
             if (fsMode.get() === "remote") {
                 setNote("Remote mode: start the solver yourself; this only manages sessions at " + fsBase() + ".")
                 tray.update()
                 void fsRefresh()
-            } else {
-                binaryEnsureAndStart()
+                return
             }
+            clearManualStop()
+            fsDepsCmd.set("")
+            fsDepsPkgs.set([])
+            fsDepsChecked = false
+            fsNotified["chromedeps"] = false
+            fsAvBlocked = false
+            try { $storage.set("fs.avBlocked", false) } catch (_e) {}
+            binaryEnsureAndStart()
         }
 
         function fsStop(): void {
-            fsManualStop = true
-            fsResetRestartCap()
-            try { $storage.set("fs.manualStop", true) } catch (_e) {}
             if (fsMode.get() === "remote") {
                 setNote("Remote mode: stop the solver on its host.")
                 tray.update()
-            } else {
-                fsBusy = false
-                binaryStop()
-                setStatus("down")
-                fsStartTicks = 0
-                setNote("Solver stopped.")
-                tray.update()
+                return
             }
+            latchManualStop()
+            fsResetRestartCap()
+            fsBusy = false
+            binaryStop()
+            setStatus("down")
+            fsStartTicks = 0
+            setNote("Solver stopped.")
+            tray.update()
         }
 
         function solverDetail(): string {
@@ -2138,7 +2143,7 @@ function init() {
             tray.update()
         })
         ctx.registerEventHandler("fs-simple-start", () => {
-            fsManualStop = false
+            clearManualStop()
             fsResetRestartCap()
             setStatus("starting")
             setNote("Starting solver…")
