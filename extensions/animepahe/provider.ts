@@ -1,6 +1,6 @@
 declare const console: { log(...args: any[]): void; info(...args: any[]): void; warn(...args: any[]): void; error(...args: any[]): void }
 
-class Provider {
+class Provider implements AnimeProvider {
     private baseUrl = this.cfg("baseUrl", "{{baseUrl}}", "https://animepahe.pw")
     private mirrors = ["https://animepahe.pw", "https://animepahe.com", "https://animepahe.org"]
     private solverUrl = this.cfg("solverUrl", "{{solverUrl}}", "http://127.0.0.1:8191/v1")
@@ -8,6 +8,7 @@ class Provider {
     private lastFailKind = ""
     private lastResp: { url: string; status: number; statusText: string; ct: string; len: number; redirected: boolean; finalUrl: string; snippet: string; hit: string } | undefined = undefined
     private lastSolver: { ran: boolean; http: number; snippet: string; reason: string } | undefined = undefined
+    private lastThrow = ""
     private cookieTtl = 10800000
     private baseTtl = 21600000
     private epCacheTtl = 900000
@@ -357,6 +358,7 @@ class Provider {
         const unbase = this.makeUnbase(radix)
         return payload.replace(/\b\w+\b/g, (word) => {
             const idx = unbase(word)
+            if (!Number.isInteger(idx) || idx < 0 || idx >= count) return word
             const v = symtab[idx]
             return v !== undefined && v !== "" ? v : word
         })
@@ -462,7 +464,9 @@ class Provider {
                     const body = res.text()
                     if (!valid || valid(body)) return body
                 }
-            } catch (_e) {}
+            } catch (e) {
+                this.lastThrow = this.snip(String((e && (e as any).message) || e || ""))
+            }
             cookie = await this.harvestCookies(true)
         }
         const solved = await this.solveGet(url)
@@ -604,6 +608,7 @@ class Provider {
     private clearLastFailure(): void {
         this.lastFailKind = ""
         this.lastResp = undefined
+        this.lastThrow = ""
     }
 
     private fail(scope: string, message: string, kind?: string): string {
@@ -689,6 +694,7 @@ class Provider {
             " redirected=" + (r ? r.redirected + "->" + r.finalUrl : "?") +
             " ddg=" + ddg + "/" + ckSize +
             " challengeHit=" + (r && r.hit ? r.hit : "none") +
+            " throw=" + (this.lastThrow || "-") +
             " solver=" + (s ? (s.ran ? "ran" : "skip") : "skip") +
             " solverHttp=" + (s ? s.http : "-") +
             " solverReason=" + (s && s.reason ? s.reason : "-") +

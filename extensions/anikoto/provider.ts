@@ -1,6 +1,6 @@
 declare const console: { log(...args: any[]): void; info(...args: any[]): void; warn(...args: any[]): void; error(...args: any[]): void }
 
-class Provider {
+class Provider implements AnimeProvider {
     private baseUrl = this.cfg("baseUrl", "{{baseUrl}}", "https://anikototv.to")
     private loadSubtitles = this.cfg("loadSubtitles", "{{loadSubtitles}}", "enabled")
     private useCustomSolver = this.cfg("useCustomSolver", "{{useCustomSolver}}", "off")
@@ -453,7 +453,7 @@ class Provider {
         let epNodes = $("ul.ep-range li > a")
         if (epNodes.length() === 0) epNodes = $(".ep-range a")
         if (epNodes.length() === 0) epNodes = $("a[data-ids]")
-        epNodes.each((i, a) => {
+        epNodes.each((_i, a) => {
             const epId = a.attr("data-id") || ""
             const dataIds = a.attr("data-ids")
             if (!dataIds) return
@@ -467,7 +467,7 @@ class Provider {
             seen[dedupeKey] = true
 
             const num = parseInt(rawNum, 10)
-            const number = !Number.isInteger(num) || num < 1 || num > 10000 ? i + 1 : num
+            const number = !Number.isInteger(num) || num < 1 || num > 10000 ? episodes.length + 1 : num
             const slug = a.attr("data-slug") || String(number)
 
             const rawTitle = a.find("span.d-title").first().text().trim()

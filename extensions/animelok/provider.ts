@@ -5,7 +5,7 @@ type VibeData = { sources?: { url: string }[]; tracks?: VibeTrack[]; headers?: {
 type Availability = { exists: boolean; audio: string; subOrDub: SubOrDub; broken?: boolean }
 type VibeResult = { status: "ok" | "notfound" | "nosource" | "fail" | "badshape"; url: string; tracks: VibeTrack[]; headers: { [key: string]: string } }
 
-class Provider {
+class Provider implements AnimeProvider {
     private baseUrl = this.cfg("baseUrl", "{{baseUrl}}", "https://animelok.live")
     private cacheTtl = 900000
     private srcCacheTtl = 300000

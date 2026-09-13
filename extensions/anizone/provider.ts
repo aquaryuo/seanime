@@ -5,7 +5,7 @@ type Cand = { r: SearchResult; card: Card }
 type Target = { t: string; w: number }
 type Scored = { c: Cand; s: number; adj: number; ep: number }
 
-class Provider {
+class Provider implements AnimeProvider {
     private baseUrl = this.cfg("baseUrl", "{{baseUrl}}", "https://anizone.to")
     private cacheTtl = 900000
     private srcCacheTtl = 300000
