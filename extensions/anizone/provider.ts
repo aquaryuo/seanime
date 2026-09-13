@@ -5,10 +5,13 @@ type Cand = { r: SearchResult; card: Card }
 type Target = { t: string; w: number }
 type Scored = { c: Cand; s: number; adj: number; ep: number }
 
-class Provider {
-    private baseUrl = "{{baseUrl}}"
+class Provider implements AnimeProvider {
+    private baseUrl = this.cfg("baseUrl", "{{baseUrl}}", "https://anizone.to")
     private cacheTtl = 900000
     private srcCacheTtl = 300000
+    private subExts = "ass|srt|vtt"
+    private pageBudget = 45000
+    private probeBudget = 20000
 
     getSettings(): Settings {
         return { episodeServers: ["Auto"], supportsDub: true }
@@ -22,12 +25,12 @@ class Provider {
         let anyShape = false
         const run = async (queries: string[]): Promise<void> => {
             for (const q of queries) {
-                if (!q || cands.length >= 12) continue
+                if (cands.length >= 12) break
+                if (!q) continue
                 let html = ""
                 try {
                     const res = await fetch(`${this.normBase()}/anime?search=${encodeURIComponent(q)}`, {
                         headers: this.pageHeaders(),
-                        timeout: 12,
                     })
                     if (res.ok) {
                         anyOk = true
@@ -47,6 +50,15 @@ class Provider {
         if (!anyOk) throw this.fail("search", "anizone: search failed (site unreachable)")
         if (!anyShape) throw this.fail("search", "anizone: search page layout not recognized")
         return this.pickBest(cands, opts.media, sq.season, sq.part)
+    }
+
+    private cfg(name: string, raw: string, fallback: string): string {
+        if (raw && raw.indexOf("{{") === -1) return raw
+        try {
+            const v = $getUserPreference(name)
+            if (typeof v === "string" && v && v.indexOf("{{") === -1) return v
+        } catch (_e) {}
+        return fallback
     }
 
     private pickBest(cands: Cand[], media: Media, season: number, part: number): SearchResult[] {
@@ -82,8 +94,8 @@ class Provider {
         const seen: { [key: string]: boolean } = {}
         const push = (s: string, w: number): void => {
             const n = this.normTitle(s)
-            if (n.length >= 3 && !seen[n]) {
-                seen[n] = true
+            if (n.length >= 3 && !seen["#" + n]) {
+                seen["#" + n] = true
                 out.push({ t: n, w })
             }
         }
@@ -242,24 +254,27 @@ class Provider {
         const cacheKey = `anizone:eps:${shortid}${alTag}$${audio}`
         const cached = this.readCache<EpisodeDetails[]>(cacheKey, this.cacheTtl)
         if (cached && cached.length > 0) return cached
-        const res = await fetch(`${this.normBase()}/anime/${shortid}`, { headers: this.pageHeaders(), timeout: 12 })
+        const res = await this.guarded("episodes", `${this.normBase()}/anime/${shortid}`, { headers: this.pageHeaders() })
         if (res.status === 404) return []
         if (!res.ok) throw this.fail("episodes", `anizone: series page failed (status ${res.status})`)
         const html = res.text()
         const nums: { [key: number]: boolean } = {}
         this.collectEps(html, shortid, nums)
         this.collectItemEps(html, nums)
-        const stated = this.statedEpisodeCount(html)
+        const stated = await this.trimToExisting(shortid, this.statedEpisodeCount(html), nums)
         if (stated > 0) for (let n = 1; n <= stated; n++) nums[n] = true
         if (/gotoPage\(\d+\)/.test(html)) {
+            const deadline = this.now() + this.pageBudget
+            const lastPage = this.lastPageOf(html)
             try {
-                const first = await fetch(`${this.normBase()}/anime/${shortid}?page=1`, { headers: this.pageHeaders(), timeout: 12 })
+                const first = await fetch(`${this.normBase()}/anime/${shortid}?page=1`, { headers: this.pageHeaders() })
                 if (first && first.ok) this.collectEps(first.text(), shortid, nums)
             } catch (_e) {}
-            for (let p = 2; p <= 60; p++) {
+            for (let p = 2; p <= lastPage; p++) {
+                if (this.now() > deadline) break
                 let pr: FetchResponse | undefined
                 try {
-                    pr = await fetch(`${this.normBase()}/anime/${shortid}?page=${p}`, { headers: this.pageHeaders(), timeout: 12 })
+                    pr = await fetch(`${this.normBase()}/anime/${shortid}?page=${p}`, { headers: this.pageHeaders() })
                 } catch (_e) {
                     break
                 }
@@ -283,12 +298,11 @@ class Provider {
         const parts = episode.id.split("$")
         const shortid = parts[0]
         const n = parts[1] || String(episode.number)
-        const alId = this.alOf(episode.id)
         const audio = this.audioOf(episode.id)
         const cacheKey = `anizone:src:${shortid}:${n}`
         let cached = this.readCache<{ m3u8: string; subs: { origin: string; lang: string; ext: string; label?: string; def?: boolean }[] }>(cacheKey, this.srcCacheTtl)
         if (!cached || !cached.m3u8) {
-            const res = await fetch(`${this.normBase()}/anime/${shortid}/${n}`, { headers: this.pageHeaders(), timeout: 14 })
+            const res = await this.guarded("server", `${this.normBase()}/anime/${shortid}/${n}`, { headers: this.pageHeaders() })
             if (!res.ok) throw this.fail("server", `anizone: episode page failed (status ${res.status})`)
             const html = res.text()
             const player = this.parsePlayer(html)
@@ -300,9 +314,9 @@ class Provider {
         }
         const m3u8 = cached.m3u8
         if (audio === "dub" && !(await this.hasEnglishAudio(m3u8, shortid, n))) throw this.fail("server", "anizone: no dub available for this episode")
-        const subtitles = await this.buildSubs(cached.subs, alId, parseInt(n, 10) || episode.number)
+        const subtitles = this.buildSubs(cached.subs)
         return {
-            server: server === "Auto" || server === "default" || !server ? "Auto" : server,
+            server: "Auto",
             headers: { Referer: `${this.normBase()}/` },
             videoSources: [
                 {
@@ -323,8 +337,8 @@ class Provider {
             const q = (s || "").trim()
             if (!q) return
             const key = q.toLowerCase()
-            if (seen[key]) return
-            seen[key] = true
+            if (seen["#" + key]) return
+            seen["#" + key] = true
             list.push(q)
         }
         const romaji = opts.media.romajiTitle || ""
@@ -372,8 +386,8 @@ class Provider {
         const cards = this.parseItems(html).concat(this.parseLegacyCards(html))
         const target = opts.media.romajiTitle || opts.media.englishTitle || ""
         for (const c of cards) {
-            if (!c.sid || seen[c.sid]) continue
-            seen[c.sid] = true
+            if (!c.sid || seen["#" + c.sid]) continue
+            seen["#" + c.sid] = true
             const alId = opts.media && opts.media.id > 0 ? opts.media.id : 0
             const audio = opts.dub ? "dub" : "sub"
             out.push({
@@ -420,6 +434,43 @@ class Provider {
             }
         }
         return { m3u8: src, subs }
+    }
+
+    private lastPageOf(html: string): number {
+        let last = 0
+        const re = /gotoPage\((\d+)\)/g
+        let m
+        while ((m = re.exec(html || "")) !== null) {
+            const n = parseInt(m[1] || "0", 10)
+            if (n > last) last = n
+        }
+        return last > 1 && last <= 60 ? last : 60
+    }
+
+    private async trimToExisting(shortid: string, stated: number, nums: { [key: number]: boolean }): Promise<number> {
+        if (stated <= 0) return stated
+        let known = 0
+        for (const k in nums) {
+            const n = parseInt(k, 10)
+            if (n > known) known = n
+        }
+        if (stated <= known) return stated
+        const deadline = this.now() + this.probeBudget
+        let n = stated
+        for (let i = 0; i < 8 && n > known; i++) {
+            if (this.now() > deadline) return stated
+            let ok = false
+            try {
+                const res = await fetch(`${this.normBase()}/anime/${shortid}/${n}`, { headers: this.pageHeaders() })
+                if (res.status === 200) ok = true
+                else if (res.status !== 404) return stated
+            } catch (_e) {
+                return stated
+            }
+            if (ok) return n
+            n--
+        }
+        return stated
     }
 
     private statedEpisodeCount(html: string): number {
@@ -471,8 +522,8 @@ class Provider {
             const seenT: { [key: string]: boolean } = {}
             const add = (t: any): void => {
                 const v = typeof t === "string" ? t.trim() : ""
-                if (v && !seenT[v]) {
-                    seenT[v] = true
+                if (v && !seenT["#" + v]) {
+                    seenT["#" + v] = true
                     titles.push(v)
                 }
             }
@@ -499,21 +550,17 @@ class Provider {
             blocks.push({ idx: tm.index, titles: this.decodeTitles(tm[1] || "") })
         }
         if (blocks.length === 0) return out
-        const hrefRe = /href="https?:\/\/[a-z0-9.-]+\/anime\/([a-z0-9]+)"/g
+        const hrefRe = /href="[^"]*\/anime\/([A-Za-z0-9]+)"/gi
         const hrefs: { idx: number; sid: string }[] = []
         let hm: RegExpExecArray | null
         while ((hm = hrefRe.exec(html)) !== null) {
             hrefs.push({ idx: hm.index, sid: hm[1] })
         }
+        let hi = 0
         for (const b of blocks) {
-            let sid = ""
-            for (const h of hrefs) {
-                if (h.idx > b.idx) {
-                    sid = h.sid
-                    break
-                }
-            }
-            if (sid) out.push({ sid, titles: b.titles, type: "", year: 0, eps: 0 })
+            while (hi < hrefs.length && hrefs[hi].idx <= b.idx) hi++
+            if (hi >= hrefs.length) break
+            out.push({ sid: hrefs[hi].sid, titles: b.titles, type: "", year: 0, eps: 0 })
         }
         return out
     }
@@ -533,8 +580,8 @@ class Provider {
         const seen: { [key: string]: boolean } = {}
         const add = (t: string): void => {
             const v = (t || "").trim()
-            if (v && !seen[v]) {
-                seen[v] = true
+            if (v && !seen["#" + v]) {
+                seen["#" + v] = true
                 out.push(v)
             }
         }
@@ -562,17 +609,19 @@ class Provider {
         return titles[0]
     }
 
-    private tagAttr(tag: string, name: string): string {
-        const pats = [
-            new RegExp("(?:^|\\s)" + name + '\\s*=\\s*"([^"]*)"', "i"),
-            new RegExp("(?:^|\\s)" + name + "\\s*=\\s*'([^']*)'", "i"),
-            new RegExp("(?:^|\\s)" + name + "\\s*=\\s*([^\\s>]+)", "i"),
-        ]
-        for (const re of pats) {
-            const m = re.exec(tag)
-            if (m) return m[1] || ""
+    private tagAttrs(tag: string): { [key: string]: string } {
+        const out: { [key: string]: string } = {}
+        const body = (tag || "").replace(/^<\s*[A-Za-z][^\s/>]*/, "").replace(/\/?>\s*$/, "")
+        const re = /([A-Za-z_:][-A-Za-z0-9_:.]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]*)))?/g
+        let m: RegExpExecArray | null
+        while ((m = re.exec(body)) !== null) {
+            if (!m[0]) { re.lastIndex++; continue }
+            const name = m[1].toLowerCase()
+            if (Object.prototype.hasOwnProperty.call(out, name)) continue
+            const raw = m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : m[4] !== undefined ? m[4] : ""
+            out[name] = this.decodeEntities(raw)
         }
-        return ""
+        return out
     }
 
     private decodeEntities(s: string): string {
@@ -583,7 +632,18 @@ class Provider {
             .replace(/&quot;/gi, '"')
             .replace(/&#0?39;|&apos;/gi, "'")
             .replace(/&nbsp;/gi, " ")
+            .replace(/&#x([0-9a-f]+);/gi, (m, h) => this.codePoint(parseInt(h, 16), m))
+            .replace(/&#(\d+);/g, (m, d) => this.codePoint(parseInt(d, 10), m))
             .trim()
+    }
+
+    private codePoint(n: number, raw: string): string {
+        if (!Number.isFinite(n) || n < 0 || n > 0x10ffff) return raw
+        try {
+            return String.fromCodePoint(n)
+        } catch (_e) {
+            return raw
+        }
     }
 
     private extractSubs(html: string): { origin: string; lang: string; ext: string; label: string; def: boolean }[] {
@@ -592,24 +652,24 @@ class Provider {
         const tagRe = /<track\b[^>]*>/gi
         let t: RegExpExecArray | null
         while ((t = tagRe.exec(html)) !== null) {
-            const tag = t[0]
-            const src = this.tagAttr(tag, "src")
+            const attrs = this.tagAttrs(t[0])
+            const src = attrs.src || ""
             if (!/^https?:\/\//i.test(src) || src.indexOf("/subtitles/") === -1) continue
-            const kind = this.tagAttr(tag, "kind").toLowerCase()
+            const kind = (attrs.kind || "").toLowerCase()
             if (kind && kind !== "subtitles" && kind !== "captions") continue
-            if (seen[src]) continue
-            seen[src] = true
-            const fromUrl = src.match(/\/subtitles\/[0-9]+_([A-Za-z0-9-]+)\.(ass|srt|vtt)/i)
-            const lang = this.tagAttr(tag, "srclang") || (fromUrl ? fromUrl[1] : "") || "en"
-            const ext = (this.tagAttr(tag, "data-type") || (fromUrl ? fromUrl[2] : "") || "ass").toLowerCase()
-            out.push({ origin: src, lang, ext, label: this.decodeEntities(this.tagAttr(tag, "label")), def: /(?:^|\s)default(?:[\s/>=])/i.test(tag) })
+            if (seen["#" + src]) continue
+            seen["#" + src] = true
+            const fromUrl = src.match(new RegExp("/subtitles/[0-9]+_([A-Za-z0-9-]+)\\.(" + this.subExts + ")", "i"))
+            const lang = attrs.srclang || (fromUrl ? fromUrl[1] : "") || "en"
+            const ext = (attrs["data-type"] || (fromUrl ? fromUrl[2] : "") || "ass").toLowerCase()
+            out.push({ origin: src, lang, ext, label: attrs.label || "", def: Object.prototype.hasOwnProperty.call(attrs, "default") })
         }
         if (out.length > 0) return out
-        const re = /https?:\/\/[^"'\s]+\/subtitles\/[0-9]+_([A-Za-z0-9-]+)\.(ass|srt)/g
+        const re = new RegExp("https?://[^\"'\\s]+/subtitles/[0-9]+_([A-Za-z0-9-]+)\\.(" + this.subExts + ")", "g")
         let m: RegExpExecArray | null
         while ((m = re.exec(html)) !== null) {
-            if (seen[m[0]]) continue
-            seen[m[0]] = true
+            if (seen["#" + m[0]]) continue
+            seen["#" + m[0]] = true
             out.push({ origin: m[0], lang: m[1] || "en", ext: m[2] || "ass", label: "", def: false })
         }
         return out
@@ -645,7 +705,7 @@ class Provider {
         return `${name} - ${label}`
     }
 
-    private async buildSubs(subs: { origin: string; lang: string; ext: string; label?: string; def?: boolean; forced?: boolean }[], anilistId: number, episode: number): Promise<VideoSubtitle[]> {
+    private buildSubs(subs: { origin: string; lang: string; ext: string; label?: string; def?: boolean; forced?: boolean }[]): VideoSubtitle[] {
         const out: VideoSubtitle[] = []
         const nonDialogue: boolean[] = []
         const seen: { [key: string]: boolean } = {}
@@ -653,8 +713,8 @@ class Provider {
         let best = -1
         for (const s of subs) {
             const origin = s.origin
-            if (!origin || seen[origin]) continue
-            seen[origin] = true
+            if (!origin || seen["#" + origin]) continue
+            seen["#" + origin] = true
             const code = (s.lang || "en").toLowerCase()
             const label = (s.label || "").trim()
             const idx = out.length
@@ -694,14 +754,16 @@ class Provider {
         const cached = this.readCache<boolean>(key, this.srcCacheTtl)
         if (cached !== undefined) return cached
         let ok = false
+        let decided = false
         try {
-            const res = await fetch(m3u8, { headers: this.pageHeaders(), timeout: 8 })
+            const res = await fetch(m3u8, { headers: this.pageHeaders() })
             if (res.ok) {
                 const body = res.text()
                 ok = /#EXT-X-MEDIA:TYPE=AUDIO[^\n]*LANGUAGE="(?:en|eng|en-[a-z]+)"/i.test(body) || /#EXT-X-MEDIA:TYPE=AUDIO[^\n]*(?:english|\bdub\b)/i.test(body)
+                decided = true
             }
         } catch (_e) {}
-        this.writeCache(key, ok)
+        if (decided) this.writeCache(key, ok)
         return ok
     }
 
@@ -711,6 +773,11 @@ class Provider {
             it: "Italian", ru: "Russian", pt: "Portuguese", hi: "Hindi", ta: "Tamil", id: "Indonesian",
             ko: "Korean", zh: "Chinese", th: "Thai", vi: "Vietnamese", tr: "Turkish", pl: "Polish", nl: "Dutch",
             my: "Malay", tl: "Tagalog",
+            he: "Hebrew", fa: "Persian", uk: "Ukrainian", ro: "Romanian", el: "Greek", hu: "Hungarian",
+            cs: "Czech", sk: "Slovak", sv: "Swedish", no: "Norwegian", da: "Danish", fi: "Finnish",
+            bg: "Bulgarian", hr: "Croatian", sr: "Serbian", lt: "Lithuanian", lv: "Latvian", et: "Estonian",
+            bn: "Bengali", te: "Telugu", ml: "Malayalam", mr: "Marathi", ur: "Urdu", ms: "Malay",
+            ca: "Catalan", eu: "Basque", gl: "Galician", sq: "Albanian", mk: "Macedonian", sl: "Slovenian",
             "es-419": "Latin American Spanish", "pt-br": "Portuguese (Brazil)",
             "zh-hans": "Chinese (Simplified)", "zh-hant": "Chinese (Traditional)",
         }
@@ -726,6 +793,7 @@ class Provider {
     }
 
     private collectEps(html: string, shortid: string, nums: { [key: number]: boolean }): void {
+        if (!/^[\w-]{1,64}$/.test(shortid)) return
         const re = new RegExp(`/anime/${shortid}/(\\d+)`, "g")
         let m: RegExpExecArray | null
         while ((m = re.exec(html)) !== null) {
@@ -755,13 +823,34 @@ class Provider {
 
     private reportError(scope: string, message: string): void {
         try {
-            console.error("SEHERRv1 " + JSON.stringify({ t: this.now(), ext: "aq-anizone", scope: scope, msg: String(message) }))
+            console.error("SEHERRv1 " + JSON.stringify({ t: this.now(), ext: "aq-anizone", scope: scope, msg: this.plain(message) }))
         } catch (_e) {}
+    }
+
+    private plain(message: string): string {
+        return String(message === undefined || message === null ? "" : message)
+            .replace(/\u2026/g, "...")
+            .replace(/[\u2014\u2013]/g, "-")
+            .replace(/[\u2018\u2019]/g, "'")
+            .replace(/[\u201c\u201d]/g, '"')
+            .replace(/[\u00b7\u2022]/g, "-")
+            .replace(/\s+/g, " ")
+            .replace(/[^\x20-\x7e]/g, "?")
+            .replace(/^ +| +$/g, "")
     }
 
     private fail(scope: string, message: string): string {
         this.reportError(scope, message)
         return message
+    }
+
+    private async guarded(scope: string, url: string, opts?: FetchOptions): Promise<FetchResponse> {
+        try {
+            return await fetch(url, opts)
+        } catch (e) {
+            this.reportError(scope, `transport failure: ${e instanceof Error ? e.message : String(e)}`)
+            throw "anizone could not be reached — check your connection or retry in a moment"
+        }
     }
 
     private now(): number {
@@ -777,6 +866,11 @@ class Provider {
         const t = this.now()
         const max = ttl === undefined ? this.cacheTtl : ttl
         if (entry && t > 0 && entry.at > 0 && t - entry.at < max) return entry.data
+        if (entry !== undefined && entry !== null) {
+            try {
+                $store.remove(key)
+            } catch (_e) {}
+        }
         return undefined
     }
 
