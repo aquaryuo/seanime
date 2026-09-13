@@ -1567,7 +1567,7 @@ function init() {
         function sha256OfFile(path: string): string {
             try {
                 const c = $os.platform === "windows"
-                    ? $os.cmd("cmd", "/c", "certutil -hashfile " + winCmdArg(path) + " SHA256")
+                    ? $os.cmd("cmd", "/c", "certutil -hashfile " + winQuote(path) + " SHA256")
                     : $os.cmd("sh", "-c", ($os.platform === "darwin" ? "shasum -a 256 " : "sha256sum ") + shq(path))
                 const raw = c.output()
                 const text = typeof raw === "string" ? raw : ""
@@ -1591,6 +1591,10 @@ function init() {
                 }
             } catch (_e) {}
             return ""
+        }
+
+        function winQuote(s: string): string {
+            return '"' + String(s).replace(/"/g, '') + '"'
         }
 
         function winCmdArg(s: string): string {
