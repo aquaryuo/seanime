@@ -89,3 +89,9 @@ jobs:
           set -euo pipefail
           git fetch --no-tags origin main:refs/remotes/origin/main || true
           node tools/gen-marketplace.mjs --check
+      - name: Pure provider logic
+        if: always()
+        run: |
+          set -euo pipefail
+          npm install --no-save esbuild@0.28
+          node tools/pure.test.mjs

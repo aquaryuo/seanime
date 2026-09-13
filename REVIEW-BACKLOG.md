@@ -801,6 +801,7 @@ document was first written, so any SHA quoted in the body above is dead — trus
 | `seatags-load-never-retried` | `5a6bc68` — `onNavigate` retries (TTL makes it free), with bounded backoff, one warning toast on final failure, and a JSON parse failure no longer reported as a transport failure |
 | `seatags-author-filter-hides-everything` (cheap half) | `5a6bc68` — the author rule is gated on loaded data like the status rule, so typing one character offline no longer empties the grid. The structural half (read the author off the card's own DOM) is still open |
 | `anikoto-metadata-disclosure`, `anikoto-subtitle-languages-collapse` (properly), `anikoto-subtitle-path-key`, `anikoto-subtitle-episode-number`, `extof-dead-extension` | the whole `sub.ryuo.to` integration is gone at the operator's instruction — subtitle proxy, serve token, `/meta` episode data and `/lang` codes. anikoto now contacts no third-party host at all, and subtitles come straight from the site CDN. The three proxy-shaped findings are moot rather than fixed: there is no proxy path left to key, number or extension-guess. It also replaces the interim one-track workaround — the raw tracks are genuinely distinct languages, so the fixtures went from `subs=1` back to 3, 5 and 9 real ones |
+| `no-hermetic-tests` | `tools/pure.test.mjs` — evals each provider in-process with stubs that **throw** on `fetch`/`LoadDoc`, and asserts 34 pure facts offline in about a second. Wired into CI beside tsc. It found a real shipped bug on its first run (below) |
 | `animepahe-diag-in-user-error` | the raw page and solver snippets no longer reach the player — `getJson` reports the full diagnostic to the log and throws one plain sentence. `snapResp` also bounded to the first 8 KB: it was running a whole-body lowercase (`challengeToken`) and a whole-body collapse (`snip`) on **every** response, for a string only read on failure, on pages up to 2 MB. Challenge tokens live in the head, so the bound does not weaken detection |
 | `inert-timeout-literals` | `db7bb3c` — all 26 removed (anikoto 12, anizone 7, animepahe 6, animelok 1). The host ignores the option, so every request was already the 35 s default; with comments banned, a number that does nothing is a trap rather than documentation |
 | Nit (Batch G) — anikoto parsed each search page up to three times | one `LoadDoc` per response, passed down to the challenge check and the site-page check. A ~115 KB body was being parsed by `bodyIsSitePage`, again by `isChallengeResponse`'s second call, and again to read the cards |
@@ -958,6 +959,17 @@ not. For split-cour series the numbers will no longer line up with a user's AniL
 `anikoto-meta-remap-numbering` and the episode-title enrichment are moot along with it. This is
 inherent to the removal, not a defect in it — say the word and the `/meta` half can come back
 without the subtitle proxy.
+
+**A regex lost its backslashes through a shell patch, and three gates missed it.** `lastPageOf`
+shipped as `/gotoPage((d+))/g` instead of `/gotoPage\((\d+)\)/g` — `\(` and `\d` were eaten when
+the function was written through a `node -e` patch. It is still *valid* regex, so `tsc` and the
+esbuild transform both passed; it matches "gotoPage" followed by literal `d`s, so it never
+matched real markup and `lastPageOf` always returned the fallback 60; and the live fixtures could
+not see it because the paginator branch is dead on the current site. `tools/pure.test.mjs` caught
+it on its first run. Two rules from this: write regexes with the editor, never through a shell
+heredoc or `node -e`; and a gate that only proves *syntax* proves very little. A scan of every
+payload found this to be the only casualty — the `new RegExp` strings and the label regexes are
+correctly escaped, and their assertions pass.
 
 **Settled — the host does not proxy subtitles, and the gate is real.** Measured against the live
 CDN: no `Referer` → 403, the Seanime app origin (what a browser sends) → 403, the **embed origin

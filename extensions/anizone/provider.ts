@@ -438,7 +438,7 @@ class Provider {
 
     private lastPageOf(html: string): number {
         let last = 0
-        const re = /gotoPage((d+))/g
+        const re = /gotoPage\((\d+)\)/g
         let m
         while ((m = re.exec(html || "")) !== null) {
             const n = parseInt(m[1] || "0", 10)
