@@ -508,12 +508,14 @@ class Provider implements AnimeProvider {
         const wantSubs = this.loadSubtitles !== "disabled"
         let firstResolved: EpisodeServer | undefined
         let playableNoSubs: EpisodeServer | undefined
+        let lastReason = ""
         for (const c of candidates) {
             if (this.outOfTime()) break
             let resolved: EpisodeServer | undefined
             try {
                 resolved = await this.resolveServer(c.linkId, c.name, audio)
-            } catch (_e) {
+            } catch (e) {
+                lastReason = typeof e === "string" ? e : e instanceof Error ? e.message : ""
                 resolved = undefined
             }
             if (!resolved) continue
@@ -531,7 +533,8 @@ class Provider implements AnimeProvider {
             if (cl) firstResolved.headers = this.withClearance(firstResolved.headers, cl)
             return firstResolved
         }
-        throw this.fail("server", "no playable server found for this episode" + (this.solverEnabled() ? "" : "; if sources are Cloudflare-protected, enable the custom solver in settings (run it via Aqua's Utils)"))
+        const hint = this.solverEnabled() ? "" : "; if sources are Cloudflare-protected, enable the custom solver in settings (run it via Aqua's Utils)"
+        throw this.fail("server", "no playable server found for this episode" + (lastReason ? ` — ${lastReason}` : hint))
     }
 
     private sourcePaths(origin: string): string[] {
@@ -640,9 +643,9 @@ class Provider implements AnimeProvider {
 
     private async resolveServer(linkId: string, serverName: string, audio: string): Promise<EpisodeServer> {
         const got = await this.fetchSources(linkId)
-        if (!got || !got.file) throw this.fail("server", "could not resolve the player URL (source may be encrypted or down)")
-        if (audio === "dub" && got.embedAudio === "sub") throw this.fail("server", "dub source resolved to the subbed (Japanese) track")
-        if (audio !== "dub" && got.embedAudio === "dub") throw this.fail("server", "sub source resolved to the dubbed track")
+        if (!got || !got.file) throw `${serverName} could not resolve the player URL (source may be encrypted or down)`
+        if (audio === "dub" && got.embedAudio === "sub") throw `${serverName} offered the subbed (Japanese) track for a dub request`
+        if (audio !== "dub" && got.embedAudio === "dub") throw `${serverName} offered the dubbed track for a sub request`
         const subtitles = await this.buildSubtitles(got.tracks, got.origin)
         return {
             server: serverName,

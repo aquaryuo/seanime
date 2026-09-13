@@ -19,7 +19,11 @@ class Provider implements AnimeProvider {
     async search(opts: SearchOptions): Promise<SearchResult[]> {
         let anilistId = opts.media.id
         if (!anilistId || anilistId <= 0) anilistId = this.parseAnilistId(opts.query)
-        if (!anilistId || anilistId <= 0) return []
+        if (!anilistId || anilistId <= 0) {
+            const q = (opts.query || "").trim()
+            if (q && !/^\d+$/.test(q)) throw this.fail("search", "animelok matches by AniList id — paste the anilist.co URL or its numeric id instead of a title")
+            return []
+        }
         const av = await this.availability(anilistId, opts.dub)
         if (av.broken) throw this.fail("search", `animelok: ${this.base} answered for AniList id ${anilistId} in a shape this extension does not understand — the site changed its API; this extension needs an update.`)
         if (!av.exists) return []
