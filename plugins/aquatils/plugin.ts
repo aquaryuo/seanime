@@ -1439,8 +1439,9 @@ function init() {
                     } else {
                         const why = cleanTail(fsLastOut) || readLogTail(logPath)
                         const bindRace = /address already in use|bind:\s|EADDRINUSE/i.test(fsLastOut)
-                        const execBlocked = /cannot execute the specified program|not a valid win32 application|is not recognized as an internal|exec format error|access is denied|contains a virus|operation did not complete successfully/i.test(fsLastOut)
                         const binGone = !solverBinExists()
+                        const avEvidence = /contains a virus|operation did not complete successfully/i.test(fsLastOut) || (binGone && solverQuarantined())
+                        const execRefused = /cannot execute the specified program|not a valid win32 application|is not recognized as an internal|exec format error|access is denied/i.test(fsLastOut)
                         if (bindRace) {
                             plog("solver couldn't bind port " + port + " yet (a previous instance is still releasing it) - it will retry")
                             setErr("The previous solver is still shutting down (port " + port + " busy) - retrying shortly.")
@@ -1449,7 +1450,13 @@ function init() {
                                 fsBindRetries++
                                 ctx.setTimeout(() => { if (!fsManualStop && fsMode.get() !== "remote" && fsStatus.get() !== "up" && fsStatus.get() !== "starting") fsStart() }, 3000)
                             }
-                        } else if ((execBlocked || binGone) && $os.platform === "windows") {
+                        } else if (execRefused && !avEvidence && $os.platform === "windows") {
+                            plog("windows refused to run the solver: " + (why || "no output captured"))
+                            setErr("Windows refused to run the solver" + (why ? ": " + why : "") + " — this is not antivirus. It is usually a policy restriction on running programs from this folder, or a damaged download.")
+                            fsHint.set("Press Restart. If it keeps happening, use Remove solver in Downloads and let it fetch again.")
+                            setNote("Windows refused to run the solver — see the error above.")
+                            ctx.toast.error("Windows refused to run the solver — see the tray for the reason.")
+                        } else if ((avEvidence || binGone) && $os.platform === "windows") {
                             fsAvBlocked = true
                             try { $storage.set("fs.avBlocked", true) } catch (_e) {}
                             plog("antivirus blocked the solver" + (binGone ? " (binary quarantined/removed while running)" : " (execution blocked)"))
@@ -2081,8 +2088,18 @@ function init() {
             })(gi)
         }
         ctx.registerEventHandler("fs-mode-remote", () => {
+            const wasLocal = fsStatus.get() === "up" || fsStatus.get() === "starting"
             fsMode.set("remote")
             fsPersist()
+            if (wasLocal) {
+                binaryStop(() => {
+                    setStatus("down")
+                    setNote("Switched to Remote - the solver running on this machine was stopped.")
+                    tray.update()
+                    void fsRefresh()
+                })
+                return
+            }
             tray.update()
         })
         ctx.registerEventHandler("fs-mode-binary", () => {
@@ -2241,6 +2258,7 @@ function init() {
         ctx.registerEventHandler("fs-save", () => {
             const host = (fsHostRef.current || "").trim() || FS_DEFAULT_HOST
             const port = (fsPortRef.current || "").trim() || FS_DEFAULT_PORT
+            const oldPort = fsPort.get()
             if (/[:/]/.test(host)) { ctx.toast.error("Host must be a bare hostname or IP (no http:// and no port)"); return }
             const pn = Number(port)
             if (!/^\d{1,5}$/.test(port) || pn < 1 || pn > 65535) { ctx.toast.error("Port must be a number between 1 and 65535"); return }
@@ -2248,7 +2266,11 @@ function init() {
             fsPort.set(port)
             fsSession.set((fsSessionRef.current || "").trim() || FS_DEFAULT_SESSION)
             fsPersist()
-            ctx.toast.success("Saved solver settings")
+            if (fsMode.get() !== "remote" && port !== oldPort) {
+                applySolverEnvChange("Solver port saved")
+            } else {
+                ctx.toast.success("Saved solver settings")
+            }
             void fsRefresh()
         })
 
