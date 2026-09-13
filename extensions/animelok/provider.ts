@@ -246,7 +246,7 @@ class Provider {
             try {
                 res = await fetch(
                     `${this.normBase()}/api/get-vibeplayer-data?anilistId=${anilistId}&epNum=${ep}&type=${audio}`,
-                    { headers: { Referer: `${this.normBase()}/`, Accept: "application/json" }, timeout: 12 }
+                    { headers: { Referer: `${this.normBase()}/`, Accept: "application/json" } }
                 )
             } catch (_e) {
                 continue

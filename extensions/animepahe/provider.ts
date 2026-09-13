@@ -286,7 +286,7 @@ class Provider {
         if (cached) return cached
         let html = ""
         try {
-            const res = await this.fetchRetry(embedUrl, { headers: { Referer: playUrl }, timeout: 12 })
+            const res = await this.fetchRetry(embedUrl, { headers: { Referer: playUrl } })
             if (res.ok && !this.isBlocked(res)) html = res.text()
         } catch (_e) {}
         if (!html) {
@@ -415,7 +415,7 @@ class Provider {
         let fallback = ""
         for (const c of candidates) {
             try {
-                const res = await fetch(`${c}/`, { headers: this.browserHeaders(), timeout: 10 })
+                const res = await fetch(`${c}/`, { headers: this.browserHeaders() })
                 if (res && res.ok) {
                     const canon = this.canonicalOrigin(res.url, c)
                     this.absorbCookies(res)
@@ -444,7 +444,7 @@ class Provider {
         let map = cached && cached.map ? cached.map : {}
         const before = this.cookieHeader(map)
         try {
-            const res = await fetch(`${this.baseUrl}/`, { headers: this.browserHeaders(), timeout: 15 })
+            const res = await fetch(`${this.baseUrl}/`, { headers: this.browserHeaders() })
             map = this.mergeCookieMap(map, this.cookiesFrom(res))
         } catch (_e) {}
         const after = this.cookieHeader(map)
@@ -458,7 +458,7 @@ class Provider {
         let res: FetchResponse | undefined
         for (let i = 0; i < 2; i++) {
             try {
-                res = await fetch(url, { headers: this.apiHeaders(cookie, extra), timeout: 10 })
+                res = await fetch(url, { headers: this.apiHeaders(cookie, extra) })
                 this.absorbCookies(res)
                 this.snapResp(res, url)
                 if (!this.isBlocked(res)) {
@@ -487,7 +487,7 @@ class Provider {
         const ttl = cached && cached.up ? 30000 : 4000
         if (cached && t > 0 && cached.at > 0 && t - cached.at < ttl) return { up: cached.up, version: cached.version }
         try {
-            const res = await fetch(ep, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cmd: "sessions.list" }), timeout: 8, noCloudflareBypass: true })
+            const res = await fetch(ep, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cmd: "sessions.list" }), noCloudflareBypass: true })
             const up = !!res && res.ok
             let version: string | undefined
             if (up) { try { const d = res.json<any>(); version = d && d.version ? String(d.version) : undefined } catch (_e) {} }
@@ -562,7 +562,6 @@ class Provider {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload),
-                timeout: 60,
                 noCloudflareBypass: true,
             })
             if (!res.ok) return undefined

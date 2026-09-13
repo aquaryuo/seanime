@@ -404,7 +404,7 @@ class Provider {
         if (cached && cached.length > 0) return cached
         if (this.readCache<boolean>("anikoto:resolvedown", this.resolveDownTtl)) return null
         try {
-            const res = await fetch(`${this.subEndpoint}/resolve/${anilistId}`, { timeout: 8 })
+            const res = await fetch(`${this.subEndpoint}/resolve/${anilistId}`, {})
             if (!res.ok) {
                 this.writeCache("anikoto:resolvedown", true)
                 return null
@@ -447,7 +447,7 @@ class Provider {
 
         let page: FetchResponse
         try {
-            page = await this.fetchRetry(seriesUrl, { headers: this.pageHeaders(), timeout: 12 })
+            page = await this.fetchRetry(seriesUrl, { headers: this.pageHeaders() })
         } catch (e) {
             this.invalidateBase()
             throw this.fail("episodes", e instanceof Error ? e.message : String(e))
@@ -465,7 +465,7 @@ class Provider {
         }
 
         const listRes = await this.fetchRetry(`${this.baseUrl}/ajax/episode/list/${seriesId}`, {
-            headers: this.ajaxHeaders(), timeout: 12,
+            headers: this.ajaxHeaders(),
         })
         if (!listRes.ok) throw this.fail("episodes", `episode list failed (status ${listRes.status})`)
         const listJson = listRes.json<{ status: number; result: string }>()
@@ -509,7 +509,7 @@ class Provider {
 
         if (parsed.anilistId) {
             try {
-                const metaRes = await fetch(`${this.subEndpoint}/meta/${parsed.anilistId}`, { timeout: 8 })
+                const metaRes = await fetch(`${this.subEndpoint}/meta/${parsed.anilistId}`, {})
                 if (metaRes.ok) {
                     const meta = metaRes.json<{
                         episodes?: number
@@ -693,7 +693,7 @@ class Provider {
         if (!html) {
             const slRes = await fetch(
                 `${this.baseUrl}/ajax/server/list?servers=${encodeURIComponent(dataIds)}`,
-                { headers: this.ajaxHeaders(), timeout: 12 }
+                { headers: this.ajaxHeaders() }
             )
             if (!slRes.ok) throw this.fail("server", `server list failed (status ${slRes.status})`)
             const sl = slRes.json<{ status: number; result: string }>()
@@ -884,7 +884,7 @@ class Provider {
 
     private async fetchPlaylist(url: string, headers: { [k: string]: string }): Promise<string | undefined> {
         try {
-            const res = await fetch(url, { headers: headers, timeout: 4 })
+            const res = await fetch(url, { headers: headers })
             if (!res.ok) return undefined
             const body = res.text()
             return body.indexOf("#EXTM3U") !== -1 ? body : undefined
@@ -913,7 +913,6 @@ class Provider {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ cmd: "request.get", url: url, maxTimeout: 32000 }),
-                timeout: 35,
             })
             if (!res.ok) {
                 if (res.status >= 500) this.writeCache("anikoto:solverdown", this.now() + this.solverCooldown)
@@ -997,7 +996,7 @@ class Provider {
         if (cachedSrc) return cachedSrc
 
         const psRes = await this.fetchRetry(`${this.baseUrl}/ajax/server?get=${encodeURIComponent(linkId)}`, {
-            headers: this.ajaxHeaders(), timeout: 3,
+            headers: this.ajaxHeaders(),
         })
         if (!psRes.ok) return undefined
         const ps = psRes.json<{ status: number; result: { url: string } }>()
@@ -1005,7 +1004,7 @@ class Provider {
         if (!embedUrl) return undefined
 
         const origin = this.originOf(embedUrl)
-        const embedRes = await this.fetchRetry(embedUrl, { headers: { Referer: `${this.baseUrl}/` }, timeout: 3 })
+        const embedRes = await this.fetchRetry(embedUrl, { headers: { Referer: `${this.baseUrl}/` } })
         if (!embedRes.ok) return undefined
 
         const ehtml = embedRes.text()
@@ -1018,7 +1017,7 @@ class Provider {
             const ifr = ehtml.match(/<iframe[^>]+\bsrc="([^"]*\/stream\/[^"]*)"/i)
             const inner = ifr ? this.absoluteUrl(ifr[1]) : ""
             if (inner && this.originOf(inner) === origin) {
-                const innerRes = await this.fetchRetry(inner, { headers: { Referer: embedUrl }, timeout: 3 })
+                const innerRes = await this.fetchRetry(inner, { headers: { Referer: embedUrl } })
                 if (innerRes.ok) {
                     const ih = innerRes.text()
                     dataId = this.firstAttr(LoadDoc(ih), ["#megaplay-player", "[id*='player'][data-id]"], "data-id")
@@ -1079,7 +1078,7 @@ class Provider {
         const cached = this.readCache<string>(key, this.tokenTtl)
         if (cached) return cached
         try {
-            const res = await fetch(`${this.subEndpoint}/resolve/${anilistId}`, { timeout: 8 })
+            const res = await fetch(`${this.subEndpoint}/resolve/${anilistId}`, {})
             if (!res.ok) return undefined
             const data = res.json<{ token?: string }>()
             if (data && typeof data.token === "string" && data.token) {
@@ -1215,7 +1214,6 @@ class Provider {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ labels: missing.map((m) => m.label) }),
-                    timeout: 6,
                 })
                 if (res.ok) {
                     const j = res.json<{ codes: string[] }>()

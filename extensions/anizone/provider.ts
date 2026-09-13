@@ -31,7 +31,6 @@ class Provider {
                 try {
                     const res = await fetch(`${this.normBase()}/anime?search=${encodeURIComponent(q)}`, {
                         headers: this.pageHeaders(),
-                        timeout: 12,
                     })
                     if (res.ok) {
                         anyOk = true
@@ -255,7 +254,7 @@ class Provider {
         const cacheKey = `anizone:eps:${shortid}${alTag}$${audio}`
         const cached = this.readCache<EpisodeDetails[]>(cacheKey, this.cacheTtl)
         if (cached && cached.length > 0) return cached
-        const res = await fetch(`${this.normBase()}/anime/${shortid}`, { headers: this.pageHeaders(), timeout: 12 })
+        const res = await fetch(`${this.normBase()}/anime/${shortid}`, { headers: this.pageHeaders() })
         if (res.status === 404) return []
         if (!res.ok) throw this.fail("episodes", `anizone: series page failed (status ${res.status})`)
         const html = res.text()
@@ -268,14 +267,14 @@ class Provider {
             const deadline = this.now() + this.pageBudget
             const lastPage = this.lastPageOf(html)
             try {
-                const first = await fetch(`${this.normBase()}/anime/${shortid}?page=1`, { headers: this.pageHeaders(), timeout: 12 })
+                const first = await fetch(`${this.normBase()}/anime/${shortid}?page=1`, { headers: this.pageHeaders() })
                 if (first && first.ok) this.collectEps(first.text(), shortid, nums)
             } catch (_e) {}
             for (let p = 2; p <= lastPage; p++) {
                 if (this.now() > deadline) break
                 let pr: FetchResponse | undefined
                 try {
-                    pr = await fetch(`${this.normBase()}/anime/${shortid}?page=${p}`, { headers: this.pageHeaders(), timeout: 12 })
+                    pr = await fetch(`${this.normBase()}/anime/${shortid}?page=${p}`, { headers: this.pageHeaders() })
                 } catch (_e) {
                     break
                 }
@@ -303,7 +302,7 @@ class Provider {
         const cacheKey = `anizone:src:${shortid}:${n}`
         let cached = this.readCache<{ m3u8: string; subs: { origin: string; lang: string; ext: string; label?: string; def?: boolean }[] }>(cacheKey, this.srcCacheTtl)
         if (!cached || !cached.m3u8) {
-            const res = await fetch(`${this.normBase()}/anime/${shortid}/${n}`, { headers: this.pageHeaders(), timeout: 14 })
+            const res = await fetch(`${this.normBase()}/anime/${shortid}/${n}`, { headers: this.pageHeaders() })
             if (!res.ok) throw this.fail("server", `anizone: episode page failed (status ${res.status})`)
             const html = res.text()
             const player = this.parsePlayer(html)
@@ -462,7 +461,7 @@ class Provider {
             if (this.now() > deadline) return stated
             let ok = false
             try {
-                const res = await fetch(`${this.normBase()}/anime/${shortid}/${n}`, { method: "HEAD", headers: this.pageHeaders(), timeout: 8 })
+                const res = await fetch(`${this.normBase()}/anime/${shortid}/${n}`, { method: "HEAD", headers: this.pageHeaders() })
                 if (res.status === 200) ok = true
                 else if (res.status !== 404) return stated
             } catch (_e) {
@@ -750,7 +749,7 @@ class Provider {
         let ok = false
         let decided = false
         try {
-            const res = await fetch(m3u8, { headers: this.pageHeaders(), timeout: 8 })
+            const res = await fetch(m3u8, { headers: this.pageHeaders() })
             if (res.ok) {
                 const body = res.text()
                 ok = /#EXT-X-MEDIA:TYPE=AUDIO[^\n]*LANGUAGE="(?:en|eng|en-[a-z]+)"/i.test(body) || /#EXT-X-MEDIA:TYPE=AUDIO[^\n]*(?:english|\bdub\b)/i.test(body)
