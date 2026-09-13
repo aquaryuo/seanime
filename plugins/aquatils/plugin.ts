@@ -2108,7 +2108,11 @@ function init() {
         })
         ctx.registerEventHandler("ui-mode-toggle", () => {
             uiMode.set(uiMode.get() === "simple" ? "advanced" : "simple")
-            $storage.set("ui.mode", uiMode.get())
+            try {
+                $storage.set("ui.mode", uiMode.get())
+            } catch (_e) {
+                ctx.toast.error("Couldn't remember the view — it will revert next time.")
+            }
             tray.update()
         })
         ctx.registerEventHandler("fs-simple-start", () => {
