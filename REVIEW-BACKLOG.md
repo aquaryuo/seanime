@@ -791,6 +791,9 @@ document was first written, so any SHA quoted in the body above is dead — trus
 | `manifest-marketplace-generated` | `14fbeca` — `tools/gen-marketplace.mjs` generates it from the manifests; CI fails on drift |
 | `seherr-non-ascii` | `81e6407` — `reportError` normalises through `plain()` in all four providers, so the constraint holds by construction |
 | `seatags-error-codes` | `81e6407` — the thirteen bare tokens map to sentences; the code stays the dedup key |
+| `anizone-dub-selects-nothing` (partial), `animelok-subtitle-default-and-dedup` | `ef57319` — anizone's scoring ladder ported into animelok: matches on a normalised code, dedupes on URL, and picks full English dialogue over a `default:true` Signs/Songs track |
+| `animelok-untrusted-headers-and-url`, `m3u8-host-validation` | `027f9b1` — scraped JSON can no longer choose request headers (allowlist) or hand the local proxy an internal host; validator tested against `evil.com@127.0.0.1` and friends |
+| `server-arg-contract` | one rule across all four: return only a name we advertise, never echo, never throw. anikoto routes every argument through Auto, which retired `parseServerLabel` and the dead `hs:` branch |
 
 Not filed in this document, because they arrived as user reports rather than review findings:
 
@@ -831,6 +834,36 @@ restores the paginator.
 **First thing the `version-bump-gate` caught:** `342c0fb` changed `plugins/aquatils/plugin.ts`
 after the last bump, so that work is stranded at 0.10.11 and reaches no user until the next bump.
 Left alone rather than bumped from here — it is the other session's component.
+
+**Handed off — six aquatils fixes, written and verified but not merged.** `plugins/aquatils` is
+the other session's component and two agents editing one 2,700-line file already cost us once
+(see the process note below). The work below typechecks and passes the host transform, but it
+was pulled back out of the working tree and saved as a patch at
+`repositories/aquatils-handoff.patch`, to be applied by whoever owns the component. It needs a
+version bump when applied, or `version-gate` will (correctly) reject it.
+
+| item | what the patch does |
+|---|---|
+| `consent-bypass` | `markInstalled()` ran from `setStatus("up")`, so Remote mode or any compatible service on the port permanently satisfied the download gate; now only the successful-install branch sets it |
+| `apt-install-unattended` | drops the automatic root `apt-get update && install -y` of all 35 packages behind a toast, always uses the existing persistent tray prompt, and installs only the packages actually detected missing |
+| `exit-cause-from-stale-log` | classification ran against a 12,000-char buffer primed from the previous session's log, so one historical bind error misdiagnosed every later crash; adds a per-spawn `fsRunOut` and classifies against that |
+| `chromium-download-not-cancellable` | the Chromium download's id never reached `fsDownloadId`, so Stop could not cancel it; it now shares the cancellable id, bails on a generation change, and `900.5` is hoisted to `DL_TIMEOUT_SEC` |
+| `error-group-key` | groups keyed on exact text, so twelve failed episodes became twelve groups and pushed rarer errors past the 30 cap; now keyed with digits collapsed, newest raw message displayed, plus a `+N more error kinds` row so truncation is never silent |
+| `seherr-source-label` | every plugin-side error was stamped `scope: "solver"`; download/extract/feed failures now report `plugin` and only the seven solver-process sites keep `solver` |
+
+`permissions-hash-stability` is the exception: it is documentation only, lives in
+`plugins/aquatils/README.md`, and is included in the same patch.
+
+**Deferred — `readpaths-asymmetry`.** The narrowing is right, but Seanime hashes the path grants,
+so shipping it alone silently disables aquatils for every installed user until they re-grant.
+Held for a deliberate permissions release, which is exactly what `permissions-hash-stability`
+now documents in `plugins/aquatils/README.md`. Batch it with the next permission-visible change.
+
+**Not settled — `winCmdArg` (Batch D nit).** The claim that the branch is inverted assumes cmd
+receives the string unquoted. Go's `exec` quotes arguments containing spaces before cmd sees
+them, under which the current branch is defensible: quoted by Go when it has a space, `^`-escaped
+otherwise. Could not replicate Go's argv quoting from this shell, and `sha256OfFile` has since
+moved to `winQuote` anyway. Left alone rather than guessed at.
 
 **Declined — `semver-constraint`.** Every `$scannerUtils` call in all three providers is already
 inside a `try/catch`, so a host without it degrades gracefully today. Adding `semverConstraint`

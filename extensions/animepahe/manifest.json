@@ -1,7 +1,7 @@
 {
   "id": "aq-animepahe-beta",
   "name": "AnimePahe - BETA",
-  "version": "0.2.33",
+  "version": "0.2.34",
   "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/animepahe/manifest.json",
   "language": "typescript",
   "type": "onlinestream-provider",
@@ -21,9 +21,18 @@
         "label": "Site / mirror domain",
         "default": "https://animepahe.pw",
         "options": [
-          { "value": "https://animepahe.pw", "label": "animepahe.pw" },
-          { "value": "https://animepahe.com", "label": "animepahe.com" },
-          { "value": "https://animepahe.org", "label": "animepahe.org" }
+          {
+            "value": "https://animepahe.pw",
+            "label": "animepahe.pw"
+          },
+          {
+            "value": "https://animepahe.com",
+            "label": "animepahe.com"
+          },
+          {
+            "value": "https://animepahe.org",
+            "label": "animepahe.org"
+          }
         ]
       },
       {

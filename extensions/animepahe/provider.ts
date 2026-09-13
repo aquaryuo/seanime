@@ -59,7 +59,7 @@ class Provider {
                     id: `${item.session}$${audio}`,
                     title: item.title,
                     url: `${this.baseUrl}/anime/${item.session}`,
-                    subOrDub: audio === "dub" ? "dub" : "sub",
+                    subOrDub: "both",
                 })
             }
         }
@@ -208,7 +208,7 @@ class Provider {
         if (sources.length === 0) throw this.fail("server", "could not resolve any source")
 
         const origin = this.originOf(candidates[0].url)
-        return { server: "animepahe", headers: { Referer: `${origin}/`, Origin: origin }, videoSources: sources }
+        return { server: "Auto", headers: { Referer: `${origin}/`, Origin: origin }, videoSources: sources }
     }
 
     private async playSources(animeSession: string, episodeSession: string, audio: string, playUrl: string): Promise<PlaySource[]> {

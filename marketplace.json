@@ -2,7 +2,7 @@
   {
     "id": "aq-anikoto-beta",
     "name": "Anikoto - BETA",
-    "version": "1.3.85",
+    "version": "1.3.86",
     "description": "Only anikoto compatibility layer you'll ever need",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
@@ -15,7 +15,7 @@
   {
     "id": "aq-animelok-beta",
     "name": "Animelok - BETA",
-    "version": "0.1.14",
+    "version": "0.1.15",
     "description": "Only animelok compatibility layer you'll ever need",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
@@ -28,7 +28,7 @@
   {
     "id": "aq-animepahe-beta",
     "name": "AnimePahe - BETA",
-    "version": "0.2.33",
+    "version": "0.2.34",
     "description": "Only animepahe compatibility layer you'll ever need",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
@@ -41,7 +41,7 @@
   {
     "id": "aq-anizone-beta",
     "name": "AniZone - BETA",
-    "version": "1.1.27",
+    "version": "1.1.28",
     "description": "Only anizone compatibility layer you'll ever need",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
@@ -67,7 +67,7 @@
   {
     "id": "aq-aquatils-beta",
     "name": "Aqua's Utils - BETA",
-    "version": "0.10.17",
+    "version": "0.10.16",
     "description": "Toolbox plugin: surfaces compatible extension errors, launches a self-contained solver (or connects to a remote one you run) to reach guarded sites, and more.",
     "author": "aquaryuo",
     "type": "plugin",

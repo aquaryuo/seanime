@@ -56,7 +56,7 @@ class Provider {
         const v = await this.getVibe(meta.anilistId, meta.num, meta.audio)
         if (v.status === "ok") {
             return {
-                server: server === "Auto" || server === "default" || !server ? "Auto" : server,
+                server: "Auto",
                 headers: this.streamHeaders(v.headers),
                 videoSources: [
                     {

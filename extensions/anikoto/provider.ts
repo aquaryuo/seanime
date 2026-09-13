@@ -569,62 +569,42 @@ class Provider {
         const audio = parsed.audio
         const ctx = { anilistId: parsed.anilistId, episode: episode.number }
 
-        if (server === "Auto" || server === "default" || !server) {
-            const $ = await this.serverListDoc(dataIds)
-            const groups = audio === "dub" ? ["dub"] : ["sub", "hsub"]
-            const KNOWN_SERVERS = ["HD-1", "HD-2", "Vidstream-2"]
-            const candidates = this.collectServers($, groups)
-                .filter((c) => KNOWN_SERVERS.indexOf(c.name) !== -1)
-                .sort((a, b) => KNOWN_SERVERS.indexOf(a.name) - KNOWN_SERVERS.indexOf(b.name))
-            if (candidates.length === 0) throw this.fail("server", audio === "dub" ? "no dub is available for this episode" : "no server available for this episode")
-
-            const label = server === "Auto" ? "Auto" : ""
-            const wantSubs = this.loadSubtitles !== "disabled"
-            let firstResolved: EpisodeServer | undefined
-            let playableNoSubs: EpisodeServer | undefined
-            for (const c of candidates) {
-                if (this.outOfTime()) break
-                let resolved: EpisodeServer | undefined
-                try {
-                    resolved = await this.resolveServer(c.linkId, c.name, ctx, audio)
-                } catch (_e) {
-                    resolved = undefined
-                }
-                if (!resolved) continue
-                if (label) resolved.server = label
-                if (!firstResolved) firstResolved = resolved
-                if (await this.isPlayable(resolved, !playableNoSubs)) {
-                    const vs = resolved.videoSources[0]
-                    if (!wantSubs || (vs && vs.subtitles && vs.subtitles.length > 0)) return resolved
-                    if (!playableNoSubs) playableNoSubs = resolved
-                }
-            }
-            if (playableNoSubs) return playableNoSubs
-            if (firstResolved) {
-                const cl = this.cachedClearance(this.hostOf(firstResolved.videoSources[0].url))
-                if (cl) firstResolved.headers = this.withClearance(firstResolved.headers, cl)
-                return firstResolved
-            }
-            throw this.fail("server", "no playable server found for this episode" + (this.solverEnabled() ? "" : "; if sources are Cloudflare-protected, enable the custom solver in settings (run it via Aqua's Utils)"))
-        }
-
-        const target = this.parseServerLabel(server, audio)
-        if (!target.ok) throw this.fail("server", "that server is not available for this audio track")
-
         const $ = await this.serverListDoc(dataIds)
-        const picked = this.collectServers($, [target.group]).filter((c) => c.name === target.name)[0]
-        if (!picked) throw this.fail("server", "that server is not available for this episode")
-        const resolved = await this.resolveServer(picked.linkId, target.label, ctx, audio)
-        await this.isPlayable(resolved)
-        const cl = this.cachedClearance(this.hostOf(resolved.videoSources[0].url))
-        if (cl) resolved.headers = this.withClearance(resolved.headers, cl)
-        return resolved
-    }
+        const groups = audio === "dub" ? ["dub"] : ["sub", "hsub"]
+        const KNOWN_SERVERS = ["HD-1", "HD-2", "Vidstream-2"]
+        const candidates = this.collectServers($, groups)
+            .filter((c) => KNOWN_SERVERS.indexOf(c.name) !== -1)
+            .sort((a, b) => KNOWN_SERVERS.indexOf(a.name) - KNOWN_SERVERS.indexOf(b.name))
+        if (candidates.length === 0) throw this.fail("server", audio === "dub" ? "no dub is available for this episode" : "no server available for this episode")
 
-    private parseServerLabel(server: string, audio: string): { group: string; name: string; label: string; ok: boolean } {
-        const hs = server.match(/^hs:\s*/i)
-        if (hs) return { group: "hsub", name: server.slice(hs[0].length), label: server, ok: audio !== "dub" }
-        return { group: audio === "dub" ? "dub" : "sub", name: server, label: server, ok: true }
+        const label = "Auto"
+        const wantSubs = this.loadSubtitles !== "disabled"
+        let firstResolved: EpisodeServer | undefined
+        let playableNoSubs: EpisodeServer | undefined
+        for (const c of candidates) {
+            if (this.outOfTime()) break
+            let resolved: EpisodeServer | undefined
+            try {
+                resolved = await this.resolveServer(c.linkId, c.name, ctx, audio)
+            } catch (_e) {
+                resolved = undefined
+            }
+            if (!resolved) continue
+            if (label) resolved.server = label
+            if (!firstResolved) firstResolved = resolved
+            if (await this.isPlayable(resolved, !playableNoSubs)) {
+                const vs = resolved.videoSources[0]
+                if (!wantSubs || (vs && vs.subtitles && vs.subtitles.length > 0)) return resolved
+                if (!playableNoSubs) playableNoSubs = resolved
+            }
+        }
+        if (playableNoSubs) return playableNoSubs
+        if (firstResolved) {
+            const cl = this.cachedClearance(this.hostOf(firstResolved.videoSources[0].url))
+            if (cl) firstResolved.headers = this.withClearance(firstResolved.headers, cl)
+            return firstResolved
+        }
+        throw this.fail("server", "no playable server found for this episode" + (this.solverEnabled() ? "" : "; if sources are Cloudflare-protected, enable the custom solver in settings (run it via Aqua's Utils)"))
     }
 
     private sourcePaths(origin: string): string[] {
@@ -1146,7 +1126,7 @@ class Provider {
             collected.push({
                 id: `${lang}-${idx}`,
                 url,
-                language: label || this.langName(lang),
+                language: this.cleanLabel(label) || this.langName(lang),
                 isDefault: false,
             })
             const score = this.trackScore(label, lang === "en", t.default === true)
@@ -1187,6 +1167,21 @@ class Provider {
     private trackScore(label: string, isEnglish: boolean, def: boolean): number {
         const base = this.isNonDialogue(label) ? (isEnglish ? 3 : 0) : this.isMachine(label) ? (isEnglish ? 4 : 1) : this.isAltDialogue(label) ? (isEnglish ? 5 : 1) : isEnglish ? 6 : 2
         return def ? base * 10 + 1 : base * 10
+    }
+
+    private cleanLabel(label: string): string {
+        const l = (label || "").trim()
+        if (!l) return l
+        const nested = /^(.*?)\s*\(-\s*[^()]*\(([^()]+)\)\s*\)$/.exec(l)
+        if (nested) {
+            const base = nested[1].trim()
+            const region = nested[2].trim()
+            if (!region || region.toLowerCase() === base.toLowerCase()) return base
+            return `${base} (${region})`
+        }
+        const flat = /^(.*?)\s*\(-\s*[^()]*\)$/.exec(l)
+        if (flat && flat[1].trim()) return flat[1].trim()
+        return l
     }
 
     private langName(code: string): string {

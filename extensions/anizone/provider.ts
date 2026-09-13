@@ -317,7 +317,7 @@ class Provider {
         if (audio === "dub" && !(await this.hasEnglishAudio(m3u8, shortid, n))) throw this.fail("server", "anizone: no dub available for this episode")
         const subtitles = this.buildSubs(cached.subs)
         return {
-            server: server === "Auto" || server === "default" || !server ? "Auto" : server,
+            server: "Auto",
             headers: { Referer: `${this.normBase()}/` },
             videoSources: [
                 {
