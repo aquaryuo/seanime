@@ -67,7 +67,7 @@
   {
     "id": "aq-aquatils-beta",
     "name": "Aqua's Utils - BETA",
-    "version": "0.10.26",
+    "version": "0.10.27",
     "description": "Toolbox plugin: surfaces compatible extension errors, launches a self-contained solver (or connects to a remote one you run) to reach guarded sites, and more.",
     "author": "aquaryuo",
     "type": "plugin",
@@ -106,8 +106,8 @@
   {
     "id": "aq-anizone",
     "name": "AniZone",
-    "version": "1.1.23",
-    "description": "Only anizone compatibility layer you'll ever need",
+    "version": "1.1.36",
+    "description": "Only anizone compatibility layer you'll ever need. Dub streams carry both audio tracks — pick English in the player's audio menu once and Seanime remembers it for that series.",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
     "language": "typescript",
