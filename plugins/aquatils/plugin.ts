@@ -543,11 +543,20 @@ function init() {
             })
         }
 
+        let badgeShown = ""
+
+        function setBadge(number: number, intent: "success" | "error" | "warning" | "info"): void {
+            const key = number + ":" + intent
+            if (key === badgeShown) return
+            badgeShown = key
+            tray.updateBadge({ number: number, intent: intent })
+        }
+
         function refreshTrayBadge(): void {
             try {
-                if (fsStatus.get() === "down" && !fsManualStop && fsMode.get() !== "remote") { tray.updateBadge({ number: 1, intent: "error" }); return }
-                if (solverUpdatePending()) { tray.updateBadge({ number: 1, intent: "info" }); return }
-                tray.updateBadge({ number: errorGroups().length, intent: "warning" })
+                if (fsStatus.get() === "down" && !fsManualStop && fsMode.get() !== "remote") { setBadge(1, "error"); return }
+                if (solverUpdatePending()) { setBadge(1, "info"); return }
+                setBadge(errorGroups().length, "warning")
             } catch (_e) {}
         }
 
