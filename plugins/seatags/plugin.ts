@@ -87,10 +87,23 @@ function init() {
         rebuildMaps()
 
         const dErrSeen: { [k: string]: boolean } = {}
+        const D_REASON: { [k: string]: string } = {
+            fetch: "could not reach the marketplace list, so no cards were tagged",
+            http: "the marketplace list answered with an error status, so no cards were tagged",
+            shape: "the marketplace list came back in an unexpected shape, so no cards were tagged",
+            findrow: "could not find the badge row on an extension card",
+            attr: "could not tag an extension card",
+            html: "could not render the tag block on a card",
+            insert: "could not insert the tag block into a card",
+            append: "could not append the tag block to a card",
+            place: "could not place the filter controls above the extension grid",
+            filter: "could not apply the tag filter",
+            fstyle: "could not install the filter stylesheet",
+        }
         function dsetErr(code: string): void {
             if (dErrSeen[code]) return
             dErrSeen[code] = true
-            aqReport(EXT_ID, "decorate", code)
+            aqReport(EXT_ID, "decorate", D_REASON[code] || code)
         }
         let domReady = false
         let controlsCancel: any = null

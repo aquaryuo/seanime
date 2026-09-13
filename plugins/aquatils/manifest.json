@@ -18,11 +18,11 @@
       "allow": {
         "networkAccess": {
           "allowedDomains": ["*"],
-          "reasoning": "Reads the local Seanime log API (loopback) to collect reported extension errors; talks to a local or user-configured remote solver to manage sessions; downloads the aquatils-solver release from GitHub for the self-contained binary mode."
+          "reasoning": "Reads the local Seanime log API (loopback) to collect reported extension errors; talks to a local or user-configured remote solver to manage sessions; downloads the aquatils-solver release from GitHub for the self-contained binary mode. Any domain is requested because Remote mode lets you point the plugin at a solver on a host only you know; in the default Binary mode the only hosts contacted are loopback, github.com and the Chrome-for-Testing index."
         },
         "commandScopes": [
           { "command": "sh", "description": "Launch the downloaded aquatils-solver binary on Linux/macOS (Binary mode); strips macOS quarantine and chmods before exec.", "args": [{ "value": "-c" }, { "validator": "$ARGS" }] },
-          { "command": "cmd", "description": "Launch the downloaded aquatils-solver binary on Windows (Binary mode), and stop processes via taskkill.", "args": [{ "value": "/c" }, { "validator": "$ARGS" }] }
+          { "command": "cmd", "description": "Launch the downloaded aquatils-solver binary on Windows (Binary mode); verify its checksum with certutil before running it; and stop leftover solver or browser processes via taskkill and PowerShell.", "args": [{ "value": "/c" }, { "validator": "$ARGS" }] }
         ],
         "readPaths": ["$CACHE", "$CACHE/aquatils-beta/**"],
         "writePaths": ["$CACHE/aquatils-beta", "$CACHE/aquatils-beta/**"]

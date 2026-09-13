@@ -1331,8 +1331,10 @@ function init() {
             const port = fsPort.get() || FS_DEFAULT_PORT
             const fsDir = $filepath.join($os.cacheDir(), "aquatils-beta", FS_VERSION, FS_CONTAINER)
             const chrDir = $filepath.join($os.cacheDir(), "aquatils-beta", "chromium")
-            const prep = "xattr -dr com.apple.quarantine " + shq(fsDir) + " 2>/dev/null; chmod -R 755 " + shq(fsDir) + "; "
-                + (chromiumOverride ? "xattr -dr com.apple.quarantine " + shq(chrDir) + " 2>/dev/null; chmod -R 755 " + shq(chrDir) + "; " : "")
+            const mac = $os.platform === "darwin"
+            const unquarantine = (d: string) => (mac ? "xattr -dr com.apple.quarantine " + shq(d) + " 2>/dev/null; " : "")
+            const prep = unquarantine(fsDir) + "chmod -R 755 " + shq(fsDir) + "; "
+                + (chromiumOverride ? unquarantine(chrDir) + "chmod -R 755 " + shq(chrDir) + "; " : "")
             const ac = $os.platform === "windows"
                 ? $osExtra.asyncCmd("cmd", "/c", winCmdArg(binPath))
                 : $osExtra.asyncCmd("sh", "-c", prep + "exec " + shq(binPath))
@@ -1614,9 +1616,14 @@ function init() {
             try { return dirExists($filepath.join(aquatilsDir(), "chromium")) } catch (_e) { return false }
         }
 
-        function removeSolverDownloads(): void {
+        function latchManualStop(): void {
+            if (fsMode.get() === "remote") return
             fsManualStop = true
             try { $storage.set("fs.manualStop", true) } catch (_e) {}
+        }
+
+        function removeSolverDownloads(): void {
+            latchManualStop()
             binaryStop(() => {
                 setStatus("down")
                 let removed = false
@@ -1644,8 +1651,8 @@ function init() {
 
         function removeChromiumDownloads(): void {
             const present = chromiumDirExists()
-            fsManualStop = true
-            try { $storage.set("fs.manualStop", true) } catch (_e) {}
+            const wasUp = fsMode.get() !== "remote" && (fsStatus.get() === "up" || fsStatus.get() === "starting")
+            latchManualStop()
             binaryStop(() => {
                 setStatus("down")
                 try { $os.removeAll($filepath.join(aquatilsDir(), "chromium")) } catch (_e) {}
@@ -1654,7 +1661,9 @@ function init() {
                 } else {
                     try { $storage.set("fs.chromiumVer", "") } catch (_e) {}
                     chromiumOverride = ""
-                    setNote(present ? "Removed the downloaded Chromium." : "No Chromium download was present.")
+                    setNote(present
+                        ? "Removed the downloaded Chromium." + (wasUp ? " The solver was stopped to release it - press Start to run it again." : "")
+                        : "No Chromium download was present.")
                 }
                 tray.update()
             })
@@ -2630,7 +2639,7 @@ function init() {
                 ],
                 gap: 2,
             }))
-            if (chrHere) {
+            if (chrHere && fsMode.get() !== "remote") {
                 rows.push(tray.flex({
                     items: [
                         tray.text("Chromium " + chromiumCachedVersion(), { style: { fontSize: "12px", color: "rgba(255,255,255,0.55)" } }),

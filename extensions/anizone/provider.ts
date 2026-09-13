@@ -812,8 +812,20 @@ class Provider {
 
     private reportError(scope: string, message: string): void {
         try {
-            console.error("SEHERRv1 " + JSON.stringify({ t: this.now(), ext: "aq-anizone-beta", scope: scope, msg: String(message) }))
+            console.error("SEHERRv1 " + JSON.stringify({ t: this.now(), ext: "aq-anizone-beta", scope: scope, msg: this.plain(message) }))
         } catch (_e) {}
+    }
+
+    private plain(message: string): string {
+        return String(message === undefined || message === null ? "" : message)
+            .replace(/\u2026/g, "...")
+            .replace(/[\u2014\u2013]/g, "-")
+            .replace(/[\u2018\u2019]/g, "'")
+            .replace(/[\u201c\u201d]/g, '"')
+            .replace(/[\u00b7\u2022]/g, "-")
+            .replace(/\s+/g, " ")
+            .replace(/[^\x20-\x7e]/g, "?")
+            .replace(/^ +| +$/g, "")
     }
 
     private fail(scope: string, message: string): string {
