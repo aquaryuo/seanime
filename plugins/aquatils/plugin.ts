@@ -470,9 +470,10 @@ function init() {
         }
 
         function setErr(msg: string): void {
+            const same = fsErr.get() === msg
             fsErr.set(msg)
             fsHint.set("")
-            if (!msg) return
+            if (!msg || same) return
             plog(msg, "ERR")
             aqReport(EXT_ID, "solver", msg)
         }
@@ -850,7 +851,7 @@ function init() {
                 const msg = fsMode.get() === "remote"
                     ? "The host at " + fsBase() + " answered, but it is not Aqua's solver - check the address."
                     : "Port " + (fsPort.get() || FS_DEFAULT_PORT) + " is held by another FlareSolverr-compatible server, so the bundled solver was not started. Change the port in Settings, or stop the other server."
-                if (fsErr.get() !== msg) setErr(msg)
+                setErr(msg)
                 notifyOnce("foreign", "Aqua's Utils: port " + (fsPort.get() || FS_DEFAULT_PORT) + " is held by another solver. Change the port in Settings.")
                 refreshTrayBadge()
                 refreshAnimeBtn()
