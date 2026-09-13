@@ -18,7 +18,6 @@ class Provider implements AnimeProvider {
     private searchCacheTtl = 60000
     private deadline = 0
     private clearanceTtl = 1200000
-    private inlineBudget = 700000
 
     private cfg(name: string, raw: string, fallback: string): string {
         if (raw && raw.indexOf("{{") === -1) return raw
@@ -671,7 +670,7 @@ class Provider implements AnimeProvider {
         if (!got || !got.file) throw `${serverName} could not resolve the player URL (source may be encrypted or down)`
         if (audio === "dub" && got.embedAudio === "sub") throw `${serverName} offered the subbed (Japanese) track for a dub request`
         if (audio !== "dub" && got.embedAudio === "dub") throw `${serverName} offered the dubbed track for a sub request`
-        const subtitles = await this.buildSubtitles(got.tracks, got.origin)
+        const subtitles = this.buildSubtitles(got.tracks)
         return {
             server: serverName,
             headers: { Referer: `${got.origin}/`, Origin: got.origin },
@@ -1023,7 +1022,7 @@ class Provider implements AnimeProvider {
         return m ? m[1].toLowerCase() : ""
     }
 
-    private async buildSubtitles(tracks: { file: string; label?: string; kind?: string; default?: boolean }[] | undefined, embedOrigin?: string): Promise<VideoSubtitle[]> {
+    private buildSubtitles(tracks: { file: string; label?: string; kind?: string; default?: boolean }[] | undefined): VideoSubtitle[] {
         const collected: VideoSubtitle[] = []
         if (this.loadSubtitles === "disabled") return collected
         if (!tracks || tracks.length === 0) return collected
@@ -1032,7 +1031,6 @@ class Provider implements AnimeProvider {
         if (valid.length === 0) return collected
         const codes = this.langCodes(valid.map((t) => t.label || "English"))
         const seenSrc: { [key: string]: boolean } = {}
-        const srcOf: string[] = []
         const nonDialogue: boolean[] = []
         let pick = 0
         let best = -1
@@ -1044,7 +1042,6 @@ class Provider implements AnimeProvider {
             if (seenSrc[t.file]) continue
             seenSrc[t.file] = true
             const idx = collected.length
-            srcOf[idx] = t.file
             collected.push({
                 id: `${lang}-${idx}`,
                 url: t.file,
@@ -1061,18 +1058,6 @@ class Provider implements AnimeProvider {
 
         if (collected.length === 0) return collected
         collected[pick].isDefault = true
-        if (embedOrigin) {
-            const order = [pick]
-            for (let i = 0; i < collected.length; i++) if (i !== pick) order.push(i)
-            let budget = this.inlineBudget
-            for (const i of order) {
-                if (this.outOfTime() || budget <= 0) break
-                const inlined = await this.inlineTrack(srcOf[i], embedOrigin)
-                if (!inlined) continue
-                collected[i].url = inlined
-                budget -= inlined.length
-            }
-        }
         const head: VideoSubtitle[] = []
         const tail: VideoSubtitle[] = []
         for (let i = 0; i < collected.length; i++) {
@@ -1100,28 +1085,6 @@ class Provider implements AnimeProvider {
     private trackScore(label: string, isEnglish: boolean, def: boolean): number {
         const base = this.isNonDialogue(label) ? (isEnglish ? 3 : 0) : this.isMachine(label) ? (isEnglish ? 4 : 1) : this.isAltDialogue(label) ? (isEnglish ? 5 : 1) : isEnglish ? 6 : 2
         return def ? base * 10 + 1 : base * 10
-    }
-
-    private async inlineTrack(url: string, embedOrigin: string): Promise<string | undefined> {
-        if (!url || !embedOrigin || !/^https?:\/\//i.test(url)) return undefined
-        try {
-            const res = await fetch(url, { headers: { Referer: `${embedOrigin}/`, Origin: embedOrigin } })
-            if (!res.ok) return undefined
-            const body = res.text()
-            if (!body || body.length > 524288) return undefined
-            if (body.indexOf("WEBVTT") === -1) return undefined
-            return this.asDataUri(body)
-        } catch (_e) {
-            return undefined
-        }
-    }
-
-    private asDataUri(body: string): string {
-        try {
-            const b64 = CryptoJS.enc.Base64.stringify($toBytes(body) as any)
-            if (b64) return `data:text/vtt;base64,${b64}`
-        } catch (_e) {}
-        return `data:text/vtt;charset=utf-8,${encodeURIComponent(body)}`
     }
 
     private cleanLabel(label: string): string {
