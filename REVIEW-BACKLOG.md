@@ -800,6 +800,7 @@ document was first written, so any SHA quoted in the body above is dead — trus
 | `seatags-reset-loses-controls` | the reset now clears its own toolbar marker, mirroring the existing stylesheet cleanup, so the controls come back instead of going silently inert |
 | `seatags-load-never-retried` | `5a6bc68` — `onNavigate` retries (TTL makes it free), with bounded backoff, one warning toast on final failure, and a JSON parse failure no longer reported as a transport failure |
 | `seatags-author-filter-hides-everything` (cheap half) | `5a6bc68` — the author rule is gated on loaded data like the status rule, so typing one character offline no longer empties the grid. The structural half (read the author off the card's own DOM) is still open |
+| `anikoto-metadata-disclosure`, `anikoto-subtitle-languages-collapse` (properly), `anikoto-subtitle-path-key`, `anikoto-subtitle-episode-number`, `extof-dead-extension` | the whole `sub.ryuo.to` integration is gone at the operator's instruction — subtitle proxy, serve token, `/meta` episode data and `/lang` codes. anikoto now contacts no third-party host at all, and subtitles come straight from the site CDN. The three proxy-shaped findings are moot rather than fixed: there is no proxy path left to key, number or extension-guess. It also replaces the interim one-track workaround — the raw tracks are genuinely distinct languages, so the fixtures went from `subs=1` back to 3, 5 and 9 real ones |
 | `inert-timeout-literals` | `db7bb3c` — all 26 removed (anikoto 12, anizone 7, animepahe 6, animelok 1). The host ignores the option, so every request was already the 35 s default; with comments banned, a number that does nothing is a trap rather than documentation |
 | Nit (Batch G) — anikoto parsed each search page up to three times | one `LoadDoc` per response, passed down to the challenge check and the site-page check. A ~115 KB body was being parsed by `bodyIsSitePage`, again by `isChallengeResponse`'s second call, and again to read the cards |
 | `store-eviction` | `2b19d1b`, animepahe in `c13b934` — a stale read now calls `$store.remove(key)` instead of leaving the entry. **Verified against the live runtime rather than assumed**: `$store.remove` is bound and works (`set` → `has: true` → `remove` → `has: false`), and the probe also showed the vendored `d.ts` was missing three members the host binds — `remove`, `removeAll`, `length` — now declared in all four. animepahe needed a separate edit because its `readCache` defaults to `epCacheTtl`, not the shared `cacheTtl` |
@@ -888,6 +889,25 @@ receives the string unquoted. Go's `exec` quotes arguments containing spaces bef
 them, under which the current branch is defensible: quoted by Go when it has a space, `^`-escaped
 otherwise. Could not replicate Go's argv quoting from this shell, and `sha256OfFile` has since
 moved to `winQuote` anyway. Left alone rather than guessed at.
+
+**Consequence of removing `sub.ryuo.to` — episode numbering now follows the site, not AniList.**
+`/meta` carried two things that were not subtitles: episode titles, and the AniList↔site episode
+remap. With it gone, `findEpisodes` uses the site's own numbering, and `/resolve` — which was the
+*primary* episode-list source and short-circuited scraping entirely — is gone too, so every list
+now comes from the site. The fixtures show the effect immediately: Attack on Titan Season 3 went
+from **12 episodes to 22**, because AniList splits that season into two cours and the site does
+not. For split-cour series the numbers will no longer line up with a user's AniList progress.
+`anikoto-meta-remap-numbering` and the episode-title enrichment are moot along with it. This is
+inherent to the removal, not a defect in it — say the word and the `/meta` half can come back
+without the subtitle proxy.
+
+**Open question — anikoto's subtitle CDN is referer-gated.** Raw tracks return 403 without a
+`Referer` and 200 with the embed origin; the provider does return exactly that
+(`headers: { Referer: <embed origin>, Origin: <embed origin> }`), so it is correct on our side.
+Whether the tracks load depends on the host forwarding those headers to subtitle requests, which
+this environment cannot test — `seanime-runtime-gotchas` records them as dropped, the original
+finding claims they are applied. anizone has always served raw subtitle URLs and works, but its
+CDN is not gated, so that is not proof. Worth one playback check.
 
 **Declined — `semver-constraint`.** Every `$scannerUtils` call in all three providers is already
 inside a `try/catch`, so a host without it degrades gracefully today. Adding `semverConstraint`

@@ -17,7 +17,6 @@ class Provider {
     private searchCacheTtl = 60000
     private deadline = 0
     private clearanceTtl = 1200000
-    private subEndpoint = "https://sub.ryuo.to"
 
     private cfg(name: string, raw: string, fallback: string): string {
         if (raw && raw.indexOf("{{") === -1) return raw
@@ -406,46 +405,10 @@ class Provider {
         return byFormat.length > 0 ? byFormat : pool
     }
 
-    private async resolveFromServer(anilistId: number, audio: string): Promise<EpisodeDetails[] | null> {
-        const cacheKey = `anikoto:resolve:${anilistId}:${audio}`
-        const cached = this.readCache<EpisodeDetails[]>(cacheKey)
-        if (cached && cached.length > 0) return cached
-        if (this.readCache<boolean>("anikoto:resolvedown", this.resolveDownTtl)) return null
-        try {
-            const res = await fetch(`${this.subEndpoint}/resolve/${anilistId}`, {})
-            if (!res.ok) {
-                this.writeCache("anikoto:resolvedown", true)
-                return null
-            }
-            const data = res.json<{ episodes?: { number: number; dataIds: string; title?: string; hasSub?: boolean; hasDub?: boolean }[]; token?: string }>()
-            if (data && typeof data.token === "string" && data.token) this.writeCache(`anikoto:tok:${anilistId}`, data.token)
-            const eps = data && data.episodes
-            if (!eps || eps.length === 0) return null
-            const out: EpisodeDetails[] = []
-            for (const e of eps) {
-                if (!e || typeof e.number !== "number" || !e.dataIds) continue
-                if (audio === "dub" ? e.hasDub === false : e.hasSub === false) continue
-                out.push({ id: this.withMeta(e.dataIds, audio, anilistId), number: e.number, url: `${this.baseUrl}/`, title: e.title || undefined })
-            }
-            out.sort((a, b) => a.number - b.number)
-            if (out.length === 0) return null
-            this.writeCache(cacheKey, out)
-            return out
-        } catch (_e) {
-            this.writeCache("anikoto:resolvedown", true)
-            return null
-        }
-    }
-
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {
         this.baseUrl = this.currentBase()
         const parsed = this.splitMeta(id)
         const audio = parsed.audio
-
-        if (parsed.anilistId) {
-            const fromServer = await this.resolveFromServer(parsed.anilistId, audio)
-            if (fromServer && fromServer.length > 0) return fromServer
-        }
 
         const seriesUrl = this.seriesUrl(this.absoluteUrl(parsed.base))
 
@@ -514,62 +477,6 @@ class Provider {
         })
 
         if (episodes.length === 0) throw this.fail("episodes", "no episodes found")
-
-        if (parsed.anilistId) {
-            try {
-                const metaRes = await fetch(`${this.subEndpoint}/meta/${parsed.anilistId}`, {})
-                if (metaRes.ok) {
-                    const meta = metaRes.json<{
-                        episodes?: number
-                        episodeTitles?: { [key: string]: string }
-                        episodeMap?: { [key: string]: { ep: number | null; abs: number | null } }
-                    }>()
-                    const titles = (meta && meta.episodeTitles) || {}
-                    const map = (meta && meta.episodeMap) || {}
-                    const aniTotal = meta && typeof meta.episodes === "number" && meta.episodes > 0 ? meta.episodes : 0
-                    const mapKeys = Object.keys(map)
-                    const mapCoversSeries = aniTotal > 0
-                        ? !(mapKeys.length < aniTotal && episodes.length > mapKeys.length)
-                        : mapKeys.length >= episodes.length
-                    if (mapKeys.length > 0 && mapCoversSeries) {
-                        const byNum: { [key: number]: EpisodeDetails } = {}
-                        for (const e of episodes) byNum[e.number] = e
-                        let epHits = 0
-                        let absHits = 0
-                        for (const k of mapKeys) {
-                            const m = map[k]
-                            if (!m) continue
-                            if (typeof m.ep === "number" && m.ep > 0 && byNum[m.ep]) epHits++
-                            if (typeof m.abs === "number" && m.abs > 0 && byNum[m.abs]) absHits++
-                        }
-                        const useAbs = absHits > epHits
-                        const remapped: EpisodeDetails[] = []
-                        for (const k of mapKeys) {
-                            const K = parseInt(k, 10)
-                            if (isNaN(K)) continue
-                            const m = map[k]
-                            if (!m) continue
-                            const target = useAbs ? m.abs : m.ep
-                            const src = (typeof target === "number" && target > 0 ? byNum[target] : undefined) || byNum[K]
-                            if (!src) continue
-                            remapped.push({ id: src.id, number: K, url: src.url, title: titles[String(K)] || src.title })
-                        }
-                        if (remapped.length >= Math.ceil(mapKeys.length / 2)) {
-                            episodes.length = 0
-                            for (const e of remapped) episodes.push(e)
-                        } else {
-                            this.reportError("episodes", "episode numbering from the metadata service did not line up with this series, so the site's own numbering was kept")
-                        }
-                    }
-                    for (const e of episodes) {
-                        const t = titles[String(e.number)]
-                        if (!e.title && t) e.title = t
-                    }
-                }
-            } catch (_e) {
-                this.reportError("episodes", "could not reach the episode metadata service, so episode numbers and titles come from the site alone")
-            }
-        }
 
         episodes.sort((x, y) => x.number - y.number)
         this.writeCache(cacheKey, episodes)
@@ -730,7 +637,7 @@ class Provider {
         const got = await this.fetchSources(linkId)
         if (!got || !got.file) throw this.fail("server", "could not resolve the player URL (source may be encrypted or down)")
         if (audio === "dub" && got.embedAudio === "sub") throw this.fail("server", "dub source resolved to the subbed (Japanese) track")
-        const subtitles = await this.buildSubtitles(got.tracks, ctx, got.origin)
+        const subtitles = this.buildSubtitles(got.tracks)
         return {
             server: serverName,
             headers: { Referer: `${got.origin}/`, Origin: got.origin },
@@ -1081,46 +988,15 @@ class Provider {
         return m ? m[1].toLowerCase() : ""
     }
 
-    private async ensureServeToken(anilistId: number): Promise<string | undefined> {
-        const key = `anikoto:tok:${anilistId}`
-        const cached = this.readCache<string>(key, this.tokenTtl)
-        if (cached) return cached
-        try {
-            const res = await fetch(`${this.subEndpoint}/resolve/${anilistId}`, {})
-            if (!res.ok) return undefined
-            const data = res.json<{ token?: string }>()
-            if (data && typeof data.token === "string" && data.token) {
-                this.writeCache(key, data.token)
-                return data.token
-            }
-        } catch (_e) {}
-        return undefined
-    }
-
-    private async buildSubtitles(
-        tracks: { file: string; label?: string; kind?: string; default?: boolean }[] | undefined,
-        ctx: { anilistId: number; episode: number },
-        embedOrigin?: string
-    ): Promise<VideoSubtitle[]> {
+    private buildSubtitles(tracks: { file: string; label?: string; kind?: string; default?: boolean }[] | undefined): VideoSubtitle[] {
         const collected: VideoSubtitle[] = []
         if (this.loadSubtitles === "disabled") return collected
         if (!tracks || tracks.length === 0) return collected
 
-        const anime = String(ctx.anilistId)
-        const ep = String(ctx.episode)
-        const refParam = embedOrigin ? `&ref=${encodeURIComponent(embedOrigin)}` : ""
         const valid = tracks.filter((t) => t && typeof t.file === "string" && /^https?:\/\//i.test(t.file) && (!t.kind || t.kind === "captions" || t.kind === "subtitles"))
         if (valid.length === 0) return collected
-        const up = ctx.anilistId > 0
-        let tokParam = ""
-        if (up) {
-            let tok = this.readCache<string>(`anikoto:tok:${ctx.anilistId}`, this.tokenTtl)
-            if (!tok) tok = await this.ensureServeToken(ctx.anilistId)
-            tokParam = tok ? `&t=${encodeURIComponent(tok)}` : ""
-        }
-        const codes = await this.langCodes(valid.map((t) => t.label || "English"))
+        const codes = this.langCodes(valid.map((t) => t.label || "English"))
         const seenSrc: { [key: string]: boolean } = {}
-        const seenSlot: { [key: string]: boolean } = {}
         const nonDialogue: boolean[] = []
         let pick = 0
         let best = -1
@@ -1132,14 +1008,9 @@ class Provider {
             if (seenSrc[t.file]) continue
             seenSrc[t.file] = true
             const idx = collected.length
-            const slot = seenSlot[lang] ? `${lang}-${idx}` : lang
-            seenSlot[lang] = true
-            const url = up
-                ? `${this.subEndpoint}/s/${anime}/${ep}/${slot}.vtt?src=${encodeURIComponent(t.file)}${tokParam}${refParam}`
-                : t.file
             collected.push({
                 id: `${lang}-${idx}`,
-                url,
+                url: t.file,
                 language: this.cleanLabel(label) || this.langName(lang),
                 isDefault: false,
             })
@@ -1153,7 +1024,6 @@ class Provider {
 
         if (collected.length === 0) return collected
         collected[pick].isDefault = true
-        if (up) return [collected[pick]]
         const head: VideoSubtitle[] = []
         const tail: VideoSubtitle[] = []
         for (let i = 0; i < collected.length; i++) {
@@ -1207,34 +1077,9 @@ class Provider {
         return map[code] || code.toUpperCase()
     }
 
-    private async langCodes(labels: string[]): Promise<string[]> {
+    private langCodes(labels: string[]): string[] {
         const out: string[] = new Array(labels.length)
-        const missing: { idx: number; label: string }[] = []
-        for (let i = 0; i < labels.length; i++) {
-            const cached = this.readCache<string>(`anikoto:lang:${labels[i]}`, 86400000)
-            if (cached) out[i] = cached
-            else missing.push({ idx: i, label: labels[i] })
-        }
-        if (missing.length > 0) {
-            let codes: string[] = []
-            try {
-                const res = await fetch(`${this.subEndpoint}/lang`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ labels: missing.map((m) => m.label) }),
-                })
-                if (res.ok) {
-                    const j = res.json<{ codes: string[] }>()
-                    codes = (j && j.codes) || []
-                }
-            } catch (_e) {}
-            for (let k = 0; k < missing.length; k++) {
-                const fromServer = codes[k]
-                const code = fromServer || this.fallbackCode(missing[k].label)
-                out[missing[k].idx] = code
-                if (fromServer) this.writeCache(`anikoto:lang:${missing[k].label}`, code)
-            }
-        }
+        for (let i = 0; i < labels.length; i++) out[i] = this.fallbackCode(labels[i])
         return out
     }
 
