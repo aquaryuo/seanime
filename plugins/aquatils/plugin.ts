@@ -1081,6 +1081,8 @@ function init() {
             try { return $storage.get<string>("fs.solverReady") === FS_VERSION && !solverBinExists() } catch (_e) { return false }
         }
 
+        const FS_KEEP = ["chromium", "state"]
+
         function fsStateDir(): string {
             try {
                 return $filepath.join($os.cacheDir(), "aquatils-beta", "state")
@@ -1145,16 +1147,24 @@ function init() {
             return ""
         }
 
-        function chromiumCachedPath(): string {
+        function chromiumPathUnder(base: string): string {
             const plt = chromiumCfTPlatform()
             if (!plt) return ""
             const rel = chromiumBinRel(plt)
             if (!rel) return ""
             try {
-                const p = $filepath.join($os.cacheDir(), "aquatils-beta", "chromium", rel)
+                const p = $filepath.join(base, rel)
                 if ($os.stat(p)) return p
             } catch (_e) {}
             return ""
+        }
+
+        function chromiumCachedPath(): string {
+            try {
+                return chromiumPathUnder($filepath.join($os.cacheDir(), "aquatils-beta", "chromium"))
+            } catch (_e) {
+                return ""
+            }
         }
 
         function verNewer(a: string, b: string): boolean {
@@ -1191,11 +1201,12 @@ function init() {
 
         function downloadChromium(st: { version: string; url: string }, done: (ok: boolean) => void): void {
             const dir = $filepath.join($os.cacheDir(), "aquatils-beta", "chromium")
-            try { $os.removeAll(dir) } catch (_e) {}
-            try { $os.mkdirAll(dir, 493) } catch (_e) {}
-            const zip = $filepath.join(dir, "chrome.zip")
+            const staging = dir + ".new"
+            try { $os.removeAll(staging) } catch (_e) {}
+            try { $os.mkdirAll(staging, 493) } catch (_e) {}
+            const zip = $filepath.join(staging, "chrome.zip")
             let id = ""
-            try { id = dl.download(st.url, zip, { timeout: 900.5 }) } catch (_e) { setErr("Chromium download couldn't start: " + String(_e)); done(false); return }
+            try { id = dl.download(st.url, zip, { timeout: 900.5 }) } catch (_e) { try { $os.removeAll(staging) } catch (_e2) {} setErr("Chromium download couldn't start: " + String(_e)); done(false); return }
             plog("downloading Chromium" + (st.version ? " " + st.version : "") + " (browser solver)")
             dlLogAt = 0
 
@@ -1208,25 +1219,47 @@ function init() {
                     cancel()
                     plog("extracting Chromium…")
                     let unzipOk = true
-                    try { $osExtra.unzip(zip, dir) } catch (_e) { unzipOk = false }
+                    try { $osExtra.unzip(zip, staging) } catch (_e) { unzipOk = false }
                     try { $os.removeAll(zip) } catch (_e) {}
-                    const ok = unzipOk && chromiumCachedPath() !== ""
-                    if (ok && st.version) {
-                        try { $storage.set("fs.chromiumVer", st.version) } catch (_e) {}
+                    let ok = unzipOk && chromiumPathUnder(staging) !== ""
+                    if (ok) {
+                        const previous = dir + ".old"
+                        let movedAside = false
+                        try { $os.removeAll(previous) } catch (_e) {}
+                        try { if ($os.stat(dir)) { $os.rename(dir, previous); movedAside = true } } catch (_e) {}
+                        try {
+                            $os.rename(staging, dir)
+                        } catch (_e) {
+                            ok = false
+                            if (movedAside) { try { $os.rename(previous, dir) } catch (_e2) {} }
+                        }
+                        ok = ok && chromiumCachedPath() !== ""
+                        if (ok) {
+                            try { $os.removeAll(previous) } catch (_e) {}
+                        } else {
+                            try { $os.removeAll(dir) } catch (_e) {}
+                            if (movedAside) { try { $os.rename(previous, dir) } catch (_e) {} }
+                        }
+                    }
+                    if (ok) {
+                        if (st.version) {
+                            try { $storage.set("fs.chromiumVer", st.version) } catch (_e) {}
+                        }
                     } else {
-                        try { $os.removeAll(dir) } catch (_e) {}
-                        try { $storage.set("fs.chromiumVer", "") } catch (_e) {}
-                        setErr("Chromium download/extract failed — the browser solver (hard challenges) will be unavailable.")
+                        try { $os.removeAll(staging) } catch (_e) {}
+                        setErr("Chromium download/extract failed — the copy already installed was left in place.")
                         tray.update()
                     }
                     done(ok)
                 } else if (p.status === "error") {
                     cancel()
+                    try { $os.removeAll(staging) } catch (_e) {}
                     setErr("Chromium download failed: " + (p.error || "unknown error"))
                     done(false)
                 } else if (p.status === "cancelled") {
                     cancel()
-                    setErr("Chromium download timed out — the browser solver (hard challenges) will be unavailable. Press Start to try again.")
+                    try { $os.removeAll(staging) } catch (_e) {}
+                    setErr("Chromium download timed out — the copy already installed was left in place. Press Start to try again.")
                     done(false)
                 }
             })
@@ -1315,7 +1348,7 @@ function init() {
                 let entries: $os.DirEntry[] = []
                 try { entries = $os.readDir(base) } catch (_e) { return }
                 for (const e of entries) {
-                    if (e.isDir() && e.name() !== "chromium" && e.name() !== FS_VERSION) {
+                    if (e.isDir() && FS_KEEP.indexOf(e.name()) < 0 && e.name() !== FS_VERSION) {
                         try { $os.removeAll($filepath.join(base, e.name())) } catch (_e) {}
                     }
                 }
@@ -1650,7 +1683,7 @@ function init() {
                     let entries: $os.DirEntry[] = []
                     try { entries = $os.readDir(base) } catch (_e) {}
                     const names = entries.length
-                        ? entries.filter((e) => e.isDir() && e.name() !== "chromium").map((e) => e.name())
+                        ? entries.filter((e) => e.isDir() && FS_KEEP.indexOf(e.name()) < 0).map((e) => e.name())
                         : [FS_VERSION]
                     for (const name of names) {
                         try { $os.removeAll($filepath.join(base, name)); removed = true } catch (_e) {}
