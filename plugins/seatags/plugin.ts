@@ -74,10 +74,13 @@ function init() {
 
         let byId: { [k: string]: Entry } = {}
         let byName: { [k: string]: Entry } = {}
+        let byNameAuthor: { [k: string]: Entry } = {}
         function rebuildMaps(): void {
             byId = {}
             byName = {}
+            byNameAuthor = {}
             const nameCount: { [k: string]: number } = {}
+            const pairCount: { [k: string]: number } = {}
             const es = entriesState.get()
             for (let i = 0; i < es.length; i++) {
                 const e = es[i]
@@ -87,10 +90,18 @@ function init() {
                     const k = String(e.name).toLowerCase()
                     nameCount[k] = (nameCount[k] || 0) + 1
                     byName[k] = e
+                    if (e.author) {
+                        const p = k + " " + String(e.author).toLowerCase()
+                        pairCount[p] = (pairCount[p] || 0) + 1
+                        byNameAuthor[p] = e
+                    }
                 }
             }
             for (const k in nameCount) {
                 if (nameCount[k] > 1) delete byName[k]
+            }
+            for (const p in pairCount) {
+                if (pairCount[p] > 1) delete byNameAuthor[p]
             }
         }
         rebuildMaps()
@@ -169,6 +180,19 @@ function init() {
             const m = html.match(/font-semibold[^>]*>([^<]+)</)
             return m ? m[1].trim() : ""
         }
+        function extractAuthor(html: string): string {
+            const re = /<[a-zA-Z]+[^>]*\bclass="([^"]*\bUI-Badge__root\b[^"]*)"[^>]*>([^<]*)</g
+            let m: RegExpExecArray | null
+            while ((m = re.exec(html)) !== null) {
+                const cls = " " + m[1].replace(/\s+/g, " ") + " "
+                if (cls.indexOf(" rounded-md ") === -1) continue
+                if (cls.indexOf(" tracking-wide ") !== -1) continue
+                if (cls.indexOf(" border-transparent ") !== -1) continue
+                const t = m[2].trim()
+                if (t) return t
+            }
+            return ""
+        }
 
         async function rebuildBadges(card: any, info: Entry, tags: string[]): Promise<void> {
             let badges: any[] = [], block: any = null, existing: any[] = []
@@ -196,21 +220,25 @@ function init() {
         }
 
         const decorating: { [k: string]: boolean } = {}
+        let decorated = false
         async function decorateOne(card: any): Promise<void> {
             const cid = card && card.id ? String(card.id) : ""
             if (cid) { if (decorating[cid]) return; decorating[cid] = true }
             try {
                 const html = (card && card.innerHTML) ? String(card.innerHTML) : ""
                 const id = extractId(html)
+                const cardAuthor = extractAuthor(html)
                 let info: Entry | null = (id && !/\s/.test(id) && byId[id]) ? byId[id] : null
                 if (!info) {
-                    const nm = extractName(html)
-                    if (nm && byName[nm.toLowerCase()]) info = byName[nm.toLowerCase()]
+                    const nm = extractName(html).toLowerCase()
+                    if (nm && cardAuthor && byNameAuthor[nm + " " + cardAuthor.toLowerCase()]) info = byNameAuthor[nm + " " + cardAuthor.toLowerCase()]
+                    if (!info && nm && byName[nm]) info = byName[nm]
                 }
                 const tags = info ? tagsOf(info) : []
-                const author = info && info.author ? String(info.author).toLowerCase() : ""
+                const author = (cardAuthor || (info && info.author ? String(info.author) : "")).toLowerCase()
                 try { card.setAttribute(A_TAGS, tags.length ? tags.join(" ") : "untagged") } catch (e) { dsetErr("attr") }
                 try { card.setAttribute(A_AUTHOR, author) } catch (_e) {}
+                decorated = true
                 if (info) await rebuildBadges(card, info, tags)
             } finally {
                 if (cid) delete decorating[cid]
@@ -261,7 +289,7 @@ function init() {
             const a = authorState.get().toLowerCase().replace(/["\\]/g, "")
             let css = ""
             if (f && f !== "all" && entriesState.get().length > 0) css += '[class*="extension-card"]:not([' + A_TAGS + '~="' + f + '"]){display:none !important}'
-            if (a && entriesState.get().length > 0) css += '[class*="extension-card"]:not([' + A_AUTHOR + '*="' + a + '"]){display:none !important}'
+            if (a && decorated) css += '[class*="extension-card"]:not([' + A_AUTHOR + '*="' + a + '"]){display:none !important}'
             try { filterStyle.setText(css) } catch (e) { dsetErr("filter") }
         }
 
@@ -420,7 +448,6 @@ function init() {
         }
         function startCards(): void {
             if (!domReady) return
-            if (entriesState.get().length === 0) { applyFilter().catch(() => {}); return }
             if (cardsCancel) { try { cardsCancel() } catch (_e) {} cardsCancel = null }
             try {
                 const r: any = ctx.dom.observe('[class*="extension-card"]:not([' + A_TAGS + '])', decorateCards, { withInnerHTML: true })

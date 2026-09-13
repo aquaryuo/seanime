@@ -185,8 +185,28 @@ console.log("aquatils (source invariants)")
     eq(has('out.push("lastError=" + scrubLog(err))'), true, "privacy: the diagnostics the user copies are scrubbed")
     eq(has("dl.cancel(fsChromiumDownloadId)"), true, "downloads: Stop cancels a browser download in flight")
     eq(has('setErr("The solver download failed: "'), true, "downloads: a failed solver download is reported, not only noted")
+    eq(has('data.solver === "aquatils"'), true, "identity: the probe requires our own solver to claim health")
+    eq(has("p.foreign"), true, "identity: another compatible server on the port is reported, not counted as healthy")
     eq(has("const avEvidence ="), true, "windows: a scanner verdict needs scanner evidence")
     eq(has("execRefused && !avEvidence"), true, "windows: a refusal to execute is reported as itself")
+}
+
+console.log("payload bytes")
+{
+    const payloads = fs.readdirSync(`${ROOT}/extensions`).map((d) => `extensions/${d}/provider.ts`)
+        .concat(fs.readdirSync(`${ROOT}/plugins`).map((d) => `plugins/${d}/plugin.ts`))
+    const bad = []
+    for (const rel of payloads) {
+        const buf = fs.readFileSync(`${ROOT}/${rel}`)
+        for (let i = 0; i < buf.length; i++) {
+            const b = buf[i]
+            if (b < 0x20 && b !== 0x09 && b !== 0x0a && b !== 0x0d) {
+                bad.push(`${rel}@${i}=0x${b.toString(16)}`)
+                break
+            }
+        }
+    }
+    eq(bad, [], "bytes: no payload carries a stray control character")
 }
 
 console.log()

@@ -795,7 +795,7 @@ function init() {
             await fsApi("sessions.create", { session: name })
         }
 
-        async function fsProbe(): Promise<{ up: boolean; version?: string; sessions?: string[] }> {
+        async function fsProbe(): Promise<{ up: boolean; foreign?: boolean; version?: string; sessions?: string[] }> {
             try {
                 const res = await ctx.fetch(fsBase() + "/v1", {
                     method: "POST",
@@ -805,8 +805,9 @@ function init() {
                 })
                 let data: any = null
                 try { data = res.json<any>() } catch (_e) {}
-                const ours = !!data && (data.version !== undefined || Array.isArray(data.sessions))
-                if (!res.ok || !ours) return { up: false }
+                const ours = !!data && (data.solver === "aquatils" || /^0\.\d+\.\d+$/.test(String(data.version || "")))
+                if (!res.ok) return { up: false }
+                if (!ours) return { up: false, foreign: true }
                 return {
                     up: true,
                     version: data.version ? String(data.version) : undefined,
@@ -844,6 +845,18 @@ function init() {
             if (fsTesting && nowMs() < fsTestUntil) return
             if (!fsDepsChecked) checkChromiumDeps()
             const p = await fsProbe()
+            if (p.foreign) {
+                setStatus("down")
+                if (fsMode.get() === "remote") {
+                    setErr("The host at " + fsBase() + " answered, but it is not Aqua's solver - check the address.")
+                } else {
+                    setErr("Port " + (fsPort.get() || FS_DEFAULT_PORT) + " is held by another FlareSolverr-compatible server, so the bundled solver was not started. Change the port in Settings, or stop the other server.")
+                }
+                notifyOnce("foreign", "Aqua's Utils: port " + (fsPort.get() || FS_DEFAULT_PORT) + " is held by another solver. Change the port in Settings.")
+                refreshTrayBadge()
+                trayPoke()
+                return
+            }
             if (p.up) {
                 void refreshCapability()
                 if (fsManualStop && fsMode.get() !== "remote") {
