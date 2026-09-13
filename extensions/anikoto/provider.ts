@@ -1,11 +1,12 @@
 declare const console: { log(...args: any[]): void; info(...args: any[]): void; warn(...args: any[]): void; error(...args: any[]): void }
 
-class Provider {
-    private baseUrl = "{{baseUrl}}"
-    private loadSubtitles = "{{loadSubtitles}}"
-    private useCustomSolver = "{{useCustomSolver}}"
-    private solverUrl = "{{solverUrl}}"
+class Provider implements AnimeProvider {
+    private baseUrl = this.cfg("baseUrl", "{{baseUrl}}", "https://anikototv.to")
+    private loadSubtitles = this.cfg("loadSubtitles", "{{loadSubtitles}}", "enabled")
+    private useCustomSolver = this.cfg("useCustomSolver", "{{useCustomSolver}}", "off")
+    private solverUrl = this.cfg("solverUrl", "{{solverUrl}}", "http://127.0.0.1:8191/v1")
     private solverCooldown = 90000
+    private badgeReported = false
     private mirrors = ["https://anikototv.to", "https://anikoto.cz", "https://anikoto.me", "https://anikoto.net", "https://anikototv.se"]
     private cacheTtl = 900000
     private serverCacheTtl = 300000
@@ -14,9 +15,18 @@ class Provider {
     private resolveDownTtl = 60000
     private serverBudget = 75000
     private searchBudget = 60000
+    private searchCacheTtl = 60000
     private deadline = 0
     private clearanceTtl = 1200000
-    private subEndpoint = "https://sub.ryuo.to"
+
+    private cfg(name: string, raw: string, fallback: string): string {
+        if (raw && raw.indexOf("{{") === -1) return raw
+        try {
+            const v = $getUserPreference(name)
+            if (typeof v === "string" && v && v.indexOf("{{") === -1) return v
+        } catch (_e) {}
+        return fallback
+    }
 
     private normBase(u: string): string {
         return u.replace(/\/+$/, "")
@@ -24,29 +34,22 @@ class Provider {
 
     private candidateBases(): string[] {
         const configured = this.normBase(this.baseUrl)
-        const out: string[] = [configured]
+        const out: string[] = []
         const seen: { [key: string]: boolean } = {}
-        seen[configured] = true
-        const cached = $store.get<string>("anikoto:base")
-        if (cached && !seen[cached]) {
-            seen[cached] = true
-            out.push(cached)
+        const push = (u: string): void => {
+            if (!u || seen["#" + u]) return
+            seen["#" + u] = true
+            out.push(u)
         }
-        for (const m of this.mirrors) {
-            const u = this.normBase(m)
-            if (!seen[u]) {
-                seen[u] = true
-                out.push(u)
-            }
-        }
+        const cached = this.normBase($store.get<string>("anikoto:base") || "")
+        if (cached && (cached === configured || this.mirrors.indexOf(cached) !== -1)) push(cached)
+        push(configured)
+        for (const m of this.mirrors) push(this.normBase(m))
         return out
     }
 
     private currentBase(): string {
-        const configured = this.normBase(this.baseUrl)
-        const cached = $store.get<string>("anikoto:base")
-        if (cached && (cached === configured || this.mirrors.indexOf(cached) !== -1)) return cached
-        return configured
+        return this.candidateBases()[0]
     }
 
     private rememberBase(base: string): void {
@@ -60,6 +63,25 @@ class Provider {
         try {
             $store.set("anikoto:base", "")
         } catch (_e) {}
+    }
+
+    private parseJson<T>(text: string): T | undefined {
+        if (!text) return undefined
+        try {
+            return JSON.parse(text) as T
+        } catch (_e) {
+            return undefined
+        }
+    }
+
+    private async guarded(scope: string, url: string, opts?: FetchOptions): Promise<FetchResponse> {
+        try {
+            return await this.fetchRetry(url, opts)
+        } catch (e) {
+            this.invalidateBase()
+            this.reportError(scope, `transport failure: ${e instanceof Error ? e.message : String(e)}`)
+            throw "the site could not be reached — check your connection or retry in a moment"
+        }
     }
 
     private pageHeaders(): { [key: string]: string } {
@@ -76,10 +98,10 @@ class Provider {
             try {
                 const res = await fetch(url, opts)
                 const retryable = res.status === 408 || res.status === 429 || res.status >= 500
-                if (!retryable || i === tries - 1) return res
+                if (!retryable || i === tries - 1 || this.outOfTime()) return res
             } catch (e) {
                 lastErr = e
-                if (i === tries - 1) throw e
+                if (i === tries - 1 || this.outOfTime()) throw e
             }
         }
         throw lastErr || `anikoto: fetch failed (${url})`
@@ -95,7 +117,7 @@ class Provider {
 
     getSettings(): Settings {
         return {
-            episodeServers: ["Auto", "HD-1", "HD-2", "Vidstream-2"],
+            episodeServers: ["Auto"],
             supportsDub: true,
         }
     }
@@ -104,9 +126,14 @@ class Provider {
         const wantDub = opts.dub
         const audio = wantDub ? "dub" : "sub"
         const sq = this.searchQueries(opts)
+        const wantCount = opts.media.episodeCount && opts.media.episodeCount > 0 ? opts.media.episodeCount : 0
         let challenged = false
         let unrecognized = false
         this.deadline = this.now() + this.searchBudget
+
+        const sKey = `anikoto:srch:${audio}:${sq.queries.slice().sort().join("|").toLowerCase()}`
+        const sCached = this.readCache<SearchResult[]>(sKey, this.searchCacheTtl)
+        if (sCached && sCached.length > 0) return sCached
 
         for (const base of this.candidateBases()) {
             if (this.outOfTime()) break
@@ -121,25 +148,25 @@ class Provider {
             let hardFail = false
             for (const q of sq.queries) {
                 if (this.outOfTime()) break
-                let html = ""
+                let pageDoc: DocSelectionFunction | undefined = undefined
                 try {
                     const res = await fetch(`${base}/filter?keyword=${encodeURIComponent(q)}`, {
                         headers: this.pageHeaders(),
                     })
                     const body = res.text()
-                    if (this.isChallengeResponse(res, body)) {
+                    const doc = body ? LoadDoc(body) : undefined
+                    if (this.isChallengeResponse(res, body, doc)) {
                         challenged = true
-                    } else if (res.ok && this.bodyIsSitePage(body)) {
+                    } else if (res.ok && doc && this.bodyIsSitePage(body, doc)) {
                         anyOk = true
-                        html = body
+                        pageDoc = doc
                     }
                 } catch (_e) {
                     hardFail = true
                 }
-                if (html) {
-                    const doc = LoadDoc(html)
-                    cards += this.parseSearchInto(doc, audio, wantDub, opts.media.id, seen, results, evidence)
-                    if (this.resultListIsEmpty(doc)) emptyList = true
+                if (pageDoc) {
+                    cards += this.parseSearchInto(pageDoc, audio, wantDub, opts.media.id, seen, results, evidence, wantCount, sq.part || 0)
+                    if (this.resultListIsEmpty(pageDoc)) emptyList = true
                 }
                 if (hardFail) break
             }
@@ -151,8 +178,11 @@ class Provider {
                 }
                 this.rememberBase(base)
                 const best = this.dominantMatch(results, opts.media)
-                if (best) return [best]
-                return this.preferByEvidence(this.filterBySeason(results, sq.season, sq.part, opts.media), evidence, opts.media)
+                const out = best
+                    ? [best]
+                    : this.preferByEvidence(this.filterBySeason(results, sq.season, sq.part, opts.media), evidence, opts.media)
+                if (out.length > 0) this.writeCache(sKey, out)
+                return out
             }
         }
 
@@ -187,9 +217,27 @@ class Provider {
         })
     }
 
+    private containedInShow(results: SearchResult[], media: Media): SearchResult[] {
+        const targets: string[] = []
+        for (const t of [media.romajiTitle, media.englishTitle]) {
+            const b = this.baseTitle(t || "")
+            if (b.length >= 3) targets.push(b)
+        }
+        if (targets.length === 0) return results
+        const kept = results.filter((r) => {
+            const b = this.baseTitle(r.title)
+            if (b.length < 3) return false
+            for (const t of targets) {
+                if (b.indexOf(t) === 0 || t.indexOf(b) === 0) return true
+            }
+            return false
+        })
+        return kept.length > 0 ? kept : []
+    }
+
     private filterBySeason(results: SearchResult[], season: number, part: number, media: Media): SearchResult[] {
         const show = this.sameShow(results, media)
-        const pool = show.length > 0 ? show : results
+        const pool = show.length > 0 ? show : this.containedInShow(results, media)
         if (season < 2 && part < 2) return pool
         const matched = pool.filter((r) => {
             let resultSeason = -1
@@ -308,9 +356,12 @@ class Provider {
         anilistId: number,
         seen: { [key: string]: boolean },
         results: SearchResult[],
-        evidence: { [key: string]: { episodes: number; movie: boolean } }
+        evidence: { [key: string]: { episodes: number; movie: boolean } },
+        epCount: number,
+        part: number
     ): number {
         let cards = 0
+        let badges = 0
         $("div.item").each((_i, card) => {
             cards++
             const titleLink = card.find("a.name.d-title").first()
@@ -331,6 +382,7 @@ class Provider {
 
             const hasSub = card.find(".ep-status.sub").length() > 0
             const hasDub = card.find(".ep-status.dub").length() > 0
+            if (hasSub || hasDub) badges++
             if (dub && !hasDub) return
 
             seen[seriesUrl] = true
@@ -342,8 +394,12 @@ class Provider {
                 movie: format === "movie",
             }
             if (anilistId > 0) this.writeCache(`anikoto:al:${seriesUrl}`, anilistId)
-            results.push({ id: this.withMeta(seriesUrl, audio, anilistId), title, url: seriesUrl, subOrDub })
+            results.push({ id: this.withMeta(seriesUrl, audio, anilistId, epCount, part), title, url: seriesUrl, subOrDub })
         })
+        if (cards > 0 && badges === 0 && !this.badgeReported) {
+            this.badgeReported = true
+            this.reportError("search", `the site listed ${cards} results but no sub/dub badges on any of them, so every result is assumed sub-only${dub ? " and a dub search returns nothing" : ""} — the site layout may have changed`)
+        }
         return cards
     }
 
@@ -378,60 +434,18 @@ class Provider {
         return byFormat.length > 0 ? byFormat : pool
     }
 
-    private async resolveFromServer(anilistId: number, audio: string): Promise<EpisodeDetails[] | null> {
-        const cacheKey = `anikoto:resolve:${anilistId}:${audio}`
-        const cached = this.readCache<EpisodeDetails[]>(cacheKey)
-        if (cached && cached.length > 0) return cached
-        if (this.readCache<boolean>("anikoto:resolvedown", this.resolveDownTtl)) return null
-        try {
-            const res = await fetch(`${this.subEndpoint}/resolve/${anilistId}`, { timeout: 8 })
-            if (!res.ok) {
-                this.writeCache("anikoto:resolvedown", true)
-                return null
-            }
-            const data = res.json<{ episodes?: { number: number; dataIds: string; title?: string; hasSub?: boolean; hasDub?: boolean }[]; token?: string }>()
-            if (data && typeof data.token === "string" && data.token) this.writeCache(`anikoto:tok:${anilistId}`, data.token)
-            const eps = data && data.episodes
-            if (!eps || eps.length === 0) return null
-            const out: EpisodeDetails[] = []
-            for (const e of eps) {
-                if (!e || typeof e.number !== "number" || !e.dataIds) continue
-                if (audio === "dub" ? e.hasDub === false : e.hasSub === false) continue
-                out.push({ id: this.withMeta(e.dataIds, audio, anilistId), number: e.number, url: `${this.baseUrl}/`, title: e.title || undefined })
-            }
-            out.sort((a, b) => a.number - b.number)
-            if (out.length === 0) return null
-            this.writeCache(cacheKey, out)
-            return out
-        } catch (_e) {
-            this.writeCache("anikoto:resolvedown", true)
-            return null
-        }
-    }
-
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {
         this.baseUrl = this.currentBase()
         const parsed = this.splitMeta(id)
         const audio = parsed.audio
 
-        if (parsed.anilistId) {
-            const fromServer = await this.resolveFromServer(parsed.anilistId, audio)
-            if (fromServer && fromServer.length > 0) return fromServer
-        }
-
         const seriesUrl = this.seriesUrl(this.absoluteUrl(parsed.base))
 
-        const cacheKey = `anikoto:eps:${seriesUrl}:${audio}:${parsed.anilistId}`
+        const cacheKey = `anikoto:eps2:${seriesUrl}:${audio}:${parsed.anilistId}`
         const cached = this.readCache<EpisodeDetails[]>(cacheKey)
         if (cached && cached.length > 0) return cached
 
-        let page: FetchResponse
-        try {
-            page = await this.fetchRetry(seriesUrl, { headers: this.pageHeaders(), timeout: 12 })
-        } catch (e) {
-            this.invalidateBase()
-            throw this.fail("episodes", e instanceof Error ? e.message : String(e))
-        }
+        const page = await this.guarded("episodes", seriesUrl, { headers: this.pageHeaders() })
         const pageHtml = page.text()
         if (this.isChallengeResponse(page, pageHtml)) throw this.fail("episodes", "the site is showing an anti-bot challenge on this mirror — retry later or switch mirrors")
         if (!page.ok) throw this.fail("episodes", `episode page failed (status ${page.status})`)
@@ -444,11 +458,13 @@ class Provider {
             throw this.fail("episodes", "could not determine series id (site layout may have changed)")
         }
 
-        const listRes = await this.fetchRetry(`${this.baseUrl}/ajax/episode/list/${seriesId}`, {
-            headers: this.ajaxHeaders(), timeout: 12,
+        const listRes = await this.guarded("episodes", `${this.baseUrl}/ajax/episode/list/${seriesId}`, {
+            headers: this.ajaxHeaders(),
         })
+        const listHtml = listRes.text()
+        if (this.isChallengeResponse(listRes, listHtml)) throw this.fail("episodes", "the site is showing an anti-bot challenge on this mirror — retry later or switch mirrors")
         if (!listRes.ok) throw this.fail("episodes", `episode list failed (status ${listRes.status})`)
-        const listJson = listRes.json<{ status: number; result: string }>()
+        const listJson = this.parseJson<{ status: number; result: string }>(listHtml)
         if (!listJson || !listJson.result) throw this.fail("episodes", "empty episode list response")
 
         const $ = LoadDoc(listJson.result)
@@ -458,7 +474,7 @@ class Provider {
         let epNodes = $("ul.ep-range li > a")
         if (epNodes.length() === 0) epNodes = $(".ep-range a")
         if (epNodes.length() === 0) epNodes = $("a[data-ids]")
-        epNodes.each((i, a) => {
+        epNodes.each((_i, a) => {
             const epId = a.attr("data-id") || ""
             const dataIds = a.attr("data-ids")
             if (!dataIds) return
@@ -472,13 +488,14 @@ class Provider {
             seen[dedupeKey] = true
 
             const num = parseInt(rawNum, 10)
-            const number = !Number.isInteger(num) || num < 1 || num > 10000 ? i + 1 : num
+            const number = !Number.isInteger(num) || num < 1 || num > 10000 ? episodes.length + 1 : num
             const slug = a.attr("data-slug") || String(number)
 
-            const title = a.find("span.d-title").first().text().trim()
+            const rawTitle = a.find("span.d-title").first().text().trim()
+            const title = /^episode\s*\d+$/i.test(rawTitle) ? "" : rawTitle
 
             episodes.push({
-                id: this.withMeta(dataIds, audio, parsed.anilistId),
+                id: this.withMeta(dataIds, audio, parsed.anilistId, parsed.epCount, parsed.part),
                 number,
                 url: `${seriesUrl}/ep-${slug}`,
                 title: title || undefined,
@@ -487,56 +504,8 @@ class Provider {
 
         if (episodes.length === 0) throw this.fail("episodes", "no episodes found")
 
-        if (parsed.anilistId) {
-            try {
-                const metaRes = await fetch(`${this.subEndpoint}/meta/${parsed.anilistId}`, { timeout: 8 })
-                if (metaRes.ok) {
-                    const meta = metaRes.json<{
-                        episodes?: number
-                        episodeTitles?: { [key: string]: string }
-                        episodeMap?: { [key: string]: { ep: number | null; abs: number | null } }
-                    }>()
-                    const titles = (meta && meta.episodeTitles) || {}
-                    const map = (meta && meta.episodeMap) || {}
-                    const aniTotal = meta && typeof meta.episodes === "number" && meta.episodes > 0 ? meta.episodes : 0
-                    const mapKeys = Object.keys(map)
-                    const mapCoversSeries = aniTotal > 0
-                        ? !(mapKeys.length < aniTotal && episodes.length > mapKeys.length)
-                        : mapKeys.length >= episodes.length
-                    if (mapKeys.length > 0 && mapCoversSeries) {
-                        const byNum: { [key: number]: EpisodeDetails } = {}
-                        for (const e of episodes) byNum[e.number] = e
-                        let maxTarget = 0
-                        for (const k of mapKeys) {
-                            const m = map[k]
-                            maxTarget = Math.max(maxTarget, m.ep || 0)
-                        }
-                        const perPart = episodes.length < maxTarget
-                        const remapped: EpisodeDetails[] = []
-                        for (const k of mapKeys) {
-                            const K = parseInt(k, 10)
-                            if (isNaN(K)) continue
-                            const m = map[k]
-                            const ep = !perPart && typeof m.ep === "number" && m.ep > 0 ? byNum[m.ep] : undefined
-                            const abs = !perPart && typeof m.abs === "number" && m.abs > 0 ? byNum[m.abs] : undefined
-                            const src = ep || abs || byNum[K]
-                            if (!src) continue
-                            remapped.push({ id: src.id, number: K, url: src.url, title: titles[String(K)] || src.title })
-                        }
-                        if (remapped.length >= Math.ceil(mapKeys.length / 2)) {
-                            episodes.length = 0
-                            for (const e of remapped) episodes.push(e)
-                        }
-                    }
-                    for (const e of episodes) {
-                        const t = titles[String(e.number)]
-                        if (!e.title && t) e.title = t
-                    }
-                }
-            } catch (e) {}
-        }
-
         episodes.sort((x, y) => x.number - y.number)
+        this.applySeasonWindow(episodes, parsed.epCount, parsed.part)
         this.writeCache(cacheKey, episodes)
         return episodes
     }
@@ -547,64 +516,46 @@ class Provider {
         const parsed = this.splitMeta(episode.id)
         const dataIds = parsed.base
         const audio = parsed.audio
-        const ctx = { anilistId: parsed.anilistId, episode: episode.number }
-
-        if (server === "Auto" || server === "default" || !server) {
-            const $ = await this.serverListDoc(dataIds)
-            const groups = audio === "dub" ? ["dub"] : ["sub", "hsub"]
-            const KNOWN_SERVERS = ["HD-1", "HD-2", "Vidstream-2"]
-            const candidates = this.collectServers($, groups)
-                .filter((c) => KNOWN_SERVERS.indexOf(c.name) !== -1)
-                .sort((a, b) => KNOWN_SERVERS.indexOf(a.name) - KNOWN_SERVERS.indexOf(b.name))
-            if (candidates.length === 0) throw this.fail("server", audio === "dub" ? "no dub is available for this episode" : "no server available for this episode")
-
-            const label = server === "Auto" ? "Auto" : ""
-            const wantSubs = this.loadSubtitles !== "disabled"
-            let firstResolved: EpisodeServer | undefined
-            let playableNoSubs: EpisodeServer | undefined
-            for (const c of candidates) {
-                if (this.outOfTime() && (playableNoSubs || firstResolved)) break
-                let resolved: EpisodeServer | undefined
-                try {
-                    resolved = await this.resolveServer(c.linkId, c.name, ctx, audio)
-                } catch (_e) {
-                    resolved = undefined
-                }
-                if (!resolved) continue
-                if (label) resolved.server = label
-                if (!firstResolved) firstResolved = resolved
-                if (await this.isPlayable(resolved, !playableNoSubs)) {
-                    const vs = resolved.videoSources[0]
-                    if (!wantSubs || (vs && vs.subtitles && vs.subtitles.length > 0)) return resolved
-                    if (!playableNoSubs) playableNoSubs = resolved
-                }
-            }
-            if (playableNoSubs) return playableNoSubs
-            if (firstResolved) {
-                const cl = this.cachedClearance(this.hostOf(firstResolved.videoSources[0].url))
-                if (cl) firstResolved.headers = this.withClearance(firstResolved.headers, cl)
-                return firstResolved
-            }
-            throw this.fail("server", "no playable server found for this episode" + (this.solverEnabled() ? "" : "; if sources are Cloudflare-protected, enable the custom solver in settings (run it via Aqua's Utils)"))
-        }
-
-        const target = this.parseServerLabel(server, audio)
-        if (!target.ok) throw this.fail("server", "that server is not available for this audio track")
 
         const $ = await this.serverListDoc(dataIds)
-        const picked = this.collectServers($, [target.group]).filter((c) => c.name === target.name)[0]
-        if (!picked) throw this.fail("server", "that server is not available for this episode")
-        const resolved = await this.resolveServer(picked.linkId, target.label, ctx, audio)
-        await this.isPlayable(resolved)
-        const cl = this.cachedClearance(this.hostOf(resolved.videoSources[0].url))
-        if (cl) resolved.headers = this.withClearance(resolved.headers, cl)
-        return resolved
-    }
+        const groups = audio === "dub" ? ["dub"] : ["sub", "hsub"]
+        const KNOWN_SERVERS = ["HD-1", "HD-2", "Vidstream-2"]
+        const candidates = this.collectServers($, groups)
+            .filter((c) => KNOWN_SERVERS.indexOf(c.name) !== -1)
+            .sort((a, b) => KNOWN_SERVERS.indexOf(a.name) - KNOWN_SERVERS.indexOf(b.name))
+        if (candidates.length === 0) throw this.fail("server", audio === "dub" ? "no dub is available for this episode" : "no server available for this episode")
 
-    private parseServerLabel(server: string, audio: string): { group: string; name: string; label: string; ok: boolean } {
-        const hs = server.match(/^hs:\s*/i)
-        if (hs) return { group: "hsub", name: server.slice(hs[0].length), label: server, ok: audio !== "dub" }
-        return { group: audio === "dub" ? "dub" : "sub", name: server, label: server, ok: true }
+        const label = "Auto"
+        const wantSubs = this.loadSubtitles !== "disabled"
+        let firstResolved: EpisodeServer | undefined
+        let playableNoSubs: EpisodeServer | undefined
+        let lastReason = ""
+        for (const c of candidates) {
+            if (this.outOfTime()) break
+            let resolved: EpisodeServer | undefined
+            try {
+                resolved = await this.resolveServer(c.linkId, c.name, audio)
+            } catch (e) {
+                lastReason = typeof e === "string" ? e : e instanceof Error ? e.message : ""
+                resolved = undefined
+            }
+            if (!resolved) continue
+            if (label) resolved.server = label
+            if (!firstResolved) firstResolved = resolved
+            if (await this.isPlayable(resolved, !playableNoSubs)) {
+                const vs = resolved.videoSources[0]
+                if (!wantSubs || (vs && vs.subtitles && vs.subtitles.length > 0)) return resolved
+                if (!playableNoSubs) playableNoSubs = resolved
+            }
+        }
+        if (playableNoSubs) return playableNoSubs
+        if (firstResolved) {
+            const cl = this.cachedClearance(this.hostOf(firstResolved.videoSources[0].url))
+            if (cl) firstResolved.headers = this.withClearance(firstResolved.headers, cl)
+            return firstResolved
+        }
+        const hint = this.solverEnabled() ? "" : "; if sources are Cloudflare-protected, enable the custom solver in settings (run it via Aqua's Utils)"
+        throw this.fail("server", "no playable server found for this episode" + (lastReason ? ` — ${lastReason}` : hint))
     }
 
     private sourcePaths(origin: string): string[] {
@@ -684,12 +635,15 @@ class Provider {
         const cacheKey = `anikoto:slist:${dataIds}`
         let html = this.readCache<string>(cacheKey, this.serverCacheTtl)
         if (!html) {
-            const slRes = await fetch(
+            const slRes = await this.guarded(
+                "server",
                 `${this.baseUrl}/ajax/server/list?servers=${encodeURIComponent(dataIds)}`,
-                { headers: this.ajaxHeaders(), timeout: 12 }
+                { headers: this.ajaxHeaders() }
             )
+            const slHtml = slRes.text()
+            if (this.isChallengeResponse(slRes, slHtml)) throw this.fail("server", "the site is showing an anti-bot challenge on this mirror — retry later or switch mirrors")
             if (!slRes.ok) throw this.fail("server", `server list failed (status ${slRes.status})`)
-            const sl = slRes.json<{ status: number; result: string }>()
+            const sl = this.parseJson<{ status: number; result: string }>(slHtml)
             html = (sl && sl.result) || ""
             if (html && html.indexOf("data-link-id") !== -1) this.writeCache(cacheKey, html)
         }
@@ -711,11 +665,12 @@ class Provider {
         return out
     }
 
-    private async resolveServer(linkId: string, serverName: string, ctx: { anilistId: number; episode: number }, audio: string): Promise<EpisodeServer> {
+    private async resolveServer(linkId: string, serverName: string, audio: string): Promise<EpisodeServer> {
         const got = await this.fetchSources(linkId)
-        if (!got || !got.file) throw this.fail("server", "could not resolve the player URL (source may be encrypted or down)")
-        if (audio === "dub" && got.embedAudio === "sub") throw this.fail("server", "dub source resolved to the subbed (Japanese) track")
-        const subtitles = await this.buildSubtitles(got.tracks, ctx, got.origin)
+        if (!got || !got.file) throw `${serverName} could not resolve the player URL (source may be encrypted or down)`
+        if (audio === "dub" && got.embedAudio === "sub") throw `${serverName} offered the subbed (Japanese) track for a dub request`
+        if (audio !== "dub" && got.embedAudio === "dub") throw `${serverName} offered the dubbed track for a sub request`
+        const subtitles = this.buildSubtitles(got.tracks)
         return {
             server: serverName,
             headers: { Referer: `${got.origin}/`, Origin: got.origin },
@@ -877,7 +832,7 @@ class Provider {
 
     private async fetchPlaylist(url: string, headers: { [k: string]: string }): Promise<string | undefined> {
         try {
-            const res = await fetch(url, { headers: headers, timeout: 4 })
+            const res = await fetch(url, { headers: headers })
             if (!res.ok) return undefined
             const body = res.text()
             return body.indexOf("#EXTM3U") !== -1 ? body : undefined
@@ -906,7 +861,7 @@ class Provider {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ cmd: "request.get", url: url, maxTimeout: 32000 }),
-                timeout: 35,
+                noCloudflareBypass: true,
             })
             if (!res.ok) {
                 if (res.status >= 500) this.writeCache("anikoto:solverdown", this.now() + this.solverCooldown)
@@ -990,7 +945,7 @@ class Provider {
         if (cachedSrc) return cachedSrc
 
         const psRes = await this.fetchRetry(`${this.baseUrl}/ajax/server?get=${encodeURIComponent(linkId)}`, {
-            headers: this.ajaxHeaders(), timeout: 3,
+            headers: this.ajaxHeaders(),
         })
         if (!psRes.ok) return undefined
         const ps = psRes.json<{ status: number; result: { url: string } }>()
@@ -998,7 +953,7 @@ class Provider {
         if (!embedUrl) return undefined
 
         const origin = this.originOf(embedUrl)
-        const embedRes = await this.fetchRetry(embedUrl, { headers: { Referer: `${this.baseUrl}/` }, timeout: 3 })
+        const embedRes = await this.fetchRetry(embedUrl, { headers: { Referer: `${this.baseUrl}/` } })
         if (!embedRes.ok) return undefined
 
         const ehtml = embedRes.text()
@@ -1011,7 +966,7 @@ class Provider {
             const ifr = ehtml.match(/<iframe[^>]+\bsrc="([^"]*\/stream\/[^"]*)"/i)
             const inner = ifr ? this.absoluteUrl(ifr[1]) : ""
             if (inner && this.originOf(inner) === origin) {
-                const innerRes = await this.fetchRetry(inner, { headers: { Referer: embedUrl }, timeout: 3 })
+                const innerRes = await this.fetchRetry(inner, { headers: { Referer: embedUrl } })
                 if (innerRes.ok) {
                     const ih = innerRes.text()
                     dataId = this.firstAttr(LoadDoc(ih), ["#megaplay-player", "[id*='player'][data-id]"], "data-id")
@@ -1067,73 +1022,30 @@ class Provider {
         return m ? m[1].toLowerCase() : ""
     }
 
-    private extOf(file: string): string {
-        const path = file.split(/[?#]/)[0]
-        const m = path.match(/\.([a-z0-9]+)$/i)
-        const e = m ? m[1].toLowerCase() : ""
-        return e === "ass" || e === "srt" ? e : "vtt"
-    }
-
-    private async ensureServeToken(anilistId: number): Promise<string | undefined> {
-        const key = `anikoto:tok:${anilistId}`
-        const cached = this.readCache<string>(key, this.tokenTtl)
-        if (cached) return cached
-        try {
-            const res = await fetch(`${this.subEndpoint}/resolve/${anilistId}`, { timeout: 8 })
-            if (!res.ok) return undefined
-            const data = res.json<{ token?: string }>()
-            if (data && typeof data.token === "string" && data.token) {
-                this.writeCache(key, data.token)
-                return data.token
-            }
-        } catch (_e) {}
-        return undefined
-    }
-
-    private async buildSubtitles(
-        tracks: { file: string; label?: string; kind?: string; default?: boolean }[] | undefined,
-        ctx: { anilistId: number; episode: number },
-        embedOrigin?: string
-    ): Promise<VideoSubtitle[]> {
+    private buildSubtitles(tracks: { file: string; label?: string; kind?: string; default?: boolean }[] | undefined): VideoSubtitle[] {
         const collected: VideoSubtitle[] = []
         if (this.loadSubtitles === "disabled") return collected
         if (!tracks || tracks.length === 0) return collected
 
-        const anime = String(ctx.anilistId)
-        const ep = String(ctx.episode)
-        const refParam = embedOrigin ? `&ref=${encodeURIComponent(embedOrigin)}` : ""
         const valid = tracks.filter((t) => t && typeof t.file === "string" && /^https?:\/\//i.test(t.file) && (!t.kind || t.kind === "captions" || t.kind === "subtitles"))
         if (valid.length === 0) return collected
-        const up = ctx.anilistId > 0
-        let tokParam = ""
-        if (up) {
-            let tok = this.readCache<string>(`anikoto:tok:${ctx.anilistId}`, this.tokenTtl)
-            if (!tok) tok = await this.ensureServeToken(ctx.anilistId)
-            tokParam = tok ? `&t=${encodeURIComponent(tok)}` : ""
-        }
-        const codes = await this.langCodes(valid.map((t) => t.label || "English"))
+        const codes = this.langCodes(valid.map((t) => t.label || "English"))
         const seenSrc: { [key: string]: boolean } = {}
-        const seenSlot: { [key: string]: boolean } = {}
         const nonDialogue: boolean[] = []
         let pick = 0
         let best = -1
 
         for (let i = 0; i < valid.length; i++) {
             const t = valid[i]
-            const lang = codes[i]
+            const lang = codes[i] || "und"
             const label = (t.label || "").trim()
             if (seenSrc[t.file]) continue
             seenSrc[t.file] = true
             const idx = collected.length
-            const slot = seenSlot[lang] ? `${lang}-${idx}` : lang
-            seenSlot[lang] = true
-            const url = up
-                ? `${this.subEndpoint}/s/${anime}/${ep}/${slot}.${this.extOf(t.file)}?src=${encodeURIComponent(t.file)}${tokParam}${refParam}`
-                : t.file
             collected.push({
                 id: `${lang}-${idx}`,
-                url,
-                language: label || this.langName(lang),
+                url: t.file,
+                language: this.cleanLabel(label) || this.langName(lang),
                 isDefault: false,
             })
             const score = this.trackScore(label, lang === "en", t.default === true)
@@ -1175,6 +1087,21 @@ class Provider {
         return def ? base * 10 + 1 : base * 10
     }
 
+    private cleanLabel(label: string): string {
+        const l = (label || "").trim()
+        if (!l) return l
+        const nested = /^(.*?)\s*\(-\s*[^()]*\(([^()]+)\)\s*\)$/.exec(l)
+        if (nested) {
+            const base = nested[1].trim()
+            const region = nested[2].trim()
+            if (!region || region.toLowerCase() === base.toLowerCase()) return base
+            return `${base} (${region})`
+        }
+        const flat = /^(.*?)\s*\(-\s*[^()]*\)$/.exec(l)
+        if (flat && flat[1].trim()) return flat[1].trim()
+        return l
+    }
+
     private langName(code: string): string {
         const map: { [key: string]: string } = {
             en: "English", ja: "Japanese", ar: "Arabic", de: "German", es: "Spanish", fr: "French",
@@ -1184,35 +1111,9 @@ class Provider {
         return map[code] || code.toUpperCase()
     }
 
-    private async langCodes(labels: string[]): Promise<string[]> {
+    private langCodes(labels: string[]): string[] {
         const out: string[] = new Array(labels.length)
-        const missing: { idx: number; label: string }[] = []
-        for (let i = 0; i < labels.length; i++) {
-            const cached = this.readCache<string>(`anikoto:lang:${labels[i]}`, 86400000)
-            if (cached) out[i] = cached
-            else missing.push({ idx: i, label: labels[i] })
-        }
-        if (missing.length > 0) {
-            let codes: string[] = []
-            try {
-                const res = await fetch(`${this.subEndpoint}/lang`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ labels: missing.map((m) => m.label) }),
-                    timeout: 6,
-                })
-                if (res.ok) {
-                    const j = res.json<{ codes: string[] }>()
-                    codes = (j && j.codes) || []
-                }
-            } catch (_e) {}
-            for (let k = 0; k < missing.length; k++) {
-                const fromServer = codes[k]
-                const code = fromServer || this.fallbackCode(missing[k].label)
-                out[missing[k].idx] = code
-                if (fromServer) this.writeCache(`anikoto:lang:${missing[k].label}`, code)
-            }
-        }
+        for (let i = 0; i < labels.length; i++) out[i] = this.fallbackCode(labels[i])
         return out
     }
 
@@ -1243,11 +1144,17 @@ class Provider {
             vie: "vi", vietnamese: "vi",
             ukr: "uk", ukrainian: "uk",
             hin: "hi", hindi: "hi",
+            dan: "da", danish: "da",
+            nor: "no", norwegian: "no",
+            fin: "fi", finnish: "fi",
+            hun: "hu", hungarian: "hu",
+            heb: "he", hebrew: "he",
+            fil: "tl", filipino: "tl", tagalog: "tl",
         }
         for (const w of words) {
             if (map[w]) return map[w]
         }
-        return "en"
+        return ""
     }
 
     private withAudio(base: string, audio: string): string {
@@ -1263,12 +1170,27 @@ class Provider {
         return { base: id, audio: "sub" }
     }
 
-    private withMeta(base: string, audio: string, anilistId: number): string {
-        const a = this.withAudio(base, audio)
+    private applySeasonWindow(episodes: EpisodeDetails[], epCount: number, part: number): void {
+        if (epCount <= 0 || episodes.length <= epCount) return
+        const offset = part >= 2 ? episodes.length - epCount : 0
+        if (offset < 0 || offset + epCount > episodes.length) return
+        const picked = episodes.slice(offset, offset + epCount)
+        if (picked.length !== epCount) return
+        const total = episodes.length
+        for (let i = 0; i < picked.length; i++) picked[i].number = i + 1
+        episodes.length = 0
+        for (const e of picked) episodes.push(e)
+        this.reportError("episodes", `the site lists this season as one run of ${total} episodes; showing the ${part >= 2 ? "last" : "first"} ${epCount} so the numbering matches the tracker`)
+    }
+
+    private withMeta(base: string, audio: string, anilistId: number, epCount?: number, part?: number): string {
+        let a = this.withAudio(base, audio)
+        const n = epCount && epCount > 0 ? epCount : 0
+        if (n > 0) a = `${a}$ec${n}$pt${part && part > 0 ? part : 0}`
         return anilistId > 0 ? `${a}$al${anilistId}` : a
     }
 
-    private splitMeta(id: string): { base: string; audio: string; anilistId: number } {
+    private splitMeta(id: string): { base: string; audio: string; anilistId: number; epCount: number; part: number } {
         let rest = id
         let anilistId = 0
         const m = rest.match(/\$al(\d+)$/)
@@ -1276,18 +1198,42 @@ class Provider {
             anilistId = parseInt(m[1], 10)
             rest = rest.slice(0, rest.length - m[0].length)
         }
+        let epCount = 0
+        let part = 0
+        const pm = rest.match(/\$pt(\d+)$/)
+        if (pm) {
+            part = parseInt(pm[1], 10)
+            rest = rest.slice(0, rest.length - pm[0].length)
+        }
+        const em = rest.match(/\$ec(\d+)$/)
+        if (em) {
+            epCount = parseInt(em[1], 10)
+            rest = rest.slice(0, rest.length - em[0].length)
+        }
         const sa = this.splitAudio(rest)
         if (anilistId === 0) {
             const known = this.readCache<number>(`anikoto:al:${this.seriesUrl(sa.base)}`, this.idCacheTtl)
             if (known && known > 0) anilistId = known
         }
-        return { base: sa.base, audio: sa.audio, anilistId }
+        return { base: sa.base, audio: sa.audio, anilistId, epCount, part }
     }
 
     private reportError(scope: string, message: string): void {
         try {
-            console.error("SEHERRv1 " + JSON.stringify({ t: this.now(), ext: "aq-anikoto", scope: scope, msg: String(message) }))
+            console.error("SEHERRv1 " + JSON.stringify({ t: this.now(), ext: "aq-anikoto", scope: scope, msg: this.plain(message) }))
         } catch (_e) {}
+    }
+
+    private plain(message: string): string {
+        return String(message === undefined || message === null ? "" : message)
+            .replace(/\u2026/g, "...")
+            .replace(/[\u2014\u2013]/g, "-")
+            .replace(/[\u2018\u2019]/g, "'")
+            .replace(/[\u201c\u201d]/g, '"')
+            .replace(/[\u00b7\u2022]/g, "-")
+            .replace(/\s+/g, " ")
+            .replace(/[^\x20-\x7e]/g, "?")
+            .replace(/^ +| +$/g, "")
     }
 
     private fail(scope: string, message: string): string {
@@ -1303,23 +1249,23 @@ class Provider {
         return ""
     }
 
-    private isChallengeResponse(res: FetchResponse, body: string): boolean {
+    private isChallengeResponse(res: FetchResponse, body: string, doc?: DocSelectionFunction): boolean {
         const h = res.headers || {}
         for (const k in h) {
             if (k.toLowerCase() === "cf-mitigated" && String(h[k]).toLowerCase().indexOf("challenge") !== -1) return true
         }
-        if (res.status === 403 || res.status === 503) return !this.bodyIsSitePage(body)
-        return this.bodyIsChallenge(body) && !this.bodyIsSitePage(body)
+        if (res.status === 403 || res.status === 503) return !this.bodyIsSitePage(body, doc)
+        return this.bodyIsChallenge(body) && !this.bodyIsSitePage(body, doc)
     }
 
     private bodyIsChallenge(body: string): boolean {
         return this.challengeToken(body) !== ""
     }
 
-    private bodyIsSitePage(body: string): boolean {
-        if (!body) return false
+    private bodyIsSitePage(body: string, doc?: DocSelectionFunction): boolean {
+        if (!body && !doc) return false
         try {
-            const $ = LoadDoc(body)
+            const $ = doc || LoadDoc(body)
             return $("footer").length() > 0 || $("div.item").length() > 0
         } catch (_e) {
             return false
@@ -1344,6 +1290,11 @@ class Provider {
         const t = this.now()
         const max = ttl === undefined ? this.cacheTtl : ttl
         if (entry && t > 0 && entry.at > 0 && t - entry.at < max) return entry.data
+        if (entry !== undefined && entry !== null) {
+            try {
+                $store.remove(key)
+            } catch (_e) {}
+        }
         return undefined
     }
 

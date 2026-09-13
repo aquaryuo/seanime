@@ -115,7 +115,7 @@ function init() {
 
         function aqReport(ext: string, scope: string, msg: string): void {
             try {
-                const body = aqText(msg)
+                const body = aqText(scrubLog(msg))
                 if (!body) return
                 console.error(AQ_SEH_MARKER + " " + JSON.stringify({ t: Date.now(), ext: ext, scope: scope, msg: body }))
             } catch (_e) {}
@@ -131,7 +131,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.1.93"
+        const SOLVER_VERSION = "0.1.99"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -191,6 +191,7 @@ function init() {
         let fsBindRetries = 0
         let fsAvBlocked = sget<boolean>("fs.avBlocked", false)
         let fsDownloadId = ""
+        let fsChromiumDownloadId = ""
         let fsLastOut = ""
         let fsCleanOut = ""
         let fsPollSkip = false
@@ -222,9 +223,10 @@ function init() {
         let fsDepsAutoTried = false
         const fsVersion = ctx.state<string>("")
         const fsTest = ctx.state<string>("")
-        const fsLogFilter = ctx.state<boolean>(true)
+        const fsLogFilter = ctx.state<boolean>(sget<boolean>("fs.logFilter", true))
         const fsConsent = ctx.state<boolean>(sget<boolean>("fs.consent", false))
         let sehGroups: { key: string; label: string; count: number; t: number }[] = []
+        let sehRowKeys: string[] = []
 
         function nowMs(): number {
             try {
@@ -507,7 +509,7 @@ function init() {
                 fsRestarting = false
                 fsBadStarts = 0
                 fsBindRetries = 0
-                markInstalled()
+                if (fsMode.get() !== "remote") markInstalled()
                 fsAvBlocked = false
                 try { $storage.set("fs.avBlocked", false) } catch (_e) {}
                 if (!fsUpSince) fsUpSince = nowMs()
@@ -542,11 +544,20 @@ function init() {
             })
         }
 
+        let badgeShown = ""
+
+        function setBadge(number: number, intent: "success" | "error" | "warning" | "info"): void {
+            const key = number + ":" + intent
+            if (key === badgeShown) return
+            badgeShown = key
+            tray.updateBadge({ number: number, intent: intent })
+        }
+
         function refreshTrayBadge(): void {
             try {
-                if (fsStatus.get() === "down" && !fsManualStop && fsMode.get() !== "remote") { tray.updateBadge({ number: 1, intent: "error" }); return }
-                if (solverUpdatePending()) { tray.updateBadge({ number: 1, intent: "info" }); return }
-                tray.updateBadge({ number: errorGroups().length, intent: "warning" })
+                if (fsStatus.get() === "down" && !fsManualStop && fsMode.get() !== "remote") { setBadge(1, "error"); return }
+                if (solverUpdatePending()) { setBadge(1, "info"); return }
+                setBadge(errorGroups().length, "warning")
             } catch (_e) {}
         }
 
@@ -559,9 +570,9 @@ function init() {
             out.push("solver: bundled=" + SOLVER_VERSION + " running=" + (fsVersion.get() || "?"))
             try { out.push("downloaded: solver=" + binaryDownloaded() + " chromium=" + (chromiumDownloadedHere() ? chromiumCachedVersion() : "none")) } catch (_e) {}
             const err = fsErr.get()
-            if (err) out.push("lastError=" + err)
+            if (err) out.push("lastError=" + scrubLog(err))
             const note = fsNote.get()
-            if (note && note !== err) out.push("note=" + note)
+            if (note && note !== err) out.push("note=" + scrubLog(note))
             const log = currentLog()
             if (log) { out.push("--- log tail ---"); out.push(log.split("\n").slice(-30).join("\n")) }
             return out.join("\n")
@@ -757,6 +768,7 @@ function init() {
                 $storage.set("fs.dnsCustom", fsDnsCustom.get())
                 $storage.set("fs.pacing", fsPacing.get())
                 $storage.set("fs.verbose", fsVerbose.get())
+                $storage.set("fs.logFilter", fsLogFilter.get())
                 $storage.set("fs.customTls", fsCustomTls.get())
                 $storage.set("fs.consent", fsConsent.get())
             } catch (_e) {}
@@ -783,7 +795,7 @@ function init() {
             await fsApi("sessions.create", { session: name })
         }
 
-        async function fsProbe(): Promise<{ up: boolean; version?: string; sessions?: string[] }> {
+        async function fsProbe(): Promise<{ up: boolean; foreign?: boolean; version?: string; sessions?: string[] }> {
             try {
                 const res = await ctx.fetch(fsBase() + "/v1", {
                     method: "POST",
@@ -793,8 +805,9 @@ function init() {
                 })
                 let data: any = null
                 try { data = res.json<any>() } catch (_e) {}
-                const ours = !!data && (data.version !== undefined || Array.isArray(data.sessions))
-                if (!res.ok || !ours) return { up: false }
+                const ours = !!data && (data.solver === "aquatils" || /^0\.\d+\.\d+$/.test(String(data.version || "")))
+                if (!res.ok) return { up: false }
+                if (!ours) return { up: false, foreign: true }
                 return {
                     up: true,
                     version: data.version ? String(data.version) : undefined,
@@ -817,6 +830,11 @@ function init() {
             fsCanHard.set(c.canStageB ? "yes" : "no")
             fsHardWhy.set(c.canStageB ? "" : String(c.reason || ""))
             if (before !== fsCanHard.get()) tray.update()
+            if (fsCanHard.get() === "no" && fsHardWhy.get()) {
+                notifyOnce("nohard", "Aqua's Utils: some sites will not load until this is fixed — " + fsHardWhy.get())
+            } else if (fsCanHard.get() === "yes") {
+                fsNotified["nohard"] = false
+            }
         }
 
         function trayPoke(): void {
@@ -827,6 +845,18 @@ function init() {
             if (fsTesting && nowMs() < fsTestUntil) return
             if (!fsDepsChecked) checkChromiumDeps()
             const p = await fsProbe()
+            if (p.foreign) {
+                setStatus("down")
+                if (fsMode.get() === "remote") {
+                    setErr("The host at " + fsBase() + " answered, but it is not Aqua's solver - check the address.")
+                } else {
+                    setErr("Port " + (fsPort.get() || FS_DEFAULT_PORT) + " is held by another FlareSolverr-compatible server, so the bundled solver was not started. Change the port in Settings, or stop the other server.")
+                }
+                notifyOnce("foreign", "Aqua's Utils: port " + (fsPort.get() || FS_DEFAULT_PORT) + " is held by another solver. Change the port in Settings.")
+                refreshTrayBadge()
+                trayPoke()
+                return
+            }
             if (p.up) {
                 void refreshCapability()
                 if (fsManualStop && fsMode.get() !== "remote") {
@@ -1053,14 +1083,19 @@ function init() {
         }
 
         function fsResetRestartCap(): void {
+            if (fsMode.get() === "remote") return
             fsAutoRestarts = 0
             fsLastAutoRestart = 0
             fsBindRetries = 0
+            fsNotified["restart-cap"] = false
+            fsNotified["av"] = false
         }
 
         function solverQuarantined(): boolean {
             try { return $storage.get<string>("fs.solverReady") === FS_VERSION && !solverBinExists() } catch (_e) { return false }
         }
+
+        const FS_KEEP = ["chromium", "state"]
 
         function fsStateDir(): string {
             try {
@@ -1126,16 +1161,24 @@ function init() {
             return ""
         }
 
-        function chromiumCachedPath(): string {
+        function chromiumPathUnder(base: string): string {
             const plt = chromiumCfTPlatform()
             if (!plt) return ""
             const rel = chromiumBinRel(plt)
             if (!rel) return ""
             try {
-                const p = $filepath.join($os.cacheDir(), "aquatils", "chromium", rel)
+                const p = $filepath.join(base, rel)
                 if ($os.stat(p)) return p
             } catch (_e) {}
             return ""
+        }
+
+        function chromiumCachedPath(): string {
+            try {
+                return chromiumPathUnder($filepath.join($os.cacheDir(), "aquatils", "chromium"))
+            } catch (_e) {
+                return ""
+            }
         }
 
         function verNewer(a: string, b: string): boolean {
@@ -1172,11 +1215,13 @@ function init() {
 
         function downloadChromium(st: { version: string; url: string }, done: (ok: boolean) => void): void {
             const dir = $filepath.join($os.cacheDir(), "aquatils", "chromium")
-            try { $os.removeAll(dir) } catch (_e) {}
-            try { $os.mkdirAll(dir, 493) } catch (_e) {}
-            const zip = $filepath.join(dir, "chrome.zip")
+            const staging = dir + ".new"
+            try { $os.removeAll(staging) } catch (_e) {}
+            try { $os.mkdirAll(staging, 493) } catch (_e) {}
+            const zip = $filepath.join(staging, "chrome.zip")
             let id = ""
-            try { id = dl.download(st.url, zip, { timeout: 900.5 }) } catch (_e) { setErr("Chromium download couldn't start: " + String(_e)); done(false); return }
+            try { id = dl.download(st.url, zip, { timeout: 900.5 }) } catch (_e) { try { $os.removeAll(staging) } catch (_e2) {} setErr("Chromium download couldn't start: " + String(_e)); done(false); return }
+            fsChromiumDownloadId = id
             plog("downloading Chromium" + (st.version ? " " + st.version : "") + " (browser solver)")
             dlLogAt = 0
 
@@ -1187,27 +1232,54 @@ function init() {
                     tray.update()
                 } else if (p.status === "completed") {
                     cancel()
+                    fsChromiumDownloadId = ""
                     plog("extracting Chromium…")
                     let unzipOk = true
-                    try { $osExtra.unzip(zip, dir) } catch (_e) { unzipOk = false }
+                    try { $osExtra.unzip(zip, staging) } catch (_e) { unzipOk = false }
                     try { $os.removeAll(zip) } catch (_e) {}
-                    const ok = unzipOk && chromiumCachedPath() !== ""
-                    if (ok && st.version) {
-                        try { $storage.set("fs.chromiumVer", st.version) } catch (_e) {}
+                    let ok = unzipOk && chromiumPathUnder(staging) !== ""
+                    if (ok) {
+                        const previous = dir + ".old"
+                        let movedAside = false
+                        try { $os.removeAll(previous) } catch (_e) {}
+                        try { if ($os.stat(dir)) { $os.rename(dir, previous); movedAside = true } } catch (_e) {}
+                        try {
+                            $os.rename(staging, dir)
+                        } catch (_e) {
+                            ok = false
+                            if (movedAside) { try { $os.rename(previous, dir) } catch (_e2) {} }
+                        }
+                        ok = ok && chromiumCachedPath() !== ""
+                        if (ok) {
+                            try { $os.removeAll(previous) } catch (_e) {}
+                        } else {
+                            try { $os.removeAll(dir) } catch (_e) {}
+                            if (movedAside) { try { $os.rename(previous, dir) } catch (_e) {} }
+                        }
+                    }
+                    if (ok) {
+                        if (st.version) {
+                            try { $storage.set("fs.chromiumVer", st.version) } catch (_e) {}
+                        }
                     } else {
-                        try { $os.removeAll(dir) } catch (_e) {}
-                        try { $storage.set("fs.chromiumVer", "") } catch (_e) {}
-                        setErr("Chromium download/extract failed — the browser solver (hard challenges) will be unavailable.")
+                        try { $os.removeAll(staging) } catch (_e) {}
+                        setErr("Chromium download/extract failed — the copy already installed was left in place.")
                         tray.update()
                     }
                     done(ok)
                 } else if (p.status === "error") {
                     cancel()
+                    fsChromiumDownloadId = ""
+                    try { $os.removeAll(staging) } catch (_e) {}
                     setErr("Chromium download failed: " + (p.error || "unknown error"))
                     done(false)
                 } else if (p.status === "cancelled") {
                     cancel()
-                    setErr("Chromium download timed out — the browser solver (hard challenges) will be unavailable. Press Start to try again.")
+                    fsChromiumDownloadId = ""
+                    try { $os.removeAll(staging) } catch (_e) {}
+                    if (!fsManualStop) {
+                        setErr("Chromium download timed out — the copy already installed was left in place. Press Start to try again.")
+                    }
                     done(false)
                 }
             })
@@ -1296,7 +1368,7 @@ function init() {
                 let entries: $os.DirEntry[] = []
                 try { entries = $os.readDir(base) } catch (_e) { return }
                 for (const e of entries) {
-                    if (e.isDir() && e.name() !== "chromium" && e.name() !== FS_VERSION) {
+                    if (e.isDir() && FS_KEEP.indexOf(e.name()) < 0 && e.name() !== FS_VERSION) {
                         try { $os.removeAll($filepath.join(base, e.name())) } catch (_e) {}
                     }
                 }
@@ -1322,8 +1394,10 @@ function init() {
             const port = fsPort.get() || FS_DEFAULT_PORT
             const fsDir = $filepath.join($os.cacheDir(), "aquatils", FS_VERSION, FS_CONTAINER)
             const chrDir = $filepath.join($os.cacheDir(), "aquatils", "chromium")
-            const prep = "xattr -dr com.apple.quarantine " + shq(fsDir) + " 2>/dev/null; chmod -R 755 " + shq(fsDir) + "; "
-                + (chromiumOverride ? "xattr -dr com.apple.quarantine " + shq(chrDir) + " 2>/dev/null; chmod -R 755 " + shq(chrDir) + "; " : "")
+            const mac = $os.platform === "darwin"
+            const unquarantine = (d: string) => (mac ? "xattr -dr com.apple.quarantine " + shq(d) + " 2>/dev/null; " : "")
+            const prep = unquarantine(fsDir) + "chmod -R 755 " + shq(fsDir) + "; "
+                + (chromiumOverride ? unquarantine(chrDir) + "chmod -R 755 " + shq(chrDir) + "; " : "")
             const ac = $os.platform === "windows"
                 ? $osExtra.asyncCmd("cmd", "/c", winCmdArg(binPath))
                 : $osExtra.asyncCmd("sh", "-c", prep + "exec " + shq(binPath))
@@ -1385,8 +1459,9 @@ function init() {
                     } else {
                         const why = cleanTail(fsLastOut) || readLogTail(logPath)
                         const bindRace = /address already in use|bind:\s|EADDRINUSE/i.test(fsLastOut)
-                        const execBlocked = /cannot execute the specified program|not a valid win32 application|is not recognized as an internal|exec format error|access is denied|contains a virus|operation did not complete successfully/i.test(fsLastOut)
                         const binGone = !solverBinExists()
+                        const avEvidence = /contains a virus|operation did not complete successfully/i.test(fsLastOut) || (binGone && solverQuarantined())
+                        const execRefused = /cannot execute the specified program|not a valid win32 application|is not recognized as an internal|exec format error|access is denied/i.test(fsLastOut)
                         if (bindRace) {
                             plog("solver couldn't bind port " + port + " yet (a previous instance is still releasing it) - it will retry")
                             setErr("The previous solver is still shutting down (port " + port + " busy) - retrying shortly.")
@@ -1395,7 +1470,13 @@ function init() {
                                 fsBindRetries++
                                 ctx.setTimeout(() => { if (!fsManualStop && fsMode.get() !== "remote" && fsStatus.get() !== "up" && fsStatus.get() !== "starting") fsStart() }, 3000)
                             }
-                        } else if ((execBlocked || binGone) && $os.platform === "windows") {
+                        } else if (execRefused && !avEvidence && $os.platform === "windows") {
+                            plog("windows refused to run the solver: " + (why || "no output captured"))
+                            setErr("Windows refused to run the solver" + (why ? ": " + why : "") + " — this is not antivirus. It is usually a policy restriction on running programs from this folder, or a damaged download.")
+                            fsHint.set("Press Restart. If it keeps happening, use Remove solver in Downloads and let it fetch again.")
+                            setNote("Windows refused to run the solver — see the error above.")
+                            ctx.toast.error("Windows refused to run the solver — see the tray for the reason.")
+                        } else if ((avEvidence || binGone) && $os.platform === "windows") {
                             fsAvBlocked = true
                             try { $storage.set("fs.avBlocked", true) } catch (_e) {}
                             plog("antivirus blocked the solver" + (binGone ? " (binary quarantined/removed while running)" : " (execution blocked)"))
@@ -1466,6 +1547,11 @@ function init() {
             fsBinaryGen++
             const stopGen = fsBinaryGen
             const guardedDone = (): void => { if (stopGen === fsBinaryGen && done) done() }
+            if (dl && fsChromiumDownloadId) {
+                try { dl.cancel(fsChromiumDownloadId) } catch (_e) {}
+                fsChromiumDownloadId = ""
+                plog("cancelled the Chromium download")
+            }
             if (dl && fsDownloadId) {
                 try {
                     dl.cancel(fsDownloadId)
@@ -1481,7 +1567,7 @@ function init() {
             fsBinary = null
             if (typeof $os !== "undefined" && $os.platform === "windows" && typeof $osExtra !== "undefined") {
                 try {
-                    $osExtra.asyncCmd("cmd", "/c", "taskkill", "/F", "/T", "/IM", "solver.exe").run((_d, _e, code) => {
+                    $osExtra.asyncCmd("cmd", "/c", "powershell", "-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='SilentlyContinue';foreach($p in Get-CimInstance Win32_Process){if($p.Name -eq 'solver.exe' -and $p.CommandLine -like '*aquatils\\*'){Stop-Process -Id $p.ProcessId -Force}}").run((_d, _e, code) => {
                         if (code === undefined) return
                         reapOurChrome(guardedDone)
                     })
@@ -1503,9 +1589,11 @@ function init() {
             const localHost = host === "" || host === "127.0.0.1" || host === "localhost" || host === "::1"
             let cmd = "pkill -9 -f '[a]quatils/.*/solver/solver' 2>/dev/null; "
             if (port && localHost) {
-                cmd += "if command -v fuser >/dev/null 2>&1; then fuser -k " + port + "/tcp 2>/dev/null; "
-                    + "elif command -v lsof >/dev/null 2>&1; then lsof -tiTCP:" + port + " -sTCP:LISTEN 2>/dev/null | xargs -r kill -9 2>/dev/null; "
-                    + "elif command -v ss >/dev/null 2>&1; then P=$(ss -H -ltnp 2>/dev/null | grep -E '[:.]" + port + " ' | grep -oE 'pid=[0-9]+' | head -n1 | cut -d= -f2); [ -n \"$P\" ] && kill -9 \"$P\" 2>/dev/null; fi; "
+                cmd += "P=$(lsof -tiTCP:" + port + " -sTCP:LISTEN 2>/dev/null | head -n1); "
+                    + "[ -z \"$P\" ] && P=$(ss -H -ltnp 2>/dev/null | grep -E '[:.]" + port + " ' | grep -oE 'pid=[0-9]+' | head -n1 | cut -d= -f2); "
+                    + "if [ -n \"$P\" ]; then X=$(readlink -f /proc/\"$P\"/exe 2>/dev/null); "
+                    + "[ -z \"$X\" ] && X=$(lsof -p \"$P\" -Fn 2>/dev/null | grep -m1 aquatils/); "
+                    + "case \"$X\" in *aquatils/*) kill -9 \"$P\" 2>/dev/null;; esac; fi; "
             }
             cmd += "exit 0"
             try {
@@ -1541,7 +1629,7 @@ function init() {
         function reapLeftoverListener(): void {
             if (typeof $os === "undefined" || typeof $osExtra === "undefined") return
             if ($os.platform === "windows") {
-                try { $osExtra.asyncCmd("cmd", "/c", "taskkill", "/F", "/T", "/IM", "solver.exe").run((_d, _e, _c) => {}) } catch (_e) {}
+                try { $osExtra.asyncCmd("cmd", "/c", "powershell", "-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='SilentlyContinue';foreach($p in Get-CimInstance Win32_Process){if($p.Name -eq 'solver.exe' -and $p.CommandLine -like '*aquatils\\*'){Stop-Process -Id $p.ProcessId -Force}}").run((_d, _e, _c) => {}) } catch (_e) {}
                 return
             }
             reapOrphanSolvers()
@@ -1558,7 +1646,7 @@ function init() {
         function sha256OfFile(path: string): string {
             try {
                 const c = $os.platform === "windows"
-                    ? $os.cmd("cmd", "/c", "certutil -hashfile " + winCmdArg(path) + " SHA256")
+                    ? $os.cmd("cmd", "/c", "certutil -hashfile " + winQuote(path) + " SHA256")
                     : $os.cmd("sh", "-c", ($os.platform === "darwin" ? "shasum -a 256 " : "sha256sum ") + shq(path))
                 const raw = c.output()
                 const text = typeof raw === "string" ? raw : ""
@@ -1584,6 +1672,10 @@ function init() {
             return ""
         }
 
+        function winQuote(s: string): string {
+            return '"' + String(s).replace(/"/g, '') + '"'
+        }
+
         function winCmdArg(s: string): string {
             if (/[ \t]/.test(s)) return s
             return s.replace(/[&^()<>|]/g, "^$&")
@@ -1601,9 +1693,20 @@ function init() {
             try { return dirExists($filepath.join(aquatilsDir(), "chromium")) } catch (_e) { return false }
         }
 
-        function removeSolverDownloads(): void {
+        function latchManualStop(): void {
+            if (fsMode.get() === "remote") return
             fsManualStop = true
             try { $storage.set("fs.manualStop", true) } catch (_e) {}
+        }
+
+        function clearManualStop(): void {
+            if (fsMode.get() === "remote") return
+            fsManualStop = false
+            try { $storage.set("fs.manualStop", false) } catch (_e) {}
+        }
+
+        function removeSolverDownloads(): void {
+            latchManualStop()
             binaryStop(() => {
                 setStatus("down")
                 let removed = false
@@ -1612,7 +1715,7 @@ function init() {
                     let entries: $os.DirEntry[] = []
                     try { entries = $os.readDir(base) } catch (_e) {}
                     const names = entries.length
-                        ? entries.filter((e) => e.isDir() && e.name() !== "chromium").map((e) => e.name())
+                        ? entries.filter((e) => e.isDir() && FS_KEEP.indexOf(e.name()) < 0).map((e) => e.name())
                         : [FS_VERSION]
                     for (const name of names) {
                         try { $os.removeAll($filepath.join(base, name)); removed = true } catch (_e) {}
@@ -1631,8 +1734,8 @@ function init() {
 
         function removeChromiumDownloads(): void {
             const present = chromiumDirExists()
-            fsManualStop = true
-            try { $storage.set("fs.manualStop", true) } catch (_e) {}
+            const wasUp = fsMode.get() !== "remote" && (fsStatus.get() === "up" || fsStatus.get() === "starting")
+            latchManualStop()
             binaryStop(() => {
                 setStatus("down")
                 try { $os.removeAll($filepath.join(aquatilsDir(), "chromium")) } catch (_e) {}
@@ -1641,7 +1744,9 @@ function init() {
                 } else {
                     try { $storage.set("fs.chromiumVer", "") } catch (_e) {}
                     chromiumOverride = ""
-                    setNote(present ? "Removed the downloaded Chromium." : "No Chromium download was present.")
+                    setNote(present
+                        ? "Removed the downloaded Chromium." + (wasUp ? " The solver was stopped to release it - press Start to run it again." : "")
+                        : "No Chromium download was present.")
                 }
                 tray.update()
             })
@@ -1838,6 +1943,7 @@ function init() {
                     fsDownloadId = ""
                     fsBusy = false
                     setStatus("down")
+                    setErr("The solver download failed: " + (p.error || "unknown error") + " — press Start to try again.")
                     setNote("Download failed: " + (p.error || ""))
                     tray.update()
                 } else if (p.status === "cancelled") {
@@ -1845,6 +1951,9 @@ function init() {
                     fsDownloadId = ""
                     fsBusy = false
                     setStatus("down")
+                    if (!fsManualStop) {
+                        setErr("The solver download did not finish — press Start to try again.")
+                    }
                     setNote("The solver download timed out — press Start to retry.")
                     tray.update()
                 }
@@ -1852,38 +1961,36 @@ function init() {
         }
 
         function fsStart(): void {
-            fsManualStop = false
-            fsDepsCmd.set("")
-            fsDepsPkgs.set([])
-            fsDepsChecked = false
-            fsNotified["chromedeps"] = false
-            try { $storage.set("fs.manualStop", false) } catch (_e) {}
-            fsAvBlocked = false
-            try { $storage.set("fs.avBlocked", false) } catch (_e) {}
             if (fsMode.get() === "remote") {
                 setNote("Remote mode: start the solver yourself; this only manages sessions at " + fsBase() + ".")
                 tray.update()
                 void fsRefresh()
-            } else {
-                binaryEnsureAndStart()
+                return
             }
+            clearManualStop()
+            fsDepsCmd.set("")
+            fsDepsPkgs.set([])
+            fsDepsChecked = false
+            fsNotified["chromedeps"] = false
+            fsAvBlocked = false
+            try { $storage.set("fs.avBlocked", false) } catch (_e) {}
+            binaryEnsureAndStart()
         }
 
         function fsStop(): void {
-            fsManualStop = true
-            fsResetRestartCap()
-            try { $storage.set("fs.manualStop", true) } catch (_e) {}
             if (fsMode.get() === "remote") {
                 setNote("Remote mode: stop the solver on its host.")
                 tray.update()
-            } else {
-                fsBusy = false
-                binaryStop()
-                setStatus("down")
-                fsStartTicks = 0
-                setNote("Solver stopped.")
-                tray.update()
+                return
             }
+            latchManualStop()
+            fsResetRestartCap()
+            fsBusy = false
+            binaryStop()
+            setStatus("down")
+            fsStartTicks = 0
+            setNote("Solver stopped.")
+            tray.update()
         }
 
         function solverDetail(): string {
@@ -1983,6 +2090,7 @@ function init() {
         })
         ctx.registerEventHandler("fs-logs-filter", () => {
             fsLogFilter.set(!fsLogFilter.get())
+            fsPersist()
             tray.update()
         })
         ctx.registerEventHandler("fs-doctor", () => {
@@ -1994,8 +2102,11 @@ function init() {
         for (let gi = 0; gi < 30; gi++) {
             ;(function (idx) {
                 ctx.registerEventHandler("seh-copy-" + idx, () => {
-                    if (idx >= sehGroups.length) return
-                    const g = sehGroups[idx]
+                    const want = sehRowKeys[idx]
+                    if (!want) return
+                    let g = undefined as { key: string; label: string; count: number; t: number } | undefined
+                    for (const c of sehGroups) { if (c.key === want) { g = c; break } }
+                    if (!g) { ctx.toast.error("That entry is no longer listed"); return }
                     try {
                         ctx.dom.clipboard.write(g.label + (g.count > 1 ? " (×" + g.count + ")" : ""))
                         ctx.toast.success("Copied")
@@ -2006,8 +2117,18 @@ function init() {
             })(gi)
         }
         ctx.registerEventHandler("fs-mode-remote", () => {
+            const wasLocal = fsStatus.get() === "up" || fsStatus.get() === "starting"
             fsMode.set("remote")
             fsPersist()
+            if (wasLocal) {
+                binaryStop(() => {
+                    setStatus("down")
+                    setNote("Switched to Remote - the solver running on this machine was stopped.")
+                    tray.update()
+                    void fsRefresh()
+                })
+                return
+            }
             tray.update()
         })
         ctx.registerEventHandler("fs-mode-binary", () => {
@@ -2095,11 +2216,15 @@ function init() {
         })
         ctx.registerEventHandler("ui-mode-toggle", () => {
             uiMode.set(uiMode.get() === "simple" ? "advanced" : "simple")
-            $storage.set("ui.mode", uiMode.get())
+            try {
+                $storage.set("ui.mode", uiMode.get())
+            } catch (_e) {
+                ctx.toast.error("Couldn't remember the view — it will revert next time.")
+            }
             tray.update()
         })
         ctx.registerEventHandler("fs-simple-start", () => {
-            fsManualStop = false
+            clearManualStop()
             fsResetRestartCap()
             setStatus("starting")
             setNote("Starting solver…")
@@ -2162,6 +2287,7 @@ function init() {
         ctx.registerEventHandler("fs-save", () => {
             const host = (fsHostRef.current || "").trim() || FS_DEFAULT_HOST
             const port = (fsPortRef.current || "").trim() || FS_DEFAULT_PORT
+            const oldPort = fsPort.get()
             if (/[:/]/.test(host)) { ctx.toast.error("Host must be a bare hostname or IP (no http:// and no port)"); return }
             const pn = Number(port)
             if (!/^\d{1,5}$/.test(port) || pn < 1 || pn > 65535) { ctx.toast.error("Port must be a number between 1 and 65535"); return }
@@ -2169,7 +2295,11 @@ function init() {
             fsPort.set(port)
             fsSession.set((fsSessionRef.current || "").trim() || FS_DEFAULT_SESSION)
             fsPersist()
-            ctx.toast.success("Saved solver settings")
+            if (fsMode.get() !== "remote" && port !== oldPort) {
+                applySolverEnvChange("Solver port saved")
+            } else {
+                ctx.toast.success("Saved solver settings")
+            }
             void fsRefresh()
         })
 
@@ -2272,6 +2402,7 @@ function init() {
         function errorRows(): any[] {
             const rows: any[] = []
             sehGroups = errorGroups()
+            sehRowKeys = sehGroups.map((g) => g.key)
             if (sehGroups.length === 0) {
                 rows.push(dim("No extension errors reported."))
                 return rows
@@ -2608,7 +2739,7 @@ function init() {
                 ],
                 gap: 2,
             }))
-            if (chrHere) {
+            if (chrHere && fsMode.get() !== "remote") {
                 rows.push(tray.flex({
                     items: [
                         tray.text("Chromium " + chromiumCachedVersion(), { style: { fontSize: "12px", color: "rgba(255,255,255,0.55)" } }),
