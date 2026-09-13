@@ -88,7 +88,7 @@ class Provider {
 
     getSettings(): Settings {
         return {
-            episodeServers: ["Auto", "HD-1", "HD-2", "Vidstream-2"],
+            episodeServers: ["Auto"],
             supportsDub: true,
         }
     }
@@ -180,9 +180,27 @@ class Provider {
         })
     }
 
+    private containedInShow(results: SearchResult[], media: Media): SearchResult[] {
+        const targets: string[] = []
+        for (const t of [media.romajiTitle, media.englishTitle]) {
+            const b = this.baseTitle(t || "")
+            if (b.length >= 3) targets.push(b)
+        }
+        if (targets.length === 0) return results
+        const kept = results.filter((r) => {
+            const b = this.baseTitle(r.title)
+            if (b.length < 3) return false
+            for (const t of targets) {
+                if (b.indexOf(t) === 0 || t.indexOf(b) === 0) return true
+            }
+            return false
+        })
+        return kept.length > 0 ? kept : []
+    }
+
     private filterBySeason(results: SearchResult[], season: number, part: number, media: Media): SearchResult[] {
         const show = this.sameShow(results, media)
-        const pool = show.length > 0 ? show : results
+        const pool = show.length > 0 ? show : this.containedInShow(results, media)
         if (season < 2 && part < 2) return pool
         const matched = pool.filter((r) => {
             let resultSeason = -1
@@ -1060,13 +1078,6 @@ class Provider {
         return m ? m[1].toLowerCase() : ""
     }
 
-    private extOf(file: string): string {
-        const path = file.split(/[?#]/)[0]
-        const m = path.match(/\.([a-z0-9]+)$/i)
-        const e = m ? m[1].toLowerCase() : ""
-        return e === "ass" || e === "srt" ? e : "vtt"
-    }
-
     private async ensureServeToken(anilistId: number): Promise<string | undefined> {
         const key = `anikoto:tok:${anilistId}`
         const cached = this.readCache<string>(key, this.tokenTtl)
@@ -1113,7 +1124,7 @@ class Provider {
 
         for (let i = 0; i < valid.length; i++) {
             const t = valid[i]
-            const lang = codes[i]
+            const lang = codes[i] || "und"
             const label = (t.label || "").trim()
             if (seenSrc[t.file]) continue
             seenSrc[t.file] = true
@@ -1121,7 +1132,7 @@ class Provider {
             const slot = seenSlot[lang] ? `${lang}-${idx}` : lang
             seenSlot[lang] = true
             const url = up
-                ? `${this.subEndpoint}/s/${anime}/${ep}/${slot}.${this.extOf(t.file)}?src=${encodeURIComponent(t.file)}${tokParam}${refParam}`
+                ? `${this.subEndpoint}/s/${anime}/${ep}/${slot}.vtt?src=${encodeURIComponent(t.file)}${tokParam}${refParam}`
                 : t.file
             collected.push({
                 id: `${lang}-${idx}`,
@@ -1139,6 +1150,7 @@ class Provider {
 
         if (collected.length === 0) return collected
         collected[pick].isDefault = true
+        if (up) return [collected[pick]]
         const head: VideoSubtitle[] = []
         const tail: VideoSubtitle[] = []
         for (let i = 0; i < collected.length; i++) {
@@ -1236,11 +1248,17 @@ class Provider {
             vie: "vi", vietnamese: "vi",
             ukr: "uk", ukrainian: "uk",
             hin: "hi", hindi: "hi",
+            dan: "da", danish: "da",
+            nor: "no", norwegian: "no",
+            fin: "fi", finnish: "fi",
+            hun: "hu", hungarian: "hu",
+            heb: "he", hebrew: "he",
+            fil: "tl", filipino: "tl", tagalog: "tl",
         }
         for (const w of words) {
             if (map[w]) return map[w]
         }
-        return "en"
+        return ""
     }
 
     private withAudio(base: string, audio: string): string {
