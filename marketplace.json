@@ -41,8 +41,8 @@
   {
     "id": "aq-anizone-beta",
     "name": "AniZone - BETA",
-    "version": "1.1.34",
-    "description": "Only anizone compatibility layer you'll ever need",
+    "version": "1.1.35",
+    "description": "Only anizone compatibility layer you'll ever need. Dub streams carry both audio tracks — pick English in the player's audio menu once and Seanime remembers it for that series.",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
     "language": "typescript",
