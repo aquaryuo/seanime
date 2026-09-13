@@ -642,6 +642,7 @@ class Provider implements AnimeProvider {
         const got = await this.fetchSources(linkId)
         if (!got || !got.file) throw this.fail("server", "could not resolve the player URL (source may be encrypted or down)")
         if (audio === "dub" && got.embedAudio === "sub") throw this.fail("server", "dub source resolved to the subbed (Japanese) track")
+        if (audio !== "dub" && got.embedAudio === "dub") throw this.fail("server", "sub source resolved to the dubbed track")
         const subtitles = await this.buildSubtitles(got.tracks, got.origin)
         return {
             server: serverName,
@@ -833,6 +834,7 @@ class Provider implements AnimeProvider {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ cmd: "request.get", url: url, maxTimeout: 32000 }),
+                noCloudflareBypass: true,
             })
             if (!res.ok) {
                 if (res.status >= 500) this.writeCache("anikoto:solverdown", this.now() + this.solverCooldown)
