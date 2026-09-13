@@ -14,6 +14,7 @@ class Provider {
     private resolveDownTtl = 60000
     private serverBudget = 75000
     private searchBudget = 60000
+    private searchCacheTtl = 60000
     private deadline = 0
     private clearanceTtl = 1200000
     private subEndpoint = "https://sub.ryuo.to"
@@ -110,6 +111,10 @@ class Provider {
         let unrecognized = false
         this.deadline = this.now() + this.searchBudget
 
+        const sKey = `anikoto:srch:${audio}:${sq.queries.slice().sort().join("|").toLowerCase()}`
+        const sCached = this.readCache<SearchResult[]>(sKey, this.searchCacheTtl)
+        if (sCached && sCached.length > 0) return sCached
+
         for (const base of this.candidateBases()) {
             if (this.outOfTime()) break
             this.baseUrl = base
@@ -153,8 +158,11 @@ class Provider {
                 }
                 this.rememberBase(base)
                 const best = this.dominantMatch(results, opts.media)
-                if (best) return [best]
-                return this.preferByEvidence(this.filterBySeason(results, sq.season, sq.part, opts.media), evidence, opts.media)
+                const out = best
+                    ? [best]
+                    : this.preferByEvidence(this.filterBySeason(results, sq.season, sq.part, opts.media), evidence, opts.media)
+                if (out.length > 0) this.writeCache(sKey, out)
+                return out
             }
         }
 
