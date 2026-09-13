@@ -80,7 +80,7 @@
   {
     "id": "aq-seatags-beta",
     "name": "SeaTags - BETA",
-    "version": "1.7.19",
+    "version": "1.7.20",
     "description": "Plugin dedicated to displaying status of plugins/extensions within installed/marketplace pages; as well as filter based on author & show score",
     "author": "aquaryuo",
     "type": "plugin",

@@ -793,7 +793,12 @@ document was first written, so any SHA quoted in the body above is dead — trus
 | `seatags-error-codes` | `81e6407` — the thirteen bare tokens map to sentences; the code stays the dedup key |
 | `anizone-dub-selects-nothing` (partial), `animelok-subtitle-default-and-dedup` | `ef57319` — anizone's scoring ladder ported into animelok: matches on a normalised code, dedupes on URL, and picks full English dialogue over a `default:true` Signs/Songs track |
 | `animelok-untrusted-headers-and-url`, `m3u8-host-validation` | `027f9b1` — scraped JSON can no longer choose request headers (allowlist) or hand the local proxy an internal host; validator tested against `evil.com@127.0.0.1` and friends |
-| `server-arg-contract` | one rule across all four: return only a name we advertise, never echo, never throw. anikoto routes every argument through Auto, which retired `parseServerLabel` and the dead `hs:` branch |
+| `server-arg-contract` | `9ce635c` — one rule across all four: return only a name we advertise, never echo, never throw. anikoto routes every argument through Auto, which retired `parseServerLabel` and the dead `hs:` branch |
+| `readme-empty` | `753594c` — channel URLs and who each is for, the seven payloads, and a plain sentence that aquatils downloads and runs a binary (and that digest verification is skipped when there is no digest or no hash tool) |
+| Nits (Batch A/B) | `9ce635c` — animepahe's search `subOrDub` is `"both"` (it was asserted from the request, not the data); anikoto strips the site's `(- Native (Region))` label artifacts |
+| `seatags-installed-id-fallback` | duplicate names are dropped from the lookup, so an ambiguous card reads "Untagged" instead of inheriting another entry's verdict |
+| `seatags-reset-loses-controls` | the reset now clears its own toolbar marker, mirroring the existing stylesheet cleanup, so the controls come back instead of going silently inert |
+| `seatags-load-never-retried` | `onNavigate` retries (TTL makes it free), with bounded backoff, one warning toast on final failure, and a JSON parse failure no longer reported as a transport failure |
 
 Not filed in this document, because they arrived as user reports rather than review findings:
 

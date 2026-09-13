@@ -76,12 +76,20 @@ function init() {
         function rebuildMaps(): void {
             byId = {}
             byName = {}
+            const nameCount: { [k: string]: number } = {}
             const es = entriesState.get()
             for (let i = 0; i < es.length; i++) {
                 const e = es[i]
                 if (!e || typeof e !== "object") continue
                 if (e.id) byId[e.id] = e
-                if (e.name) byName[String(e.name).toLowerCase()] = e
+                if (e.name) {
+                    const k = String(e.name).toLowerCase()
+                    nameCount[k] = (nameCount[k] || 0) + 1
+                    byName[k] = e
+                }
+            }
+            for (const k in nameCount) {
+                if (nameCount[k] > 1) delete byName[k]
             }
         }
         rebuildMaps()
@@ -91,6 +99,7 @@ function init() {
             fetch: "could not reach the marketplace list, so no cards were tagged",
             http: "the marketplace list answered with an error status, so no cards were tagged",
             shape: "the marketplace list came back in an unexpected shape, so no cards were tagged",
+            parse: "the marketplace list was not readable JSON, so no cards were tagged",
             findrow: "could not find the badge row on an extension card",
             attr: "could not tag an extension card",
             html: "could not render the tag block on a card",
@@ -265,7 +274,7 @@ function init() {
             const a = authorState.get().toLowerCase().replace(/["\\]/g, "")
             let css = ""
             if (f && f !== "all" && entriesState.get().length > 0) css += '[class*="extension-card"]:not([' + A_TAGS + '~="' + f + '"]){display:none !important}'
-            if (a) css += '[class*="extension-card"]:not([' + A_AUTHOR + '*="' + a + '"]){display:none !important}'
+            if (a && entriesState.get().length > 0) css += '[class*="extension-card"]:not([' + A_AUTHOR + '*="' + a + '"]){display:none !important}'
             try { filterStyle.setText(css) } catch (e) { dsetErr("filter") }
         }
 
@@ -532,6 +541,11 @@ function init() {
                     if (olds) for (let i = 0; i < olds.length; i++) { try { olds[i].remove() } catch (_e) {} }
                 }, () => {})
             } catch (_e) {}
+            try {
+                ctx.dom.query("[" + A_TB + "]").then((marked: any[]) => {
+                    if (marked) for (let i = 0; i < marked.length; i++) { try { marked[i].removeAttribute(A_TB) } catch (_e) {} }
+                }, () => {})
+            } catch (_e) {}
         }
         function onDomReady(): void {
             domReady = true
@@ -541,25 +555,50 @@ function init() {
         }
         try { ctx.dom.onReady(() => { resetForReady().then(() => onDomReady(), () => onDomReady()) }) } catch (_e) {}
         try { ctx.dom.onMainTabReady(() => { resetForReady().then(() => onDomReady(), () => onDomReady()) }) } catch (_e) {}
-        try { ctx.screen.onNavigate(() => { startControls(); startCards() }) } catch (_e) {}
+        try { ctx.screen.onNavigate(() => { startControls(); startCards(); load(false).catch(() => {}) }) } catch (_e) {}
 
         let inflight = false
+        let loadFails = 0
+        let loadWarned = false
+        let retryPending = false
+        function scheduleRetry(): void {
+            if (retryPending) return
+            loadFails++
+            if (loadFails > 3) {
+                if (!loadWarned) {
+                    loadWarned = true
+                    try { ctx.toast.warning("Seatags could not load the tag list, so cards stay untagged for now.") } catch (_e) {}
+                }
+                return
+            }
+            retryPending = true
+            try {
+                ctx.setTimeout(() => { retryPending = false; load(true).catch(() => {}) }, 5000 * loadFails)
+            } catch (_e) {
+                retryPending = false
+            }
+        }
         async function load(force: boolean): Promise<void> {
             if (inflight) return
             if (!force && entriesState.get().length > 0 && now() - lastAt < CACHE_TTL) return
             inflight = true
             let dataChanged = false
+            let ok = false
             try {
                 const res = await fetch(SRC, { timeout: 15 })
                 if (res.ok) {
-                    const data = res.json<any>()
+                    let data: any = undefined
+                    let parsed = true
+                    try { data = res.json<any>() } catch (_e) { parsed = false; dsetErr("parse") }
+                    if (!parsed) data = undefined
                     if (Array.isArray(data)) {
+                        ok = true
                         const clean = (data as any[]).filter((e) => e && typeof e === "object")
                         try { dataChanged = JSON.stringify(entriesState.get()) !== JSON.stringify(clean) } catch (_e) { dataChanged = true }
                         entriesState.set(clean as Entry[])
                         rebuildMaps()
                         try { $storage.set(CACHE_KEY, { at: now(), data: clean }) } catch (_e) {}
-                    } else {
+                    } else if (parsed) {
                         dsetErr("shape")
                     }
                     lastAt = now()
@@ -570,6 +609,8 @@ function init() {
                 dsetErr("fetch")
             }
             inflight = false
+            if (ok) loadFails = 0
+            else scheduleRetry()
             if (dataChanged) { try { await refreshDecorated() } catch (_e) {} }
             startCards()
         }
