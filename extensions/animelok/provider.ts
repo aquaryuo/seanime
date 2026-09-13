@@ -7,6 +7,7 @@ type VibeResult = { status: "ok" | "notfound" | "nosource" | "fail" | "badshape"
 
 class Provider implements AnimeProvider {
     private baseUrl = this.cfg("baseUrl", "{{baseUrl}}", "https://animelok.live")
+    private base = this.normBase()
     private cacheTtl = 900000
     private srcCacheTtl = 300000
     private availFailTtl = 45000
@@ -20,7 +21,7 @@ class Provider implements AnimeProvider {
         if (!anilistId || anilistId <= 0) anilistId = this.parseAnilistId(opts.query)
         if (!anilistId || anilistId <= 0) return []
         const av = await this.availability(anilistId, opts.dub)
-        if (av.broken) throw this.fail("search", `animelok: ${this.normBase()} answered for AniList id ${anilistId} in a shape this extension does not understand — the site changed its API; this extension needs an update.`)
+        if (av.broken) throw this.fail("search", `animelok: ${this.base} answered for AniList id ${anilistId} in a shape this extension does not understand — the site changed its API; this extension needs an update.`)
         if (!av.exists) return []
         const epCount = opts.media.episodeCount && opts.media.episodeCount > 0 ? opts.media.episodeCount : 0
         const title = opts.media.englishTitle || opts.media.romajiTitle || `Anime ${anilistId}`
@@ -28,7 +29,7 @@ class Provider implements AnimeProvider {
             {
                 id: this.encode(anilistId, av.audio, epCount),
                 title,
-                url: `${this.normBase()}/anime/${anilistId}`,
+                url: `${this.base}/anime/${anilistId}`,
                 subOrDub: av.subOrDub,
             },
         ]
@@ -45,7 +46,7 @@ class Provider implements AnimeProvider {
             episodes.push({
                 id: this.encode(meta.anilistId, meta.audio, n),
                 number: n,
-                url: `${this.normBase()}/watch/${meta.anilistId}?ep=${n}`,
+                url: `${this.base}/watch/${meta.anilistId}?ep=${n}`,
             })
         }
         return episodes
@@ -105,7 +106,7 @@ class Provider implements AnimeProvider {
                 if (typeof v === "string" && v) out[k] = v
             }
         }
-        if (!out.Referer && !out.referer) out.Referer = `${this.normBase()}/`
+        if (!out.Referer && !out.referer) out.Referer = `${this.base}/`
         return out
     }
 
@@ -245,8 +246,8 @@ class Provider implements AnimeProvider {
             let res: FetchResponse
             try {
                 res = await fetch(
-                    `${this.normBase()}/api/get-vibeplayer-data?anilistId=${anilistId}&epNum=${ep}&type=${audio}`,
-                    { headers: { Referer: `${this.normBase()}/`, Accept: "application/json" } }
+                    `${this.base}/api/get-vibeplayer-data?anilistId=${anilistId}&epNum=${ep}&type=${audio}`,
+                    { headers: { Referer: `${this.base}/`, Accept: "application/json" } }
                 )
             } catch (_e) {
                 continue

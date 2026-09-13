@@ -16,7 +16,7 @@ function eq(actual, expected, what) {
     }
 }
 
-function load(name) {
+function load(name, overrides) {
     const src = `${ROOT}/extensions/${name}/provider.ts`
     const js = execFileSync("npx", ["esbuild", "--loader=ts", "--target=es2018"], {
         input: fs.readFileSync(src),
@@ -35,6 +35,7 @@ function load(name) {
         CryptoJS: {},
         console: { log() {}, info() {}, warn() {}, error() {} },
     }
+    for (const k in overrides || {}) g[k] = overrides[k]
     const keys = Object.keys(g)
     const Provider = new Function(...keys, `${js}\nreturn Provider`)(...keys.map((k) => g[k]))
     return new Provider()
@@ -87,6 +88,40 @@ console.log("animepahe")
     eq(p.remoteHttps("https://box.local/a.m3u8"), false, "url: .local is rejected")
     eq(p.remoteHttps("https://evil.com@127.0.0.1/a.m3u8"), false, "url: userinfo cannot smuggle loopback past the host check")
     eq(p.remoteHttps("https://192.168.1.5:8080/a.m3u8"), false, "url: private IPv4 is rejected")
+
+    const ordinals = {
+        "Attack on Titan Season 2": { season: 2, part: 1 },
+        "Shingeki no Kyojin Season 2": { season: 2, part: 1 },
+        "Unrelated Show Season 2": { season: 2, part: 1 },
+        "Attack on Titan Season 3 Part 2": { season: 3, part: 2 },
+    }
+    const s = load("animepahe", {
+        $scannerUtils: { normalizeTitle: (t) => ordinals[t] || { season: 1, part: 1 }, buildSmartSearchTitles: () => null },
+    })
+    const opts = (q, romaji, english) => ({ query: q, dub: false, media: { id: 1, romajiTitle: romaji, englishTitle: english } })
+    const hit = (title) => ({ id: title, title, url: "", subOrDub: "both" })
+    const ids = (rs) => rs.map((r) => r.id)
+
+    eq(
+        ids(s.filterBySeason([hit("Attack on Titan Season 2"), hit("Unrelated Show Season 2"), hit("Attack on Titan")], opts("Attack on Titan Season 2", "Shingeki no Kyojin Season 2", "Attack on Titan Season 2"))),
+        ["Attack on Titan Season 2"],
+        "season: the other show's season 2 is dropped before the ordinal match",
+    )
+    eq(
+        ids(s.filterBySeason([hit("Unrelated Show Season 2"), hit("Attack on Titan")], opts("Attack on Titan Season 2", "Shingeki no Kyojin Season 2", "Attack on Titan Season 2"))),
+        ["Attack on Titan"],
+        "season: no ordinal-bearing entry falls back to the show, not to a stranger",
+    )
+    eq(
+        ids(s.filterBySeason([hit("Attack on Titan Season 3 Part 2"), hit("Attack on Titan Season 2")], opts("", "Attack on Titan Season 3 Part 2", ""))),
+        ["Attack on Titan Season 3 Part 2"],
+        "season: season and part are matched independently",
+    )
+    eq(
+        ids(s.filterBySeason([hit("Anything At All")], opts("Anything At All", "", ""))),
+        ["Anything At All"],
+        "season: a manual search with no media titles keeps every result",
+    )
 }
 
 console.log("anizone")

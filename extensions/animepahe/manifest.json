@@ -1,7 +1,7 @@
 {
   "id": "aq-animepahe-beta",
   "name": "AnimePahe - BETA",
-  "version": "0.2.41",
+  "version": "0.2.42",
   "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/animepahe/manifest.json",
   "language": "typescript",
   "type": "onlinestream-provider",
@@ -18,20 +18,20 @@
       {
         "type": "select",
         "name": "baseUrl",
-        "label": "Site / mirror domain",
+        "label": "Site domain — the old domains below redirect to animepahe.pw",
         "default": "https://animepahe.pw",
         "options": [
           {
             "value": "https://animepahe.pw",
-            "label": "animepahe.pw"
+            "label": "animepahe.pw (current)"
           },
           {
             "value": "https://animepahe.com",
-            "label": "animepahe.com"
+            "label": "animepahe.com (redirects to .pw)"
           },
           {
             "value": "https://animepahe.org",
-            "label": "animepahe.org"
+            "label": "animepahe.org (redirects to .pw)"
           }
         ]
       },

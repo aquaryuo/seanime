@@ -101,30 +101,84 @@ class Provider implements AnimeProvider {
     }
 
     private filterBySeason(results: SearchResult[], opts: SearchOptions): SearchResult[] {
-        const target = this.targetOrdinal(opts)
-        if (target <= 1) return results
-        const matched = results.filter((r) => this.ordinalOf(r.title) === target)
-        return matched.length > 0 ? matched : results
+        const pool = this.sameShow(results, opts.media)
+        const target = this.targetOrdinals(opts)
+        if (target.season < 2 && target.part < 2) return pool
+        const matched = pool.filter((r) => {
+            const n = this.ordinalsOf(r.title)
+            const seasonOk = target.season < 2 || n.season === target.season
+            const partOk = target.part < 2 || n.part === target.part
+            return seasonOk && partOk
+        })
+        return matched.length > 0 ? matched : pool
     }
 
-    private targetOrdinal(opts: SearchOptions): number {
-        let target = 1
+    private sameShow(results: SearchResult[], media: Media): SearchResult[] {
+        const targets: string[] = []
+        for (const t of [media.romajiTitle, media.englishTitle]) {
+            const b = this.normTitle(this.baseTitle(t || ""))
+            if (b.length >= 3) targets.push(b)
+        }
+        if (targets.length === 0) return results
+        const kept = results.filter((r) => {
+            const b = this.normTitle(this.baseTitle(r.title))
+            if (b.length < 3) return false
+            for (const t of targets) {
+                if (this.simNorm(b, t) >= 0.8) return true
+                if (b.indexOf(t) === 0 || t.indexOf(b) === 0) return true
+            }
+            return false
+        })
+        return kept.length > 0 ? kept : results
+    }
+
+    private targetOrdinals(opts: SearchOptions): { season: number; part: number } {
+        let season = 1
+        let part = 1
         for (const s of [opts.query, opts.media.romajiTitle, opts.media.englishTitle]) {
             if (!s) continue
-            const n = this.ordinalOf(s)
-            if (n > target) target = n
+            const n = this.ordinalsOf(s)
+            if (n.season > season) season = n.season
+            if (n.part > part) part = n.part
         }
-        return target
+        return { season, part }
     }
 
-    private ordinalOf(title: string): number {
-        if (!title) return 1
+    private ordinalsOf(title: string): { season: number; part: number } {
+        if (!title) return { season: 1, part: 1 }
         try {
             const n = $scannerUtils.normalizeTitle(title)
-            if (n && n.season >= 2) return n.season
-            if (n && n.part >= 2) return n.part
+            if (n) return { season: n.season >= 2 ? n.season : 1, part: n.part >= 2 ? n.part : 1 }
         } catch (_e) {}
-        return 1
+        return { season: 1, part: 1 }
+    }
+
+    private normTitle(s: string): string {
+        return (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "")
+    }
+
+    private simNorm(a: string, b: string): number {
+        const ml = Math.max(a.length, b.length)
+        return ml === 0 ? 0 : 1 - this.lev(a, b) / ml
+    }
+
+    private lev(a: string, b: string): number {
+        const m = a.length
+        const n = b.length
+        if (!m) return n
+        if (!n) return m
+        const d: number[] = new Array(n + 1)
+        for (let j = 0; j <= n; j++) d[j] = j
+        for (let i = 1; i <= m; i++) {
+            let prev = d[0]
+            d[0] = i
+            for (let j = 1; j <= n; j++) {
+                const tmp = d[j]
+                d[j] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, d[j], d[j - 1])
+                prev = tmp
+            }
+        }
+        return d[n]
     }
 
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {
@@ -403,9 +457,8 @@ class Provider implements AnimeProvider {
     }
 
     private async resolveBase(): Promise<string> {
-        const all = [this.baseUrl].concat(this.mirrors).map((u) => u.replace(/\/+$/, ""))
-        const ranked = all.map((u) => this.preferredBase(u)).concat(all)
-        const candidates = ranked.filter((u, i) => ranked.indexOf(u) === i)
+        const all = [this.baseUrl].concat(this.mirrors).map((u) => this.preferredBase(u.replace(/\/+$/, "")))
+        const candidates = all.filter((u, i) => all.indexOf(u) === i)
         const cached = $store.get<{ at: number; host: string }>("apahe:base2")
         const t = this.now()
         if (cached && cached.host && /animepahe/i.test(cached.host) && t > 0 && cached.at > 0 && t - cached.at < this.baseTtl) {
