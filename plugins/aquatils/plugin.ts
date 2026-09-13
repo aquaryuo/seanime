@@ -225,6 +225,7 @@ function init() {
         const fsLogFilter = ctx.state<boolean>(true)
         const fsConsent = ctx.state<boolean>(sget<boolean>("fs.consent", false))
         let sehGroups: { key: string; label: string; count: number; t: number }[] = []
+        let sehRowKeys: string[] = []
 
         function nowMs(): number {
             try {
@@ -507,7 +508,7 @@ function init() {
                 fsRestarting = false
                 fsBadStarts = 0
                 fsBindRetries = 0
-                markInstalled()
+                if (fsMode.get() !== "remote") markInstalled()
                 fsAvBlocked = false
                 try { $storage.set("fs.avBlocked", false) } catch (_e) {}
                 if (!fsUpSince) fsUpSince = nowMs()
@@ -1999,8 +2000,11 @@ function init() {
         for (let gi = 0; gi < 30; gi++) {
             ;(function (idx) {
                 ctx.registerEventHandler("seh-copy-" + idx, () => {
-                    if (idx >= sehGroups.length) return
-                    const g = sehGroups[idx]
+                    const want = sehRowKeys[idx]
+                    if (!want) return
+                    let g = undefined as { key: string; label: string; count: number; t: number } | undefined
+                    for (const c of sehGroups) { if (c.key === want) { g = c; break } }
+                    if (!g) { ctx.toast.error("That entry is no longer listed"); return }
                     try {
                         ctx.dom.clipboard.write(g.label + (g.count > 1 ? " (×" + g.count + ")" : ""))
                         ctx.toast.success("Copied")
@@ -2277,6 +2281,7 @@ function init() {
         function errorRows(): any[] {
             const rows: any[] = []
             sehGroups = errorGroups()
+            sehRowKeys = sehGroups.map((g) => g.key)
             if (sehGroups.length === 0) {
                 rows.push(dim("No extension errors reported."))
                 return rows
