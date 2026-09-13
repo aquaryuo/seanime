@@ -494,7 +494,6 @@ class Provider {
         const parsed = this.splitMeta(episode.id)
         const dataIds = parsed.base
         const audio = parsed.audio
-        const ctx = { anilistId: parsed.anilistId, episode: episode.number }
 
         const $ = await this.serverListDoc(dataIds)
         const groups = audio === "dub" ? ["dub"] : ["sub", "hsub"]
@@ -512,7 +511,7 @@ class Provider {
             if (this.outOfTime()) break
             let resolved: EpisodeServer | undefined
             try {
-                resolved = await this.resolveServer(c.linkId, c.name, ctx, audio)
+                resolved = await this.resolveServer(c.linkId, c.name, audio)
             } catch (_e) {
                 resolved = undefined
             }
@@ -638,7 +637,7 @@ class Provider {
         return out
     }
 
-    private async resolveServer(linkId: string, serverName: string, ctx: { anilistId: number; episode: number }, audio: string): Promise<EpisodeServer> {
+    private async resolveServer(linkId: string, serverName: string, audio: string): Promise<EpisodeServer> {
         const got = await this.fetchSources(linkId)
         if (!got || !got.file) throw this.fail("server", "could not resolve the player URL (source may be encrypted or down)")
         if (audio === "dub" && got.embedAudio === "sub") throw this.fail("server", "dub source resolved to the subbed (Japanese) track")

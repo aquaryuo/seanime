@@ -917,6 +917,19 @@ series) or the counts already agree. It reports through SEHERRv1 whenever it nar
 the behaviour is visible rather than silent. **Known limit:** for a 3+ cour split it takes the
 final window — right for the last part, wrong for a middle one. Two-part splits are exact.
 
+**Downgraded — `anikoto-manual-mapping-loses-id` no longer guards anything user-visible.** The
+AniList id existed to drive `/resolve`, `/meta` and the subtitle proxy; with all three gone its
+only remaining jobs are discriminating the episode cache key (so AoT S3 and S3 Part 2, which
+share one site URL, do not collide) and round-tripping through the id. The `anikoto:al:`
+fallback still rests on the cross-call `$store` assumption below and may therefore be inert, but
+recovering the id now buys cache separation rather than correct episodes, so it is no longer
+worth converting. Left in place: a guarded read that returns nothing costs nothing.
+
+**Dead `ctx` removed.** `{ anilistId, episode }` was built in `findEpisodeServer` and threaded
+through `resolveServer` purely to reach `buildSubtitles`, which stopped taking it when the proxy
+went. Nothing read `ctx.` anywhere afterwards. `noUnusedLocals` cannot see unused *parameters*,
+which is why the compiler stayed quiet — worth remembering that the gate has that blind spot.
+
 **`$store` does not survive between provider method calls in the playground.** Written and read
 back inside one call it works (`wrote:12345`); the very next call reads `MISSING`. This is why
 the first attempt at the season window did nothing while the suite still reported 6/6 — the
