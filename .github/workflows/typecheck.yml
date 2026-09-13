@@ -83,6 +83,11 @@ jobs:
             echo "so a payload change without a bump reaches nobody and makes the version meaningless." >&2
           fi
           exit $rc
+      - name: Versions stay inside 9.9.99
+        if: always()
+        run: |
+          set -euo pipefail
+          node tools/bump.mjs --check
       - name: marketplace.json matches the manifests
         if: always()
         run: |

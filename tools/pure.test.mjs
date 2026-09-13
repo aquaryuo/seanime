@@ -232,6 +232,32 @@ console.log("configuration")
     eq(load("anikoto", prefs({ loadSubtitles: "disabled" })).loadSubtitles, "disabled", "config: subtitles can be turned off")
 }
 
+console.log("versions")
+{
+    const v = await import("./bump.mjs")
+
+    eq(v.next("1.3.98"), "1.3.99", "version: an ordinary patch bump")
+    eq(v.next("1.3.99"), "1.4.0", "version: a patch past 99 rolls into the minor")
+    eq(v.next("1.9.99"), "2.0.0", "version: a minor past 9 rolls into the major")
+    eq(v.normalise("1.3.103"), "1.4.0", "version: an overflowed patch normalises into the minor")
+    eq(v.normalise("0.10.28"), "1.0.28", "version: an overflowed minor normalises into the major and keeps the patch")
+    eq(v.isValid("1.4.0"), true, "version: three fields inside the caps are valid")
+    eq(v.isValid("1.3.103"), false, "version: a three-digit patch is not")
+    eq(v.isValid("0.10.28"), false, "version: a two-digit minor is not")
+    eq(v.isValid("1.4"), false, "version: two fields are not a version")
+
+    const bad = []
+    for (const kind of ["extensions", "plugins"]) {
+        for (const name of fs.readdirSync(`${ROOT}/${kind}`)) {
+            const p = `${ROOT}/${kind}/${name}/manifest.json`
+            if (!fs.existsSync(p)) continue
+            const m = JSON.parse(fs.readFileSync(p, "utf8"))
+            if (!v.isValid(m.version)) bad.push(`${kind}/${name}=${m.version}`)
+        }
+    }
+    eq(bad, [], "version: every shipped manifest is inside 9.9.99")
+}
+
 console.log("payload bytes")
 {
     const payloads = fs.readdirSync(`${ROOT}/extensions`).map((d) => `extensions/${d}/provider.ts`)
