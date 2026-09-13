@@ -503,9 +503,9 @@ class Provider {
         const text = await this.getText(url, { Referer: `${this.baseUrl}/`, "X-Requested-With": "XMLHttpRequest", Accept: "application/json, text/javascript, */*; q=0.01" }, (body) => this.parseJson<T>(body) !== undefined)
         const parsed = this.parseJson<T>(text)
         if (parsed !== undefined) return parsed
-        const diag = this.parseDiag(url)
+        this.reportError("parse", this.parseDiag(url))
         this.invalidateBase()
-        throw this.fail("parse", diag)
+        throw "AnimePahe answered with something other than JSON, which usually means this connection is being challenged. The full diagnostic is in Aqua's Utils."
     }
 
     private parseJson<T>(text: string): T | undefined {
@@ -650,6 +650,7 @@ class Provider {
         if (!res) return
         let body = ""
         try { body = res.text() } catch (_e) {}
+        const head = body.length > 8192 ? body.slice(0, 8192) : body
         this.lastResp = {
             url: url,
             status: res.status,
@@ -658,8 +659,8 @@ class Provider {
             len: res.contentLength,
             redirected: res.redirected,
             finalUrl: res.url || "",
-            snippet: this.snip(body),
-            hit: this.challengeToken(body),
+            snippet: this.snip(head),
+            hit: this.challengeToken(head),
         }
     }
 

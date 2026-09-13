@@ -28,7 +28,7 @@
   {
     "id": "aq-animepahe-beta",
     "name": "AnimePahe - BETA",
-    "version": "0.2.37",
+    "version": "0.2.38",
     "description": "Only animepahe compatibility layer you'll ever need",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
