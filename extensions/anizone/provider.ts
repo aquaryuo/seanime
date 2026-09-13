@@ -9,6 +9,8 @@ class Provider {
     private baseUrl = "{{baseUrl}}"
     private cacheTtl = 900000
     private srcCacheTtl = 300000
+    private pageBudget = 45000
+    private probeBudget = 20000
 
     getSettings(): Settings {
         return { episodeServers: ["Auto"], supportsDub: true }
@@ -22,7 +24,8 @@ class Provider {
         let anyShape = false
         const run = async (queries: string[]): Promise<void> => {
             for (const q of queries) {
-                if (!q || cands.length >= 12) continue
+                if (cands.length >= 12) break
+                if (!q) continue
                 let html = ""
                 try {
                     const res = await fetch(`${this.normBase()}/anime?search=${encodeURIComponent(q)}`, {
@@ -82,8 +85,8 @@ class Provider {
         const seen: { [key: string]: boolean } = {}
         const push = (s: string, w: number): void => {
             const n = this.normTitle(s)
-            if (n.length >= 3 && !seen[n]) {
-                seen[n] = true
+            if (n.length >= 3 && !seen["#" + n]) {
+                seen["#" + n] = true
                 out.push({ t: n, w })
             }
         }
@@ -249,14 +252,17 @@ class Provider {
         const nums: { [key: number]: boolean } = {}
         this.collectEps(html, shortid, nums)
         this.collectItemEps(html, nums)
-        const stated = this.statedEpisodeCount(html)
+        const stated = await this.trimToExisting(shortid, this.statedEpisodeCount(html), nums)
         if (stated > 0) for (let n = 1; n <= stated; n++) nums[n] = true
         if (/gotoPage\(\d+\)/.test(html)) {
+            const deadline = this.now() + this.pageBudget
+            const lastPage = this.lastPageOf(html)
             try {
                 const first = await fetch(`${this.normBase()}/anime/${shortid}?page=1`, { headers: this.pageHeaders(), timeout: 12 })
                 if (first && first.ok) this.collectEps(first.text(), shortid, nums)
             } catch (_e) {}
-            for (let p = 2; p <= 60; p++) {
+            for (let p = 2; p <= lastPage; p++) {
+                if (this.now() > deadline) break
                 let pr: FetchResponse | undefined
                 try {
                     pr = await fetch(`${this.normBase()}/anime/${shortid}?page=${p}`, { headers: this.pageHeaders(), timeout: 12 })
@@ -323,8 +329,8 @@ class Provider {
             const q = (s || "").trim()
             if (!q) return
             const key = q.toLowerCase()
-            if (seen[key]) return
-            seen[key] = true
+            if (seen["#" + key]) return
+            seen["#" + key] = true
             list.push(q)
         }
         const romaji = opts.media.romajiTitle || ""
@@ -372,8 +378,8 @@ class Provider {
         const cards = this.parseItems(html).concat(this.parseLegacyCards(html))
         const target = opts.media.romajiTitle || opts.media.englishTitle || ""
         for (const c of cards) {
-            if (!c.sid || seen[c.sid]) continue
-            seen[c.sid] = true
+            if (!c.sid || seen["#" + c.sid]) continue
+            seen["#" + c.sid] = true
             const alId = opts.media && opts.media.id > 0 ? opts.media.id : 0
             const audio = opts.dub ? "dub" : "sub"
             out.push({
@@ -420,6 +426,43 @@ class Provider {
             }
         }
         return { m3u8: src, subs }
+    }
+
+    private lastPageOf(html: string): number {
+        let last = 0
+        const re = /gotoPage((d+))/g
+        let m
+        while ((m = re.exec(html || "")) !== null) {
+            const n = parseInt(m[1] || "0", 10)
+            if (n > last) last = n
+        }
+        return last > 1 && last <= 60 ? last : 60
+    }
+
+    private async trimToExisting(shortid: string, stated: number, nums: { [key: number]: boolean }): Promise<number> {
+        if (stated <= 0) return stated
+        let known = 0
+        for (const k in nums) {
+            const n = parseInt(k, 10)
+            if (n > known) known = n
+        }
+        if (stated <= known) return stated
+        const deadline = this.now() + this.probeBudget
+        let n = stated
+        for (let i = 0; i < 8 && n > known; i++) {
+            if (this.now() > deadline) return stated
+            let ok = false
+            try {
+                const res = await fetch(`${this.normBase()}/anime/${shortid}/${n}`, { method: "HEAD", headers: this.pageHeaders(), timeout: 8 })
+                if (res.status === 200) ok = true
+                else if (res.status !== 404) return stated
+            } catch (_e) {
+                return stated
+            }
+            if (ok) return n
+            n--
+        }
+        return stated
     }
 
     private statedEpisodeCount(html: string): number {
@@ -471,8 +514,8 @@ class Provider {
             const seenT: { [key: string]: boolean } = {}
             const add = (t: any): void => {
                 const v = typeof t === "string" ? t.trim() : ""
-                if (v && !seenT[v]) {
-                    seenT[v] = true
+                if (v && !seenT["#" + v]) {
+                    seenT["#" + v] = true
                     titles.push(v)
                 }
             }
@@ -533,8 +576,8 @@ class Provider {
         const seen: { [key: string]: boolean } = {}
         const add = (t: string): void => {
             const v = (t || "").trim()
-            if (v && !seen[v]) {
-                seen[v] = true
+            if (v && !seen["#" + v]) {
+                seen["#" + v] = true
                 out.push(v)
             }
         }
@@ -597,8 +640,8 @@ class Provider {
             if (!/^https?:\/\//i.test(src) || src.indexOf("/subtitles/") === -1) continue
             const kind = this.tagAttr(tag, "kind").toLowerCase()
             if (kind && kind !== "subtitles" && kind !== "captions") continue
-            if (seen[src]) continue
-            seen[src] = true
+            if (seen["#" + src]) continue
+            seen["#" + src] = true
             const fromUrl = src.match(/\/subtitles\/[0-9]+_([A-Za-z0-9-]+)\.(ass|srt|vtt)/i)
             const lang = this.tagAttr(tag, "srclang") || (fromUrl ? fromUrl[1] : "") || "en"
             const ext = (this.tagAttr(tag, "data-type") || (fromUrl ? fromUrl[2] : "") || "ass").toLowerCase()
@@ -608,8 +651,8 @@ class Provider {
         const re = /https?:\/\/[^"'\s]+\/subtitles\/[0-9]+_([A-Za-z0-9-]+)\.(ass|srt)/g
         let m: RegExpExecArray | null
         while ((m = re.exec(html)) !== null) {
-            if (seen[m[0]]) continue
-            seen[m[0]] = true
+            if (seen["#" + m[0]]) continue
+            seen["#" + m[0]] = true
             out.push({ origin: m[0], lang: m[1] || "en", ext: m[2] || "ass", label: "", def: false })
         }
         return out
@@ -653,8 +696,8 @@ class Provider {
         let best = -1
         for (const s of subs) {
             const origin = s.origin
-            if (!origin || seen[origin]) continue
-            seen[origin] = true
+            if (!origin || seen["#" + origin]) continue
+            seen["#" + origin] = true
             const code = (s.lang || "en").toLowerCase()
             const label = (s.label || "").trim()
             const idx = out.length
@@ -694,14 +737,16 @@ class Provider {
         const cached = this.readCache<boolean>(key, this.srcCacheTtl)
         if (cached !== undefined) return cached
         let ok = false
+        let decided = false
         try {
             const res = await fetch(m3u8, { headers: this.pageHeaders(), timeout: 8 })
             if (res.ok) {
                 const body = res.text()
                 ok = /#EXT-X-MEDIA:TYPE=AUDIO[^\n]*LANGUAGE="(?:en|eng|en-[a-z]+)"/i.test(body) || /#EXT-X-MEDIA:TYPE=AUDIO[^\n]*(?:english|\bdub\b)/i.test(body)
+                decided = true
             }
         } catch (_e) {}
-        this.writeCache(key, ok)
+        if (decided) this.writeCache(key, ok)
         return ok
     }
 
