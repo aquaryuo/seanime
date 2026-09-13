@@ -319,8 +319,23 @@ class Provider {
 
     private matchM3u8(s: string): string | undefined {
         if (!s) return undefined
-        const m = s.match(/https?:\/\/[^\s'"\\<>]+\.m3u8[^\s'"\\<>]*/i)
-        return m ? m[0] : undefined
+        const re = /https?:\/\/[^\s'"\\<>]+\.m3u8[^\s'"\\<>]*/gi
+        let m: RegExpExecArray | null
+        while ((m = re.exec(s)) !== null) {
+            if (this.remoteHttps(m[0])) return m[0]
+        }
+        return undefined
+    }
+
+    private remoteHttps(url: string): boolean {
+        if (!/^https?:\/\//i.test(url)) return false
+        const host = url.replace(/^https?:\/\//i, "").split(/[/?#]/)[0].split("@").pop() || ""
+        const name = host.split(":")[0].toLowerCase()
+        if (!name) return false
+        if (name === "localhost" || /\.local$/.test(name) || /\.localhost$/.test(name)) return false
+        if (/^\d+\.\d+\.\d+\.\d+$/.test(name)) return false
+        if (name.indexOf("[") === 0) return false
+        return name.indexOf(".") !== -1
     }
 
     private extractPacked(html: string): string[] {

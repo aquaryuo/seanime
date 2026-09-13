@@ -15,7 +15,7 @@
   {
     "id": "aq-animelok-beta",
     "name": "Animelok - BETA",
-    "version": "0.1.13",
+    "version": "0.1.14",
     "description": "Only animelok compatibility layer you'll ever need",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
@@ -28,7 +28,7 @@
   {
     "id": "aq-animepahe-beta",
     "name": "AnimePahe - BETA",
-    "version": "0.2.32",
+    "version": "0.2.33",
     "description": "Only animepahe compatibility layer you'll ever need",
     "author": "aquaryuo",
     "type": "onlinestream-provider",

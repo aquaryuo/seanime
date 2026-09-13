@@ -83,6 +83,20 @@ class Provider {
         return fallback
     }
 
+    private safeHeaders(apiHeaders: { [key: string]: string }): { [key: string]: string } {
+        const allow: { [key: string]: string } = { referer: "Referer", origin: "Origin", "user-agent": "User-Agent" }
+        const out: { [key: string]: string } = {}
+        if (!apiHeaders) return out
+        for (const k in apiHeaders) {
+            const name = allow[String(k).toLowerCase()]
+            const v = apiHeaders[k]
+            if (!name || typeof v !== "string" || !v || v.length > 512) continue
+            if (/[\r\n]/.test(v)) continue
+            out[name] = v
+        }
+        return out
+    }
+
     private streamHeaders(apiHeaders: { [key: string]: string }): { [key: string]: string } {
         const out: { [key: string]: string } = {}
         if (apiHeaders) {
@@ -251,9 +265,12 @@ class Provider {
                 let url = ""
                 let tracks: VibeTrack[] = []
                 let headers: { [key: string]: string } = {}
-                if (data.sources.length > 0 && data.sources[0]) url = data.sources[0].url || ""
+                if (data.sources.length > 0 && data.sources[0]) {
+                    const raw = data.sources[0].url || ""
+                    if (/^https?:\/\//i.test(raw)) url = raw
+                }
                 if (data.tracks && data.tracks.length > 0) tracks = data.tracks
-                if (data.headers) headers = data.headers
+                if (data.headers) headers = this.safeHeaders(data.headers)
                 if (url) {
                     const ok: VibeResult = { status: "ok", url, tracks, headers }
                     this.writeCache(cacheKey, ok)
