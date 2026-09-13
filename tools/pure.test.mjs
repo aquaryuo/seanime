@@ -111,6 +111,28 @@ console.log("animelok")
     eq(p.trackScore("English", true, false, false) > p.trackScore("English (Signs & Songs)", true, true, true), true, "track: full dialogue beats a default signs track")
 }
 
+console.log("aquatils (source invariants)")
+{
+    const src = fs.readFileSync(`${ROOT}/plugins/aquatils/plugin.ts`, "utf8")
+    const has = (t) => src.includes(t)
+    const count = (t) => src.split(t).length - 1
+
+    eq(has("taskkill"), false, "kill: nothing is stopped by image name alone")
+    eq(has("fuser -k"), false, "kill: the port is never cleared without identifying what holds it")
+    eq(has("*aquatils-beta*) kill -9"), true, "kill: the port sweep checks the executable is ours")
+    eq(has("$p.CommandLine -like '*aquatils-beta*'"), true, "kill: the windows sweep matches on the command line")
+
+    eq(has('const FS_KEEP = ["chromium", "state"]'), true, "state: the keep-list names the state directory")
+    eq(has('e.name() !== "chromium"'), false, "state: no bare literal is left to drift from the keep-list")
+    eq(count("FS_KEEP.indexOf"), 2, "state: both prune and remove read the keep-list")
+
+    eq(has('const staging = dir + ".new"'), true, "chromium: the download lands beside the working copy")
+    eq(has("$os.rename(dir, previous)"), true, "chromium: the working copy is moved aside, not deleted in place")
+
+    eq(has("const avEvidence ="), true, "windows: a scanner verdict needs scanner evidence")
+    eq(has("execRefused && !avEvidence"), true, "windows: a refusal to execute is reported as itself")
+}
+
 console.log()
 if (failures > 0) {
     console.log(`${failures} of ${checks} checks failed`)
