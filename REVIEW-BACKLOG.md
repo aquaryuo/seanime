@@ -835,6 +835,15 @@ restores the paginator.
 after the last bump, so that work is stranded at 0.10.11 and reaches no user until the next bump.
 Left alone rather than bumped from here — it is the other session's component.
 
+**Follow-up to `manifest-marketplace-generated`.** The first version read manifests from the
+**working tree**, which is wrong whenever anything uncommitted is present: it picked up another
+session's unstaged aquatils version bump, wrote it into `marketplace.json`, and that file was then
+committed without the manifest it described — so CI regenerated from the committed tree and
+correctly disagreed (`9ce635c` went red on exactly this). The generator now reads `git show :path`,
+i.e. the **index** — what would actually be committed — falling back to the file only for untracked
+paths. Consequence for the workflow: stage manifest bumps *before* running the generator. In CI the
+index equals HEAD, so the check compares committed-against-committed as intended.
+
 **Handed off — six aquatils fixes, written and verified but not merged.** `plugins/aquatils` is
 the other session's component and two agents editing one 2,700-line file already cost us once
 (see the process note below). The work below typechecks and passes the host transform, but it
