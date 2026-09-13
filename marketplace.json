@@ -14,7 +14,7 @@
   {
     "id": "aq-anizone",
     "name": "AniZone",
-    "description": "Only anizone compatibility layer you'll ever need",
+    "description": "Only anizone compatibility layer you'll ever need. Dub streams carry both audio tracks — pick English in the player's audio menu once and Seanime remembers it for that series.",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
     "language": "typescript",
