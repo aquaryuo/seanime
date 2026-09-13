@@ -26,7 +26,7 @@
   {
     "id": "aq-aquaprefs",
     "name": "Aqua's Prefs",
-    "description": "Remembers your player and series options.",
+    "description": "Remembers one set of player options and reapplies it on local playback. Online streams keep Seanime's own per-series choice.",
     "author": "aquaryuo",
     "type": "plugin",
     "language": "typescript",
@@ -58,5 +58,29 @@
     "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/main/plugins/seatags/icon.png",
     "website": "https://github.com/aquaryuo/seanime",
     "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/plugins/seatags/manifest.json"
+  },
+  {
+    "id": "aq-animelok",
+    "name": "Animelok",
+    "description": "Only animelok compatibility layer you'll ever need",
+    "author": "aquaryuo",
+    "type": "onlinestream-provider",
+    "language": "typescript",
+    "lang": "en",
+    "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/animelok/icon.png",
+    "website": "https://animelok.live",
+    "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/animelok/manifest.json"
+  },
+  {
+    "id": "aq-animepahe",
+    "name": "AnimePahe",
+    "description": "Only animepahe compatibility layer you'll ever need",
+    "author": "aquaryuo",
+    "type": "onlinestream-provider",
+    "language": "typescript",
+    "lang": "en",
+    "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/animepahe/icon.png",
+    "website": "https://animepahe.pw",
+    "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/animepahe/manifest.json"
   }
 ]

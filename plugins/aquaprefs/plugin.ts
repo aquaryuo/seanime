@@ -6,9 +6,6 @@ function init() {
 
         const AQ_SEH_MARKER = "SEHERRv1"
         const AQ_LINE_RE = /^\d{2}:\d{2}:\d{2}\.\d{3} (ERR|WRN|OK|INF|DBG)\s/
-        const AQ_GO_RE = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})\s+(INFO|ERROR|WARNING|WARN|DIAG|DEBUG)\s+/
-        const AQ_SCOPE_RE = /^\[([A-Za-z0-9_/-]{2,24})\]\s*/
-
         const AQ_COLOR: { [k: string]: string } = {
             ERR: "rgba(255,138,138,0.95)",
             WRN: "rgba(255,199,120,0.95)",
@@ -57,49 +54,6 @@ function init() {
             return "INF"
         }
 
-        function aqMapLevel(tag: string): AqLevel {
-            switch (tag.toUpperCase()) {
-                case "ERROR":
-                    return "ERR"
-                case "WARNING":
-                case "WARN":
-                    return "WRN"
-                case "DIAG":
-                case "DEBUG":
-                    return "DBG"
-                default:
-                    return "INF"
-            }
-        }
-
-        function aqNormalize(line: string, defScope: string): string {
-            const raw = aqText(line)
-            if (!raw) return ""
-            if (AQ_LINE_RE.test(raw)) return raw
-            let rest = raw
-            let ms = 0
-            let lvl: AqLevel | undefined = undefined
-            let scope = defScope
-            const g = AQ_GO_RE.exec(rest)
-            if (g) {
-                try {
-                    ms = new Date(parseInt(g[1], 10), parseInt(g[2], 10) - 1, parseInt(g[3], 10),
-                        parseInt(g[4], 10), parseInt(g[5], 10), parseInt(g[6], 10)).getTime()
-                } catch (_e) {
-                    ms = 0
-                }
-                lvl = aqMapLevel(g[7])
-                rest = rest.slice(g[0].length)
-            }
-            const s = AQ_SCOPE_RE.exec(rest)
-            if (s) {
-                const sub = s[1]
-                scope = defScope ? defScope + "/" + sub : sub
-                rest = rest.slice(s[0].length)
-            }
-            return aqLine(lvl === undefined ? aqGuessLevel(rest) : lvl, scope, rest, ms)
-        }
-
         function aqStyle(lvl: AqLevel): { [k: string]: string } {
             return {
                 fontSize: "11px",
@@ -125,6 +79,8 @@ function init() {
         const EXT_ID = "aq-aquaprefs"
         const CFG_KEY = "cfg"
         const IDX_KEY = "pref:__index"
+        const PREF_KEY = "pref:global"
+        const PURGED_KEY = "pref:purged"
         const LOG_KEY = "log"
         const LOG_CAP = 30
         const CLICK_SUPPRESS = 2500
@@ -212,13 +168,13 @@ function init() {
         let lastMenu = ""
         let loadAt = 0
         const boundOpts: any = {}
-        const pendingClick: any = { sub: 0, cap: 0 }
-        const pickPending: any = { sub: false, cap: false }
-        const enforceCount: any = { sub: 0, cap: 0 }
-        const lastDesired: any = { sub: -999, cap: -999 }
-        const enforceOpen: any = { sub: false, cap: false }
-        const curTrack: any = { sub: -999, cap: -999 }
-        const enforceTok: any = { sub: 0, cap: 0 }
+        let pendingClick = 0
+        let pickPending = false
+        let enforceCount = 0
+        let lastDesired = -999
+        let enforceOpen = false
+        let curTrack = -999
+        let enforceTok = 0
 
         function pinfo(): any {
             try {
@@ -251,23 +207,37 @@ function init() {
             return 0
         }
 
-        function writeKey(): string { return "pref:global" }
+        function writeKey(): string { return PREF_KEY }
         function readCascade(): any {
-            const g = sget<any>("pref:global", null)
+            const g = sget<any>(PREF_KEY, null)
             if (!g) return null
-            return (g.sub || g.cap) ? g : null
+            return g.sub ? g : null
         }
-        function ctxStr(): string { return "media=" + curMediaId() + " · ep=" + curEpisode() }
+        function isOnlineStream(): boolean {
+            const pi = pinfo()
+            return !!(pi && pi.onlinestreamParams)
+        }
+        function ctxStr(): string { return "media=" + curMediaId() + " - ep=" + curEpisode() }
 
-        function indexAdd(k: string): void {
-            const idx = sget<string[]>(IDX_KEY, [])
-            if (idx.indexOf(k) < 0) { idx.push(k); sset(IDX_KEY, idx) }
+        function purgeLegacyKeys(): void {
+            if (sget<boolean>(PURGED_KEY, false)) return
+            try {
+                const idx = sget<string[]>(IDX_KEY, [])
+                if (Array.isArray(idx)) {
+                    for (const k of idx) {
+                        if (k && k !== PREF_KEY) sset(k, null)
+                    }
+                }
+                sset(IDX_KEY, null)
+            } catch (_e) {}
+            sset(PURGED_KEY, true)
         }
+        purgeLegacyKeys()
+
         function recordTo(k: string, patch: any): void {
             if (!k) return
             const cur = sget<any>(k, {})
             sset(k, Object.assign({}, cur, patch, { updatedAt: nowMs() }))
-            indexAdd(k)
         }
         function trackList(): any[] | undefined {
             const pi = pinfo()
@@ -278,23 +248,18 @@ function init() {
                 let file = 1000
                 for (let i = 0; i < subs.length; i++) {
                     const t = subs[i] || {}
-                    const libass = t.useLibassRenderer === true
-                    out.push({ kind: libass ? "sub" : "cap", number: libass ? file++ : i, label: String(t.label || ""), language: String(t.language || "") })
+                    if (t.useLibassRenderer !== true) continue
+                    out.push({ number: file++, label: String(t.label || ""), language: String(t.language || "") })
                 }
             }
             const mkv = pi.mkvMetadata
             if (mkv && Array.isArray(mkv.subtitleTracks)) {
                 for (let i = 0; i < mkv.subtitleTracks.length; i++) {
                     const t = mkv.subtitleTracks[i] || {}
-                    out.push({ kind: "sub", number: t.number, label: String(t.name || ""), language: String(t.language || t.languageIETF || "") })
+                    out.push({ number: t.number, label: String(t.name || ""), language: String(t.language || t.languageIETF || "") })
                 }
             }
             return out
-        }
-        function domainList(kind: string): any[] | undefined {
-            const l = trackList()
-            if (l === undefined) return undefined
-            return l.filter((t) => t.kind === kind)
         }
         function findTrack(list: any[], want: any): any {
             const lang = String(want.language || "").toLowerCase()
@@ -314,70 +279,65 @@ function init() {
             return null
         }
 
-        function savedFor(kind: string): any {
+        function saved(): any {
             const rec = readCascade()
-            if (!rec) return null
-            return kind === "sub" ? (rec.sub || null) : (rec.cap || null)
+            return rec ? rec.sub || null : null
         }
 
-        function setKind(kind: string, n: number, myGen: number): void {
+        function setTrack(n: number, myGen: number): void {
             if (myGen !== gen) return
-            if (n === lastDesired[kind]) {
-                enforceCount[kind]++
-                if (enforceCount[kind] > MAX_CORRECTIONS) {
-                    if (enforceOpen[kind]) { enforceOpen[kind] = false; logErr(kind + " enforcement paused - player keeps overriding (" + n + ")") }
+            if (n === lastDesired) {
+                enforceCount++
+                if (enforceCount > MAX_CORRECTIONS) {
+                    if (enforceOpen) { enforceOpen = false; logErr("enforcement paused - player keeps overriding (" + n + ")") }
                     return
                 }
-            } else { lastDesired[kind] = n; enforceCount[kind] = 1 }
+            } else { lastDesired = n; enforceCount = 1 }
             try {
-                if (kind === "sub") VC.setSubtitleTrack(n)
-                else VC.setMediaCaptionTrack(n)
-                log("→ " + (kind === "sub" ? "setSubtitleTrack" : "setMediaCaptionTrack") + "(" + n + ")")
+                VC.setSubtitleTrack(n)
+                log("→ setSubtitleTrack(" + n + ")")
             } catch (_e) {}
         }
 
-        function enforceKind(kind: string, myGen: number): string {
+        function enforce(myGen: number): string {
             if (myGen !== gen) return "stale"
             if (!persistSubs.get()) return "off"
-            if (!enforceOpen[kind]) return "closed"
-            if (pickPending[kind] || nowMs() - pendingClick[kind] <= CLICK_SUPPRESS) return "user"
-            const sv = savedFor(kind)
+            if (!enforceOpen) return "closed"
+            if (isOnlineStream()) { enforceOpen = false; return "host" }
+            if (pickPending || nowMs() - pendingClick <= CLICK_SUPPRESS) return "user"
+            const sv = saved()
             if (!sv) return "none"
-            const list = domainList(kind)
+            const list = trackList()
             if (list === undefined) return "unsupported"
             if (!list.length) return "no-tracks"
             if (sv.off) {
-                if (curTrack[kind] === -1) { enforceOpen[kind] = false; return "ok" }
-                setKind(kind, -1, myGen)
-                if (kind === "cap") enforceOpen[kind] = false
+                if (curTrack === -1) { enforceOpen = false; return "ok" }
+                setTrack(-1, myGen)
                 return "applied"
             }
             const m = findTrack(list, sv)
             if (!m) return "no-match"
-            if (curTrack[kind] === m.number) { enforceOpen[kind] = false; return "ok" }
-            setKind(kind, m.number, myGen)
-            if (kind === "cap") enforceOpen[kind] = false
+            if (curTrack === m.number) { enforceOpen = false; return "ok" }
+            setTrack(m.number, myGen)
             return "applied"
         }
 
-        function scheduleEnforce(kind: string): void {
-            if (!enforceOpen[kind]) return
-            enforceTok[kind]++
-            const tok = enforceTok[kind]
+        function scheduleEnforce(): void {
+            if (!enforceOpen) return
+            enforceTok++
+            const tok = enforceTok
             const myGen = gen
             ctx.setTimeout(() => {
-                if (myGen !== gen || enforceTok[kind] !== tok) return
-                if (nowMs() - loadAt > ENFORCE_WINDOW) { enforceOpen[kind] = false; return }
-                enforceKind(kind, myGen)
+                if (myGen !== gen || enforceTok !== tok) return
+                if (nowMs() - loadAt > ENFORCE_WINDOW) { enforceOpen = false; return }
+                enforce(myGen)
             }, GRACE)
         }
 
         function pollLoad(myGen: number, attempt: number): void {
             if (myGen !== gen) return
-            const sub = enforceKind("sub", myGen)
-            const cap = enforceKind("cap", myGen)
-            const wait = (s: string) => s === "unsupported" || s === "no-tracks"
-            if ((wait(sub) || wait(cap)) && attempt < POLL_ATTEMPTS) {
+            const s = enforce(myGen)
+            if ((s === "unsupported" || s === "no-tracks") && attempt < POLL_ATTEMPTS) {
                 ctx.setTimeout(() => pollLoad(myGen, attempt + 1), POLL_INTERVAL)
             }
         }
@@ -391,8 +351,12 @@ function init() {
             lastArmAt = nowMs()
             loadAt = nowMs()
             gen++
-            const ks = ["sub", "cap"]
-            for (let i = 0; i < ks.length; i++) { const k = ks[i]; enforceCount[k] = 0; lastDesired[k] = -999; enforceOpen[k] = true; pickPending[k] = false; pendingClick[k] = 0; curTrack[k] = -999 }
+            enforceCount = 0
+            lastDesired = -999
+            enforceOpen = true
+            pickPending = false
+            pendingClick = 0
+            curTrack = -999
             for (const id in boundOpts) delete boundOpts[id]
             log("▶ LOAD" + (reload ? " (reload)" : "") + " pid=" + shortPid(pid) + " · " + ctxStr())
             pollLoad(gen, 0)
@@ -422,14 +386,13 @@ function init() {
                     const label = String(txt || "").trim()
                     if (!label) { log("· click: could not read label"); done(); return }
                     log("· you picked '" + label + "' (" + (menu || lastMenu || "?") + ")")
-                    if (/^off$/i.test(label)) { const key = writeKey(); recordTo(key, { sub: { off: true }, cap: { off: true } }); enforceOpen.sub = false; enforceOpen.cap = false; log("✓ saved off @ " + key); done(); return }
+                    if (/^off$/i.test(label)) { const key = writeKey(); recordTo(key, { sub: { off: true }, cap: null }); enforceOpen = false; log("✓ saved off @ " + key); done(); return }
                     const m = matchByLabel(trackList() || [], label)
                     if (m) {
                         const key = writeKey()
-                        if (m.kind === "cap") recordTo(key, { cap: { off: false, language: m.language, label: m.label }, sub: null })
-                        else recordTo(key, { sub: { off: false, language: m.language, label: m.label }, cap: null })
-                        enforceOpen.sub = false; enforceOpen.cap = false
-                        log("✓ saved " + m.kind + "=" + (m.label || m.language) + " @ " + key); done(); return
+                        recordTo(key, { sub: { off: false, language: m.language, label: m.label }, cap: null })
+                        enforceOpen = false
+                        log("✓ saved " + (m.label || m.language) + " @ " + key); done(); return
                     }
                     log("· '" + label + "' matched no track — not saved"); done()
                 }).catch(() => { log("· click: could not read label"); done() })
@@ -437,10 +400,9 @@ function init() {
         }
 
         function onOptionClick(el: any): void {
-            const kinds = ["sub", "cap"]
-            const t = nowMs()
-            for (let i = 0; i < kinds.length; i++) { pendingClick[kinds[i]] = t; pickPending[kinds[i]] = true }
-            const clearPending = () => { for (let i = 0; i < kinds.length; i++) pickPending[kinds[i]] = false }
+            pendingClick = nowMs()
+            pickPending = true
+            const clearPending = () => { pickPending = false }
             ctx.setTimeout(clearPending, PICK_PENDING_MAX)
             recordByLabel(el, clearPending)
         }
@@ -476,15 +438,8 @@ function init() {
 
             VC.addEventListener("video-subtitle-track", (e) => {
                 arm((e && e.playbackId) || "", false)
-                const v = (typeof e.trackNumber === "number" && e.trackNumber >= 0) ? e.trackNumber : -1
-                curTrack.sub = v
-                if (enforceOpen.sub) scheduleEnforce("sub")
-            })
-            VC.addEventListener("video-media-caption-track", (e) => {
-                arm((e && e.playbackId) || "", false)
-                const v = (typeof e.trackIndex === "number" && e.trackIndex >= 0) ? e.trackIndex : -1
-                curTrack.cap = v
-                if (enforceOpen.cap) scheduleEnforce("cap")
+                curTrack = (typeof e.trackNumber === "number" && e.trackNumber >= 0) ? e.trackNumber : -1
+                if (enforceOpen) scheduleEnforce()
             })
         }
 
@@ -550,7 +505,7 @@ function init() {
             }
 
             rows.push(heading("Preferences"))
-            rows.push(toggleRow(persistSubs.get(), "ap-subs", "Remember player subtitle"))
+            rows.push(toggleRow(persistSubs.get(), "ap-subs", "Remember player subtitle (local playback)"))
 
             rows.push(divider())
             rows.push(tray.flex({
