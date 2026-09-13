@@ -641,7 +641,7 @@ class Provider {
         const got = await this.fetchSources(linkId)
         if (!got || !got.file) throw this.fail("server", "could not resolve the player URL (source may be encrypted or down)")
         if (audio === "dub" && got.embedAudio === "sub") throw this.fail("server", "dub source resolved to the subbed (Japanese) track")
-        const subtitles = this.buildSubtitles(got.tracks)
+        const subtitles = await this.buildSubtitles(got.tracks, got.origin)
         return {
             server: serverName,
             headers: { Referer: `${got.origin}/`, Origin: got.origin },
@@ -992,7 +992,7 @@ class Provider {
         return m ? m[1].toLowerCase() : ""
     }
 
-    private buildSubtitles(tracks: { file: string; label?: string; kind?: string; default?: boolean }[] | undefined): VideoSubtitle[] {
+    private async buildSubtitles(tracks: { file: string; label?: string; kind?: string; default?: boolean }[] | undefined, embedOrigin?: string): Promise<VideoSubtitle[]> {
         const collected: VideoSubtitle[] = []
         if (this.loadSubtitles === "disabled") return collected
         if (!tracks || tracks.length === 0) return collected
@@ -1001,6 +1001,7 @@ class Provider {
         if (valid.length === 0) return collected
         const codes = this.langCodes(valid.map((t) => t.label || "English"))
         const seenSrc: { [key: string]: boolean } = {}
+        const srcOf: string[] = []
         const nonDialogue: boolean[] = []
         let pick = 0
         let best = -1
@@ -1012,6 +1013,7 @@ class Provider {
             if (seenSrc[t.file]) continue
             seenSrc[t.file] = true
             const idx = collected.length
+            srcOf[idx] = t.file
             collected.push({
                 id: `${lang}-${idx}`,
                 url: t.file,
@@ -1028,6 +1030,10 @@ class Provider {
 
         if (collected.length === 0) return collected
         collected[pick].isDefault = true
+        if (embedOrigin && !this.outOfTime()) {
+            const inlined = await this.inlineTrack(srcOf[pick], embedOrigin)
+            if (inlined) collected[pick].url = inlined
+        }
         const head: VideoSubtitle[] = []
         const tail: VideoSubtitle[] = []
         for (let i = 0; i < collected.length; i++) {
@@ -1055,6 +1061,20 @@ class Provider {
     private trackScore(label: string, isEnglish: boolean, def: boolean): number {
         const base = this.isNonDialogue(label) ? (isEnglish ? 3 : 0) : this.isMachine(label) ? (isEnglish ? 4 : 1) : this.isAltDialogue(label) ? (isEnglish ? 5 : 1) : isEnglish ? 6 : 2
         return def ? base * 10 + 1 : base * 10
+    }
+
+    private async inlineTrack(url: string, embedOrigin: string): Promise<string | undefined> {
+        if (!url || !embedOrigin || !/^https?:\/\//i.test(url)) return undefined
+        try {
+            const res = await fetch(url, { headers: { Referer: `${embedOrigin}/`, Origin: embedOrigin } })
+            if (!res.ok) return undefined
+            const body = res.text()
+            if (!body || body.length > 524288) return undefined
+            if (body.indexOf("WEBVTT") === -1) return undefined
+            return `data:text/vtt;charset=utf-8,${encodeURIComponent(body)}`
+        } catch (_e) {
+            return undefined
+        }
     }
 
     private cleanLabel(label: string): string {

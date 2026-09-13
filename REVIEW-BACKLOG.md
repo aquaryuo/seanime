@@ -959,7 +959,28 @@ not. For split-cour series the numbers will no longer line up with a user's AniL
 inherent to the removal, not a defect in it — say the word and the `/meta` half can come back
 without the subtitle proxy.
 
-**Open question — anikoto's subtitle CDN is referer-gated.** Raw tracks return 403 without a
+**Settled — the host does not proxy subtitles, and the gate is real.** Measured against the live
+CDN: no `Referer` → 403, the Seanime app origin (what a browser sends) → 403, the **embed origin
+→ 200**. And the installed `/api/v1/onlinestream/episode-source` response returns the video URL
+*and* the subtitle URL raw, with `headers: { Origin, Referer }` sitting beside them as metadata
+rather than applied — nothing is rewritten through the host. So `seanime-runtime-gotchas` was
+right that subtitle headers are dropped, and the claim in `anikoto-subtitle-languages-collapse`
+that "the host applies the video source's headers to subtitle URLs through its proxy" is **wrong**.
+Raw referer-gated subtitle URLs cannot work in the player, which is what the proxy existed for.
+
+**Fixed provider-side — the default track is inlined.** An extension cannot make a browser forge
+a `Referer`, but it can fetch the file itself: the provider requests the picked track server-side
+with the embed origin and returns `data:text/vtt;charset=utf-8,…`, so the browser makes no gated
+request at all. Verified through the real chain — the default track comes back as a 35 KB data
+URI while the alternates stay as URLs. Percent-encoding rather than base64, to avoid depending on
+`CryptoJS.enc.Base64.stringify` accepting a `Uint8Array` (an unverified `d.ts` claim); VTT is
+near-pure ASCII so the sizes are comparable. Only the picked track is inlined — all nine would be
+~284 KB per episode load. Falls back to the plain URL if the fetch fails, the body is not VTT, or
+it exceeds 512 KB, and it respects the existing time budget. **Unverified:** that the player
+renders a `data:` URI text track. Everything up to the player boundary is proven; the bet is free
+because the alternative is a certain 403.
+
+**Superseded — anikoto's subtitle CDN is referer-gated.** Raw tracks return 403 without a
 `Referer` and 200 with the embed origin; the provider does return exactly that
 (`headers: { Referer: <embed origin>, Origin: <embed origin> }`), so it is correct on our side.
 Whether the tracks load depends on the host forwarding those headers to subtitle requests, which
