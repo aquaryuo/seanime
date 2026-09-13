@@ -526,26 +526,31 @@ class Provider {
                     if (mapKeys.length > 0 && mapCoversSeries) {
                         const byNum: { [key: number]: EpisodeDetails } = {}
                         for (const e of episodes) byNum[e.number] = e
-                        let maxTarget = 0
+                        let epHits = 0
+                        let absHits = 0
                         for (const k of mapKeys) {
                             const m = map[k]
-                            maxTarget = Math.max(maxTarget, m.ep || 0)
+                            if (!m) continue
+                            if (typeof m.ep === "number" && m.ep > 0 && byNum[m.ep]) epHits++
+                            if (typeof m.abs === "number" && m.abs > 0 && byNum[m.abs]) absHits++
                         }
-                        const perPart = episodes.length < maxTarget
+                        const useAbs = absHits > epHits
                         const remapped: EpisodeDetails[] = []
                         for (const k of mapKeys) {
                             const K = parseInt(k, 10)
                             if (isNaN(K)) continue
                             const m = map[k]
-                            const ep = !perPart && typeof m.ep === "number" && m.ep > 0 ? byNum[m.ep] : undefined
-                            const abs = !perPart && typeof m.abs === "number" && m.abs > 0 ? byNum[m.abs] : undefined
-                            const src = ep || abs || byNum[K]
+                            if (!m) continue
+                            const target = useAbs ? m.abs : m.ep
+                            const src = (typeof target === "number" && target > 0 ? byNum[target] : undefined) || byNum[K]
                             if (!src) continue
                             remapped.push({ id: src.id, number: K, url: src.url, title: titles[String(K)] || src.title })
                         }
                         if (remapped.length >= Math.ceil(mapKeys.length / 2)) {
                             episodes.length = 0
                             for (const e of remapped) episodes.push(e)
+                        } else {
+                            this.reportError("episodes", "episode numbering from the metadata service did not line up with this series, so the site's own numbering was kept")
                         }
                     }
                     for (const e of episodes) {
@@ -553,7 +558,9 @@ class Provider {
                         if (!e.title && t) e.title = t
                     }
                 }
-            } catch (e) {}
+            } catch (_e) {
+                this.reportError("episodes", "could not reach the episode metadata service, so episode numbers and titles come from the site alone")
+            }
         }
 
         episodes.sort((x, y) => x.number - y.number)
