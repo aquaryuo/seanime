@@ -890,6 +890,24 @@ them, under which the current branch is defensible: quoted by Go when it has a s
 otherwise. Could not replicate Go's argv quoting from this shell, and `sha256OfFile` has since
 moved to `winQuote` anyway. Left alone rather than guessed at.
 
+**`absoluteSeasonOffset` is declared but never sent.** Probed in the live runtime for AoT S3
+(99147), S3 Part 2 (104578) and One Piece (21): `typeof media.absoluteSeasonOffset` is
+`"undefined"` in all three and the field is absent from `Object.keys(media)` entirely. The
+vendored `d.ts` declares it. That is the **third** inaccuracy in that file today, after the
+missing `$store.remove`/`removeAll`/`length` and the inert `fetch` `timeout` — treat it as
+documentation of intent, not of behaviour, and probe before building on any field it promises.
+What Media really carries: `episodeCount` (12 / 10 / **-1** respectively — long-running series
+report -1), `id`, `idMal`, both titles, `synonyms`, `startDate`, `status`, `format`, `isAdult`.
+So the clean per-season remap is not available from the host, and restoring AniList-aligned
+numbering would take a heuristic (site count minus `episodeCount`, disambiguated by the part
+number `searchQueries` already derives) rather than a given offset.
+
+**Episode titles were never lost with `/meta`.** `findEpisodes` already reads `span.d-title` from
+the site's own episode list; `/meta` only filled the gaps. The site returns real titles for some
+series (Tsuredure Children: "My Brother's Girlfriend / Spring / Contact / Rain") and the
+placeholder `Episode N` for others (One Piece, AoT). The placeholder is now suppressed so
+Seanime falls back to its own AniList title instead of having it overridden by a useless one.
+
 **Consequence of removing `sub.ryuo.to` — episode numbering now follows the site, not AniList.**
 `/meta` carried two things that were not subtitles: episode titles, and the AniList↔site episode
 remap. With it gone, `findEpisodes` uses the site's own numbering, and `/resolve` — which was the

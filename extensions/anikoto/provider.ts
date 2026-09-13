@@ -466,7 +466,8 @@ class Provider {
             const number = !Number.isInteger(num) || num < 1 || num > 10000 ? i + 1 : num
             const slug = a.attr("data-slug") || String(number)
 
-            const title = a.find("span.d-title").first().text().trim()
+            const rawTitle = a.find("span.d-title").first().text().trim()
+            const title = /^episode\s*\d+$/i.test(rawTitle) ? "" : rawTitle
 
             episodes.push({
                 id: this.withMeta(dataIds, audio, parsed.anilistId),
