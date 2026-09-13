@@ -1502,7 +1502,7 @@ function init() {
             fsBinary = null
             if (typeof $os !== "undefined" && $os.platform === "windows" && typeof $osExtra !== "undefined") {
                 try {
-                    $osExtra.asyncCmd("cmd", "/c", "taskkill", "/F", "/T", "/IM", "solver.exe").run((_d, _e, code) => {
+                    $osExtra.asyncCmd("cmd", "/c", "powershell", "-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='SilentlyContinue';foreach($p in Get-CimInstance Win32_Process){if($p.Name -eq 'solver.exe' -and $p.CommandLine -like '*aquatils-beta*'){Stop-Process -Id $p.ProcessId -Force}}").run((_d, _e, code) => {
                         if (code === undefined) return
                         reapOurChrome(guardedDone)
                     })
@@ -1524,9 +1524,11 @@ function init() {
             const localHost = host === "" || host === "127.0.0.1" || host === "localhost" || host === "::1"
             let cmd = "pkill -9 -f '[a]quatils-beta/.*/solver/solver' 2>/dev/null; "
             if (port && localHost) {
-                cmd += "if command -v fuser >/dev/null 2>&1; then fuser -k " + port + "/tcp 2>/dev/null; "
-                    + "elif command -v lsof >/dev/null 2>&1; then lsof -tiTCP:" + port + " -sTCP:LISTEN 2>/dev/null | xargs -r kill -9 2>/dev/null; "
-                    + "elif command -v ss >/dev/null 2>&1; then P=$(ss -H -ltnp 2>/dev/null | grep -E '[:.]" + port + " ' | grep -oE 'pid=[0-9]+' | head -n1 | cut -d= -f2); [ -n \"$P\" ] && kill -9 \"$P\" 2>/dev/null; fi; "
+                cmd += "P=$(lsof -tiTCP:" + port + " -sTCP:LISTEN 2>/dev/null | head -n1); "
+                    + "[ -z \"$P\" ] && P=$(ss -H -ltnp 2>/dev/null | grep -E '[:.]" + port + " ' | grep -oE 'pid=[0-9]+' | head -n1 | cut -d= -f2); "
+                    + "if [ -n \"$P\" ]; then X=$(readlink -f /proc/\"$P\"/exe 2>/dev/null); "
+                    + "[ -z \"$X\" ] && X=$(lsof -p \"$P\" -Fn 2>/dev/null | grep -m1 aquatils-beta); "
+                    + "case \"$X\" in *aquatils-beta*) kill -9 \"$P\" 2>/dev/null;; esac; fi; "
             }
             cmd += "exit 0"
             try {
@@ -1562,7 +1564,7 @@ function init() {
         function reapLeftoverListener(): void {
             if (typeof $os === "undefined" || typeof $osExtra === "undefined") return
             if ($os.platform === "windows") {
-                try { $osExtra.asyncCmd("cmd", "/c", "taskkill", "/F", "/T", "/IM", "solver.exe").run((_d, _e, _c) => {}) } catch (_e) {}
+                try { $osExtra.asyncCmd("cmd", "/c", "powershell", "-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='SilentlyContinue';foreach($p in Get-CimInstance Win32_Process){if($p.Name -eq 'solver.exe' -and $p.CommandLine -like '*aquatils-beta*'){Stop-Process -Id $p.ProcessId -Force}}").run((_d, _e, _c) => {}) } catch (_e) {}
                 return
             }
             reapOrphanSolvers()
