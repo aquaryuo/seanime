@@ -222,7 +222,7 @@ function init() {
         let fsDepsAutoTried = false
         const fsVersion = ctx.state<string>("")
         const fsTest = ctx.state<string>("")
-        const fsLogFilter = ctx.state<boolean>(true)
+        const fsLogFilter = ctx.state<boolean>(sget<boolean>("fs.logFilter", true))
         const fsConsent = ctx.state<boolean>(sget<boolean>("fs.consent", false))
         let sehGroups: { key: string; label: string; count: number; t: number }[] = []
         let sehRowKeys: string[] = []
@@ -758,6 +758,7 @@ function init() {
                 $storage.set("fs.dnsCustom", fsDnsCustom.get())
                 $storage.set("fs.pacing", fsPacing.get())
                 $storage.set("fs.verbose", fsVerbose.get())
+                $storage.set("fs.logFilter", fsLogFilter.get())
                 $storage.set("fs.customTls", fsCustomTls.get())
                 $storage.set("fs.consent", fsConsent.get())
             } catch (_e) {}
@@ -1062,6 +1063,8 @@ function init() {
             fsAutoRestarts = 0
             fsLastAutoRestart = 0
             fsBindRetries = 0
+            fsNotified["restart-cap"] = false
+            fsNotified["av"] = false
         }
 
         function solverQuarantined(): boolean {
@@ -1989,6 +1992,7 @@ function init() {
         })
         ctx.registerEventHandler("fs-logs-filter", () => {
             fsLogFilter.set(!fsLogFilter.get())
+            fsPersist()
             tray.update()
         })
         ctx.registerEventHandler("fs-doctor", () => {
