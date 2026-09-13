@@ -847,15 +847,19 @@ function init() {
             const p = await fsProbe()
             if (p.foreign) {
                 setStatus("down")
-                if (fsMode.get() === "remote") {
-                    setErr("The host at " + fsBase() + " answered, but it is not Aqua's solver - check the address.")
-                } else {
-                    setErr("Port " + (fsPort.get() || FS_DEFAULT_PORT) + " is held by another FlareSolverr-compatible server, so the bundled solver was not started. Change the port in Settings, or stop the other server.")
-                }
+                const msg = fsMode.get() === "remote"
+                    ? "The host at " + fsBase() + " answered, but it is not Aqua's solver - check the address."
+                    : "Port " + (fsPort.get() || FS_DEFAULT_PORT) + " is held by another FlareSolverr-compatible server, so the bundled solver was not started. Change the port in Settings, or stop the other server."
+                if (fsErr.get() !== msg) setErr(msg)
                 notifyOnce("foreign", "Aqua's Utils: port " + (fsPort.get() || FS_DEFAULT_PORT) + " is held by another solver. Change the port in Settings.")
                 refreshTrayBadge()
+                refreshAnimeBtn()
                 trayPoke()
                 return
+            }
+            if (fsNotified["foreign"]) {
+                fsNotified["foreign"] = false
+                if ((fsErr.get() || "").indexOf("is held by another") >= 0 || (fsErr.get() || "").indexOf("not Aqua's solver") >= 0) setErr("")
             }
             if (p.up) {
                 void refreshCapability()
@@ -1243,17 +1247,13 @@ function init() {
                         let movedAside = false
                         try { $os.removeAll(previous) } catch (_e) {}
                         try { if ($os.stat(dir)) { $os.rename(dir, previous); movedAside = true } } catch (_e) {}
-                        try {
-                            $os.rename(staging, dir)
-                        } catch (_e) {
-                            ok = false
-                            if (movedAside) { try { $os.rename(previous, dir) } catch (_e2) {} }
-                        }
-                        ok = ok && chromiumCachedPath() !== ""
+                        let installed = false
+                        try { $os.rename(staging, dir); installed = true } catch (_e) {}
+                        ok = installed && chromiumCachedPath() !== ""
                         if (ok) {
                             try { $os.removeAll(previous) } catch (_e) {}
                         } else {
-                            try { $os.removeAll(dir) } catch (_e) {}
+                            if (installed) { try { $os.removeAll(dir) } catch (_e) {} }
                             if (movedAside) { try { $os.rename(previous, dir) } catch (_e) {} }
                         }
                     }
@@ -1354,7 +1354,7 @@ function init() {
                         fsChromiumBusy = false
                         setNote(ok ? ("Chromium updated to " + st.version + ".") : "Chromium update failed.")
                         tray.update()
-                        if (wasRunning) fsStart()
+                        if (wasRunning && !fsManualStop && fsMode.get() !== "remote") fsStart()
                     })
                 }
                 if (wasRunning) binaryStop(apply)
@@ -1950,10 +1950,12 @@ function init() {
                     cancel()
                     fsDownloadId = ""
                     fsBusy = false
-                    setStatus("down")
-                    if (!fsManualStop) {
-                        setErr("The solver download did not finish — press Start to try again.")
+                    if (fsBinaryGen !== launchGen || fsManualStop || fsMode.get() === "remote") {
+                        tray.update()
+                        return
                     }
+                    setStatus("down")
+                    setErr("The solver download did not finish — press Start to try again.")
                     setNote("The solver download timed out — press Start to retry.")
                     tray.update()
                 }
