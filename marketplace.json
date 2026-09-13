@@ -15,7 +15,7 @@
   {
     "id": "aq-animelok-beta",
     "name": "Animelok - BETA",
-    "version": "0.1.12",
+    "version": "0.1.13",
     "description": "Only animelok compatibility layer you'll ever need",
     "author": "aquaryuo",
     "type": "onlinestream-provider",

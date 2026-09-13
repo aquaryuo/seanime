@@ -99,23 +99,96 @@ class Provider {
         const out: VideoSubtitle[] = []
         if (!tracks || tracks.length === 0) return out
         const seen: { [key: string]: boolean } = {}
-        let defaultIdx = -1
-        let englishIdx = -1
+        const nonDialogue: boolean[] = []
+        let pick = 0
+        let best = -1
         for (const t of tracks) {
             if (!t || typeof t.url !== "string" || !/^https?:\/\//i.test(t.url)) continue
             if (t.kind && t.kind !== "captions" && t.kind !== "subtitles") continue
-            const lang = (t.lang || t.label || "en").toLowerCase().split("-")[0]
-            if (seen[lang]) continue
-            seen[lang] = true
+            if (seen["#" + t.url]) continue
+            seen["#" + t.url] = true
+            const label = (t.label || "").trim()
+            const code = this.subCode(t.lang || "", label)
             const idx = out.length
-            out.push({ id: `${lang}-${idx}`, url: t.url, language: t.label || t.lang || "English", isDefault: false })
-            if (defaultIdx === -1 && t.default === true) defaultIdx = idx
-            if (englishIdx === -1 && lang === "en") englishIdx = idx
+            out.push({ id: `${code}-${idx}`, url: t.url, language: label || this.langName(code), isDefault: false })
+            const nd = this.isNonDialogue(label)
+            nonDialogue.push(nd)
+            const score = this.trackScore(label, code === "en", t.default === true, nd)
+            if (score > best) {
+                best = score
+                pick = idx
+            }
         }
         if (out.length === 0) return out
-        const pick = defaultIdx !== -1 ? defaultIdx : englishIdx !== -1 ? englishIdx : 0
         out[pick].isDefault = true
-        return out.filter((s) => s.isDefault).concat(out.filter((s) => !s.isDefault))
+        const head: VideoSubtitle[] = []
+        const tail: VideoSubtitle[] = []
+        for (let i = 0; i < out.length; i++) {
+            if (i === pick) continue
+            if (nonDialogue[i]) tail.push(out[i])
+            else head.push(out[i])
+        }
+        return [out[pick]].concat(head).concat(tail)
+    }
+
+    private subCode(lang: string, label: string): string {
+        const raw = (lang || "").toLowerCase().split("-")[0]
+        if (raw && raw.length <= 3 && /^[a-z]+$/.test(raw) && raw !== "und") {
+            if (raw === "en" || raw === "eng") return "en"
+            if (raw.length === 2) return raw
+        }
+        const words = (raw || label || "").toLowerCase().split(/[^a-z]+/)
+        const map: { [key: string]: string } = {
+            eng: "en", english: "en",
+            spa: "es", spanish: "es", espanol: "es",
+            por: "pt", portuguese: "pt", portugues: "pt",
+            fre: "fr", fra: "fr", french: "fr", francais: "fr",
+            ger: "de", deu: "de", german: "de", deutsch: "de",
+            ita: "it", italian: "it", italiano: "it",
+            rus: "ru", russian: "ru",
+            ara: "ar", arabic: "ar",
+            jpn: "ja", japanese: "ja",
+            kor: "ko", korean: "ko",
+            chi: "zh", zho: "zh", chinese: "zh",
+            tha: "th", thai: "th",
+            vie: "vi", vietnamese: "vi",
+            tur: "tr", turkish: "tr",
+            pol: "pl", polish: "pl",
+            ind: "id", indonesian: "id",
+            hin: "hi", hindi: "hi",
+        }
+        for (const w of words) if (map[w]) return map[w]
+        return raw || "und"
+    }
+
+    private langName(code: string): string {
+        const map: { [key: string]: string } = {
+            en: "English", ja: "Japanese", ar: "Arabic", de: "German", es: "Spanish", fr: "French",
+            it: "Italian", ru: "Russian", pt: "Portuguese", hi: "Hindi", id: "Indonesian",
+            ko: "Korean", zh: "Chinese", th: "Thai", vi: "Vietnamese", tr: "Turkish", pl: "Polish", nl: "Dutch",
+        }
+        const c = (code || "").toLowerCase()
+        return map[c] || map[c.split("-")[0]] || (c ? c.toUpperCase() : "Unknown")
+    }
+
+    private isNonDialogue(label: string): boolean {
+        const l = label || ""
+        if (/\b(?:full|dialogu?e|dialog|main|complete)\b/i.test(l)) return false
+        return /\b(?:forced|forc[eé]s|signs?|songs?|karaoke|kfx|typeset(?:ting)?|commentary)\b/i.test(l) || /\bs\s*[&+\/]\s*s\b/i.test(l) || /\bop\s*[\/&+]\s*ed\b/i.test(l)
+    }
+
+    private isMachine(label: string): boolean {
+        return /\b(?:ai|mtl)\b/i.test(label || "")
+    }
+
+    private isAltDialogue(label: string): boolean {
+        return /\b(?:sdh|cc|closed[\s-]?captions?|hearing[\s-]?impaired|dub[\s-]?titles?)\b/i.test(label || "")
+    }
+
+    private trackScore(label: string, isEnglish: boolean, def: boolean, nonDialogue?: boolean): number {
+        const nd = nonDialogue === undefined ? this.isNonDialogue(label) : nonDialogue
+        const base = nd ? (isEnglish ? 3 : 0) : this.isMachine(label) ? (isEnglish ? 4 : 1) : this.isAltDialogue(label) ? (isEnglish ? 5 : 1) : isEnglish ? 6 : 2
+        return def ? base * 10 + 1 : base * 10
     }
 
     private async availability(anilistId: number, wantDub: boolean): Promise<Availability> {
