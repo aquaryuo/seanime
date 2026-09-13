@@ -135,6 +135,23 @@ console.log("anizone")
     eq(p.isNonDialogue("English (Signs & Songs)"), true, "track: signs and songs is non-dialogue")
     eq(p.trackScore("English", true, false, false) > p.trackScore("English (Signs)", true, false, true), true, "track: dialogue outranks signs")
     eq(p.trackScore("English", true, true, false) > p.trackScore("English", true, false, false), true, "track: the site default breaks ties upward")
+
+    eq(p.tagAttrs('<track src="a.vtt" srclang="en">').src, "a.vtt", "attrs: a quoted value is read")
+    eq(p.tagAttrs("<track src=a.vtt/>").src, "a.vtt", "attrs: the self-closing slash is not part of the value")
+    eq(p.tagAttrs('<track label="x src=&quot;wrong&quot;" src=right.vtt>').src, "right.vtt", "attrs: a src inside another value cannot win")
+    eq(p.tagAttrs('<track src="a.vtt" default>').default, "", "attrs: a valueless attribute is present and empty")
+    eq(Object.prototype.hasOwnProperty.call(p.tagAttrs('<track src="a.vtt">'), "default"), false, "attrs: an absent attribute stays absent")
+    eq(p.tagAttrs('<track src="a.vtt" label="Signs &amp; Songs">').label, "Signs & Songs", "attrs: every value is entity-decoded, not just the label")
+    eq(p.tagAttrs('<track SRC="a.vtt">').src, "a.vtt", "attrs: names are case-insensitive")
+    eq(p.tagAttrs('<track data-type="ass" src="a">')["data-type"], "ass", "attrs: hyphenated names survive")
+
+    eq(p.langName("he"), "Hebrew", "lang: a code the site serves is named")
+    eq(p.langName("pt-br"), "Portuguese (Brazil)", "lang: a regional code keeps its region")
+    eq(p.langName("zz"), "ZZ", "lang: an unknown code falls back to the code")
+
+    eq(p.decodeEntities("&#128512;"), "\u{1F600}", "entities: an astral codepoint decodes to one emoji")
+    eq(p.decodeEntities("&#x41;&amp;&#66;"), "A&B", "entities: hex and decimal both decode")
+    eq(p.decodeEntities("&#1114112;"), "&#1114112;", "entities: an out-of-range codepoint is left alone")
 }
 
 console.log("animelok")

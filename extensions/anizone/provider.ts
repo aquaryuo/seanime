@@ -550,21 +550,17 @@ class Provider implements AnimeProvider {
             blocks.push({ idx: tm.index, titles: this.decodeTitles(tm[1] || "") })
         }
         if (blocks.length === 0) return out
-        const hrefRe = /href="https?:\/\/[a-z0-9.-]+\/anime\/([a-z0-9]+)"/g
+        const hrefRe = /href="[^"]*\/anime\/([A-Za-z0-9]+)"/gi
         const hrefs: { idx: number; sid: string }[] = []
         let hm: RegExpExecArray | null
         while ((hm = hrefRe.exec(html)) !== null) {
             hrefs.push({ idx: hm.index, sid: hm[1] })
         }
+        let hi = 0
         for (const b of blocks) {
-            let sid = ""
-            for (const h of hrefs) {
-                if (h.idx > b.idx) {
-                    sid = h.sid
-                    break
-                }
-            }
-            if (sid) out.push({ sid, titles: b.titles, type: "", year: 0, eps: 0 })
+            while (hi < hrefs.length && hrefs[hi].idx <= b.idx) hi++
+            if (hi >= hrefs.length) break
+            out.push({ sid: hrefs[hi].sid, titles: b.titles, type: "", year: 0, eps: 0 })
         }
         return out
     }
@@ -613,17 +609,19 @@ class Provider implements AnimeProvider {
         return titles[0]
     }
 
-    private tagAttr(tag: string, name: string): string {
-        const pats = [
-            new RegExp("(?:^|\\s)" + name + '\\s*=\\s*"([^"]*)"', "i"),
-            new RegExp("(?:^|\\s)" + name + "\\s*=\\s*'([^']*)'", "i"),
-            new RegExp("(?:^|\\s)" + name + "\\s*=\\s*([^\\s>]+)", "i"),
-        ]
-        for (const re of pats) {
-            const m = re.exec(tag)
-            if (m) return m[1] || ""
+    private tagAttrs(tag: string): { [key: string]: string } {
+        const out: { [key: string]: string } = {}
+        const body = (tag || "").replace(/^<\s*[A-Za-z][^\s/>]*/, "").replace(/\/?>\s*$/, "")
+        const re = /([A-Za-z_:][-A-Za-z0-9_:.]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]*)))?/g
+        let m: RegExpExecArray | null
+        while ((m = re.exec(body)) !== null) {
+            if (!m[0]) { re.lastIndex++; continue }
+            const name = m[1].toLowerCase()
+            if (Object.prototype.hasOwnProperty.call(out, name)) continue
+            const raw = m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : m[4] !== undefined ? m[4] : ""
+            out[name] = this.decodeEntities(raw)
         }
-        return ""
+        return out
     }
 
     private decodeEntities(s: string): string {
@@ -634,9 +632,18 @@ class Provider implements AnimeProvider {
             .replace(/&quot;/gi, '"')
             .replace(/&#0?39;|&apos;/gi, "'")
             .replace(/&nbsp;/gi, " ")
-            .replace(/&#x([0-9a-f]+);/gi, (_m, h) => String.fromCharCode(parseInt(h, 16)))
-            .replace(/&#(\d+);/g, (_m, d) => String.fromCharCode(parseInt(d, 10)))
+            .replace(/&#x([0-9a-f]+);/gi, (m, h) => this.codePoint(parseInt(h, 16), m))
+            .replace(/&#(\d+);/g, (m, d) => this.codePoint(parseInt(d, 10), m))
             .trim()
+    }
+
+    private codePoint(n: number, raw: string): string {
+        if (!Number.isFinite(n) || n < 0 || n > 0x10ffff) return raw
+        try {
+            return String.fromCodePoint(n)
+        } catch (_e) {
+            return raw
+        }
     }
 
     private extractSubs(html: string): { origin: string; lang: string; ext: string; label: string; def: boolean }[] {
@@ -645,17 +652,17 @@ class Provider implements AnimeProvider {
         const tagRe = /<track\b[^>]*>/gi
         let t: RegExpExecArray | null
         while ((t = tagRe.exec(html)) !== null) {
-            const tag = t[0]
-            const src = this.tagAttr(tag, "src")
+            const attrs = this.tagAttrs(t[0])
+            const src = attrs.src || ""
             if (!/^https?:\/\//i.test(src) || src.indexOf("/subtitles/") === -1) continue
-            const kind = this.tagAttr(tag, "kind").toLowerCase()
+            const kind = (attrs.kind || "").toLowerCase()
             if (kind && kind !== "subtitles" && kind !== "captions") continue
             if (seen["#" + src]) continue
             seen["#" + src] = true
             const fromUrl = src.match(new RegExp("/subtitles/[0-9]+_([A-Za-z0-9-]+)\\.(" + this.subExts + ")", "i"))
-            const lang = this.tagAttr(tag, "srclang") || (fromUrl ? fromUrl[1] : "") || "en"
-            const ext = (this.tagAttr(tag, "data-type") || (fromUrl ? fromUrl[2] : "") || "ass").toLowerCase()
-            out.push({ origin: src, lang, ext, label: this.decodeEntities(this.tagAttr(tag, "label")), def: /(?:^|\s)default(?:[\s/>=])/i.test(tag) })
+            const lang = attrs.srclang || (fromUrl ? fromUrl[1] : "") || "en"
+            const ext = (attrs["data-type"] || (fromUrl ? fromUrl[2] : "") || "ass").toLowerCase()
+            out.push({ origin: src, lang, ext, label: attrs.label || "", def: Object.prototype.hasOwnProperty.call(attrs, "default") })
         }
         if (out.length > 0) return out
         const re = new RegExp("https?://[^\"'\\s]+/subtitles/[0-9]+_([A-Za-z0-9-]+)\\.(" + this.subExts + ")", "g")
@@ -766,6 +773,11 @@ class Provider implements AnimeProvider {
             it: "Italian", ru: "Russian", pt: "Portuguese", hi: "Hindi", ta: "Tamil", id: "Indonesian",
             ko: "Korean", zh: "Chinese", th: "Thai", vi: "Vietnamese", tr: "Turkish", pl: "Polish", nl: "Dutch",
             my: "Malay", tl: "Tagalog",
+            he: "Hebrew", fa: "Persian", uk: "Ukrainian", ro: "Romanian", el: "Greek", hu: "Hungarian",
+            cs: "Czech", sk: "Slovak", sv: "Swedish", no: "Norwegian", da: "Danish", fi: "Finnish",
+            bg: "Bulgarian", hr: "Croatian", sr: "Serbian", lt: "Lithuanian", lv: "Latvian", et: "Estonian",
+            bn: "Bengali", te: "Telugu", ml: "Malayalam", mr: "Marathi", ur: "Urdu", ms: "Malay",
+            ca: "Catalan", eu: "Basque", gl: "Galician", sq: "Albanian", mk: "Macedonian", sl: "Slovenian",
             "es-419": "Latin American Spanish", "pt-br": "Portuguese (Brazil)",
             "zh-hans": "Chinese (Simplified)", "zh-hant": "Chinese (Traditional)",
         }
