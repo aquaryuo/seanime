@@ -461,7 +461,7 @@ class Provider implements AnimeProvider {
             if (this.now() > deadline) return stated
             let ok = false
             try {
-                const res = await fetch(`${this.normBase()}/anime/${shortid}/${n}`, { method: "HEAD", headers: this.pageHeaders() })
+                const res = await fetch(`${this.normBase()}/anime/${shortid}/${n}`, { headers: this.pageHeaders() })
                 if (res.status === 200) ok = true
                 else if (res.status !== 404) return stated
             } catch (_e) {

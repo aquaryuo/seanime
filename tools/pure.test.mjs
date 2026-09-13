@@ -152,6 +152,18 @@ console.log("anizone")
     eq(p.decodeEntities("&#128512;"), "\u{1F600}", "entities: an astral codepoint decodes to one emoji")
     eq(p.decodeEntities("&#x41;&amp;&#66;"), "A&B", "entities: hex and decimal both decode")
     eq(p.decodeEntities("&#1114112;"), "&#1114112;", "entities: an out-of-range codepoint is left alone")
+
+    const seenMethods = []
+    const probe = load("anizone", {
+        fetch: (url, opts) => {
+            seenMethods.push((opts && opts.method) || "GET")
+            return Promise.resolve({ ok: false, status: 404, text: () => "" })
+        },
+    })
+    const trimmed = await probe.trimToExisting("abc123", 5, { 1: true, 2: true })
+    eq(seenMethods.length > 0, true, "probe: the tail probe actually ran")
+    eq(seenMethods.filter((m) => m !== "GET"), [], "probe: existence is checked with GET - HEAD never completes on this site")
+    eq(trimmed, 5, "probe: an all-404 tail leaves the stated count alone")
 }
 
 console.log("animelok")
