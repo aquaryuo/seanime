@@ -5,6 +5,7 @@ class Provider {
     private mirrors = ["https://animepahe.pw", "https://animepahe.com", "https://animepahe.org"]
     private solverUrl = this.cfg("solverUrl", "{{solverUrl}}", "http://127.0.0.1:8191/v1")
     private solverSession = this.cfg("solverSession", "{{solverSession}}", "seanime")
+    private lastFailKind = ""
     private lastResp: { url: string; status: number; statusText: string; ct: string; len: number; redirected: boolean; finalUrl: string; snippet: string; hit: string } | undefined = undefined
     private lastSolver: { ran: boolean; http: number; snippet: string; reason: string } | undefined = undefined
     private cookieTtl = 10800000
@@ -32,6 +33,8 @@ class Provider {
         for (const q of queries) {
             let data: AnimeData[] | undefined
             let shapeErr = ""
+            this.lastFailKind = ""
+            this.lastResp = undefined
             const ckey = `apahe:srch:${q.toLowerCase()}`
             const cachedData = this.readCache<AnimeData[]>(ckey, 300000)
             if (cachedData && cachedData.length > 0) {
@@ -46,8 +49,8 @@ class Provider {
                     data = undefined
                     const msg = typeof e === "string" ? e : e && (e as any).message ? (e as any).message : "request failed"
                     lastErr = msg
-                    if ((this.lastResp && this.lastResp.hit) || msg.indexOf("blocked") !== -1 || msg.indexOf("Cloudflare") !== -1) blocked = true
-                    if (blocked || msg.indexOf("reachable") !== -1 || msg.indexOf("endpoint not set") !== -1 || msg.indexOf("protection") !== -1 || msg.indexOf("expected JSON") !== -1) break
+                    if ((this.lastResp && this.lastResp.hit) || this.lastFailKind === "blocked") blocked = true
+                    if (blocked || this.lastFailKind === "solver" || this.lastFailKind === "parse") break
                 }
             }
             if (shapeErr) throw this.fail("parse", shapeErr)
@@ -212,18 +215,13 @@ class Provider {
     }
 
     private async playSources(animeSession: string, episodeSession: string, audio: string, playUrl: string): Promise<PlaySource[]> {
-        const cacheKey = `apahe:play:${animeSession}:${episodeSession}`
-        let html = this.readCache<string>(cacheKey, this.serverCacheTtl)
-        if (!html) {
-            html = await this.getText(playUrl, { Referer: `${this.baseUrl}/` }, (b) => this.looksLikePlayPage(b))
-            if (this.looksLikePlayPage(html)) this.writeCache(cacheKey, html)
-        }
-        return this.parsePlaySources(html || "", audio)
-    }
-
-    private looksLikePlayPage(html: string): boolean {
-        if (!html) return false
-        return /resolutionMenu/i.test(html) || /data-src\s*=/i.test(html)
+        const cacheKey = `apahe:play2:${animeSession}:${episodeSession}:${audio}`
+        const cached = this.readCache<PlaySource[]>(cacheKey, this.serverCacheTtl)
+        if (cached && cached.length > 0) return cached
+        const html = await this.getText(playUrl, { Referer: `${this.baseUrl}/` }, (b) => this.parsePlaySources(b, audio).length > 0)
+        const out = this.parsePlaySources(html || "", audio)
+        if (out.length > 0) this.writeCache(cacheKey, out)
+        return out
     }
 
     private searchQueries(opts: SearchOptions): string[] {
@@ -470,13 +468,13 @@ class Provider {
         }
         const solved = await this.solveGet(url)
         if (solved && (!valid || valid(solved))) return solved
-        if (!this.solverEndpoint()) throw this.fail("server", "Solver endpoint not set — configure it in the extension settings and run it via Aqua's Utils.")
+        if (!this.solverEndpoint()) throw this.fail("server", "Solver endpoint not set — configure it in the extension settings and run it via Aqua's Utils.", "solver")
         const ping = await this.solverPing()
-        if (!ping.up) throw this.fail("server", "Aqua's Utils solver isn't reachable at " + this.solverEndpoint() + " — open Aqua's Utils and start it.")
+        if (!ping.up) throw this.fail("server", "Aqua's Utils solver isn't reachable at " + this.solverEndpoint() + " — open Aqua's Utils and start it.", "solver")
         let why = this.lastSolver && this.lastSolver.reason ? this.lastSolver.reason : ""
         why = why.replace(/^needs-stronger-solver:\s*/i, "")
         this.invalidateBase()
-        throw this.fail("fetch", "Connected to the solver (v" + (ping.version || "?") + ") but it couldn't clear the site's protection" + (why ? " — " + why : "") + ".")
+        throw this.fail("fetch", "Connected to the solver (v" + (ping.version || "?") + ") but it couldn't clear the site's protection" + (why ? " — " + why : "") + ".", "blocked")
     }
 
     private async solverPing(): Promise<{ up: boolean; version?: string }> {
@@ -505,6 +503,7 @@ class Provider {
         if (parsed !== undefined) return parsed
         this.reportError("parse", this.parseDiag(url))
         this.invalidateBase()
+        this.lastFailKind = "parse"
         throw "AnimePahe answered with something other than JSON, which usually means this connection is being challenged. The full diagnostic is in Aqua's Utils."
     }
 
@@ -603,7 +602,8 @@ class Provider {
             .replace(/^ +| +$/g, "")
     }
 
-    private fail(scope: string, message: string): string {
+    private fail(scope: string, message: string, kind?: string): string {
+        this.lastFailKind = kind || ""
         this.reportError(scope, message)
         return message
     }
