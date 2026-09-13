@@ -65,6 +65,25 @@ class Provider implements AnimeProvider {
         } catch (_e) {}
     }
 
+    private parseJson<T>(text: string): T | undefined {
+        if (!text) return undefined
+        try {
+            return JSON.parse(text) as T
+        } catch (_e) {
+            return undefined
+        }
+    }
+
+    private async guarded(scope: string, url: string, opts?: FetchOptions): Promise<FetchResponse> {
+        try {
+            return await this.fetchRetry(url, opts)
+        } catch (e) {
+            this.invalidateBase()
+            this.reportError(scope, `transport failure: ${e instanceof Error ? e.message : String(e)}`)
+            throw "the site could not be reached — check your connection or retry in a moment"
+        }
+    }
+
     private pageHeaders(): { [key: string]: string } {
         return { Referer: `${this.baseUrl}/` }
     }
@@ -420,13 +439,7 @@ class Provider implements AnimeProvider {
         const cached = this.readCache<EpisodeDetails[]>(cacheKey)
         if (cached && cached.length > 0) return cached
 
-        let page: FetchResponse
-        try {
-            page = await this.fetchRetry(seriesUrl, { headers: this.pageHeaders() })
-        } catch (e) {
-            this.invalidateBase()
-            throw this.fail("episodes", e instanceof Error ? e.message : String(e))
-        }
+        const page = await this.guarded("episodes", seriesUrl, { headers: this.pageHeaders() })
         const pageHtml = page.text()
         if (this.isChallengeResponse(page, pageHtml)) throw this.fail("episodes", "the site is showing an anti-bot challenge on this mirror — retry later or switch mirrors")
         if (!page.ok) throw this.fail("episodes", `episode page failed (status ${page.status})`)
@@ -439,11 +452,13 @@ class Provider implements AnimeProvider {
             throw this.fail("episodes", "could not determine series id (site layout may have changed)")
         }
 
-        const listRes = await this.fetchRetry(`${this.baseUrl}/ajax/episode/list/${seriesId}`, {
+        const listRes = await this.guarded("episodes", `${this.baseUrl}/ajax/episode/list/${seriesId}`, {
             headers: this.ajaxHeaders(),
         })
+        const listHtml = listRes.text()
+        if (this.isChallengeResponse(listRes, listHtml)) throw this.fail("episodes", "the site is showing an anti-bot challenge on this mirror — retry later or switch mirrors")
         if (!listRes.ok) throw this.fail("episodes", `episode list failed (status ${listRes.status})`)
-        const listJson = listRes.json<{ status: number; result: string }>()
+        const listJson = this.parseJson<{ status: number; result: string }>(listHtml)
         if (!listJson || !listJson.result) throw this.fail("episodes", "empty episode list response")
 
         const $ = LoadDoc(listJson.result)
@@ -614,12 +629,15 @@ class Provider implements AnimeProvider {
         const cacheKey = `anikoto:slist:${dataIds}`
         let html = this.readCache<string>(cacheKey, this.serverCacheTtl)
         if (!html) {
-            const slRes = await fetch(
+            const slRes = await this.guarded(
+                "server",
                 `${this.baseUrl}/ajax/server/list?servers=${encodeURIComponent(dataIds)}`,
                 { headers: this.ajaxHeaders() }
             )
+            const slHtml = slRes.text()
+            if (this.isChallengeResponse(slRes, slHtml)) throw this.fail("server", "the site is showing an anti-bot challenge on this mirror — retry later or switch mirrors")
             if (!slRes.ok) throw this.fail("server", `server list failed (status ${slRes.status})`)
-            const sl = slRes.json<{ status: number; result: string }>()
+            const sl = this.parseJson<{ status: number; result: string }>(slHtml)
             html = (sl && sl.result) || ""
             if (html && html.indexOf("data-link-id") !== -1) this.writeCache(cacheKey, html)
         }

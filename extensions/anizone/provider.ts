@@ -254,7 +254,7 @@ class Provider implements AnimeProvider {
         const cacheKey = `anizone:eps:${shortid}${alTag}$${audio}`
         const cached = this.readCache<EpisodeDetails[]>(cacheKey, this.cacheTtl)
         if (cached && cached.length > 0) return cached
-        const res = await fetch(`${this.normBase()}/anime/${shortid}`, { headers: this.pageHeaders() })
+        const res = await this.guarded("episodes", `${this.normBase()}/anime/${shortid}`, { headers: this.pageHeaders() })
         if (res.status === 404) return []
         if (!res.ok) throw this.fail("episodes", `anizone: series page failed (status ${res.status})`)
         const html = res.text()
@@ -302,7 +302,7 @@ class Provider implements AnimeProvider {
         const cacheKey = `anizone:src:${shortid}:${n}`
         let cached = this.readCache<{ m3u8: string; subs: { origin: string; lang: string; ext: string; label?: string; def?: boolean }[] }>(cacheKey, this.srcCacheTtl)
         if (!cached || !cached.m3u8) {
-            const res = await fetch(`${this.normBase()}/anime/${shortid}/${n}`, { headers: this.pageHeaders() })
+            const res = await this.guarded("server", `${this.normBase()}/anime/${shortid}/${n}`, { headers: this.pageHeaders() })
             if (!res.ok) throw this.fail("server", `anizone: episode page failed (status ${res.status})`)
             const html = res.text()
             const player = this.parsePlayer(html)
@@ -842,6 +842,15 @@ class Provider implements AnimeProvider {
     private fail(scope: string, message: string): string {
         this.reportError(scope, message)
         return message
+    }
+
+    private async guarded(scope: string, url: string, opts?: FetchOptions): Promise<FetchResponse> {
+        try {
+            return await fetch(url, opts)
+        } catch (e) {
+            this.reportError(scope, `transport failure: ${e instanceof Error ? e.message : String(e)}`)
+            throw "anizone could not be reached — check your connection or retry in a moment"
+        }
     }
 
     private now(): number {
