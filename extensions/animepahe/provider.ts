@@ -524,7 +524,7 @@ class Provider implements AnimeProvider {
         }
         const solved = await this.solveGet(url)
         if (solved && (!valid || valid(solved))) return solved
-        if (!this.solverEndpoint()) throw this.fail("server", "Solver endpoint not set — configure it in the extension settings and run it via Aqua's Utils.", "solver")
+        if (!this.solverEndpoint()) throw this.fail("server", "The solver endpoint in this extension's settings is not a full http:// or https:// address — fix it there and run the solver via Aqua's Utils.", "solver")
         const ping = await this.solverPing()
         if (!ping.up) throw this.fail("server", "Aqua's Utils solver isn't reachable at " + this.solverEndpoint() + " — open Aqua's Utils and start it.", "solver")
         let why = this.lastSolver && this.lastSolver.reason ? this.lastSolver.reason : ""
