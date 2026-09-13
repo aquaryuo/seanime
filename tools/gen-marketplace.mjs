@@ -1,5 +1,4 @@
 import fs from "fs"
-import path from "path"
 import { execFileSync } from "child_process"
 
 const FIELDS = ["id", "name", "version", "description", "author", "type", "language", "lang", "icon", "website", "manifestURI"]
@@ -11,13 +10,24 @@ function entryFrom(manifest) {
     return out
 }
 
+function stagedOrHead(p) {
+    try {
+        return execFileSync("git", ["show", `:${p}`], { encoding: "utf8" })
+    } catch {
+        return fs.readFileSync(p, "utf8")
+    }
+}
+
 function localManifests() {
     const out = []
     for (const root of ROOTS) {
         if (!fs.existsSync(root)) continue
         for (const name of fs.readdirSync(root).sort()) {
-            const p = path.join(root, name, "manifest.json")
-            if (fs.existsSync(p)) out.push(JSON.parse(fs.readFileSync(p, "utf8")))
+            const p = `${root}/${name}/manifest.json`
+            if (!fs.existsSync(p)) continue
+            try {
+                out.push(JSON.parse(stagedOrHead(p)))
+            } catch {}
         }
     }
     return out
