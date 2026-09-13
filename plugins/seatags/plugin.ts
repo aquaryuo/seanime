@@ -2,32 +2,8 @@ declare const console: { log(...args: any[]): void; info(...args: any[]): void; 
 
 function init() {
     $ui.register((ctx) => {
-        type AqLevel = "ERR" | "WRN" | "OK" | "INF" | "DBG"
 
         const AQ_SEH_MARKER = "SEHERRv1"
-        const AQ_LINE_RE = /^\d{2}:\d{2}:\d{2}\.\d{3} (ERR|WRN|OK|INF|DBG)\s/
-        const AQ_GO_RE = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})\s+(INFO|ERROR|WARNING|WARN|DIAG|DEBUG)\s+/
-        const AQ_SCOPE_RE = /^\[([A-Za-z0-9_/-]{2,24})\]\s*/
-
-        const AQ_COLOR: { [k: string]: string } = {
-            ERR: "rgba(255,138,138,0.95)",
-            WRN: "rgba(255,199,120,0.95)",
-            OK: "rgba(146,222,170,0.95)",
-            INF: "rgba(255,255,255,0.78)",
-            DBG: "rgba(255,255,255,0.45)",
-        }
-
-        function aqStamp(ms?: number): string {
-            try {
-                const d = ms === undefined || ms <= 0 ? new Date() : new Date(ms)
-                const p2 = (n: number): string => (n < 10 ? "0" : "") + n
-                const p3 = (n: number): string => (n < 100 ? (n < 10 ? "00" : "0") : "") + n
-                return p2(d.getHours()) + ":" + p2(d.getMinutes()) + ":" + p2(d.getSeconds()) + "." + p3(d.getMilliseconds())
-            } catch (_e) {
-                return "00:00:00.000"
-            }
-        }
-
         function aqText(msg: string): string {
             if (msg === undefined || msg === null) return ""
             return String(msg)
@@ -37,78 +13,6 @@ function init() {
                 .replace(/ {2,}/g, " ")
                 .replace(/^ +/, "")
                 .replace(/\s+$/, "")
-        }
-
-        function aqLine(lvl: AqLevel, scope: string, msg: string, ms?: number): string {
-            const body = aqText(msg)
-            if (!body) return ""
-            return aqStamp(ms) + " " + (lvl + "  ").slice(0, 3) + " [" + (scope || "plugin") + "] " + body
-        }
-
-        function aqLevelOf(line: string): AqLevel {
-            const m = AQ_LINE_RE.exec(line)
-            if (m) return m[1] as AqLevel
-            return aqGuessLevel(line)
-        }
-
-        function aqGuessLevel(text: string): AqLevel {
-            if (/\b(error|fatal|panic|failed|failure|refused|denied)\b/i.test(text)) return "ERR"
-            if (/\b(warn|warning|deprecated)\b/i.test(text)) return "WRN"
-            return "INF"
-        }
-
-        function aqMapLevel(tag: string): AqLevel {
-            switch (tag.toUpperCase()) {
-                case "ERROR":
-                    return "ERR"
-                case "WARNING":
-                case "WARN":
-                    return "WRN"
-                case "DIAG":
-                case "DEBUG":
-                    return "DBG"
-                default:
-                    return "INF"
-            }
-        }
-
-        function aqNormalize(line: string, defScope: string): string {
-            const raw = aqText(line)
-            if (!raw) return ""
-            if (AQ_LINE_RE.test(raw)) return raw
-            let rest = raw
-            let ms = 0
-            let lvl: AqLevel | undefined = undefined
-            let scope = defScope
-            const g = AQ_GO_RE.exec(rest)
-            if (g) {
-                try {
-                    ms = new Date(parseInt(g[1], 10), parseInt(g[2], 10) - 1, parseInt(g[3], 10),
-                        parseInt(g[4], 10), parseInt(g[5], 10), parseInt(g[6], 10)).getTime()
-                } catch (_e) {
-                    ms = 0
-                }
-                lvl = aqMapLevel(g[7])
-                rest = rest.slice(g[0].length)
-            }
-            const s = AQ_SCOPE_RE.exec(rest)
-            if (s) {
-                const sub = s[1]
-                scope = defScope ? defScope + "/" + sub : sub
-                rest = rest.slice(s[0].length)
-            }
-            return aqLine(lvl === undefined ? aqGuessLevel(rest) : lvl, scope, rest, ms)
-        }
-
-        function aqStyle(lvl: AqLevel): { [k: string]: string } {
-            return {
-                fontSize: "11px",
-                fontFamily: "ui-monospace, monospace",
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-                lineHeight: "1.5",
-                color: AQ_COLOR[lvl] || AQ_COLOR.INF,
-            }
         }
 
         function aqReport(ext: string, scope: string, msg: string): void {
@@ -176,10 +80,8 @@ function init() {
         }
         rebuildMaps()
 
-        let dErr = ""
         const dErrSeen: { [k: string]: boolean } = {}
         function dsetErr(code: string): void {
-            dErr = code
             if (dErrSeen[code]) return
             dErrSeen[code] = true
             aqReport(EXT_ID, "decorate", code)
@@ -193,7 +95,6 @@ function init() {
         function live(eid: string, gen: number): boolean { return genById[eid] === gen }
 
         const CTL_INPUT_CSS = "height:40px;border-radius:12px;border:1px solid rgba(255,255,255,0.12);background:#0b0b0b;color:#d1d1d1;font-size:14px;outline:none;font-family:inherit;box-sizing:border-box;padding:0 12px;min-width:180px"
-        const CTL_WRAP_CSS = "display:flex;flex-direction:row;flex-wrap:wrap;gap:8px;align-items:center;flex:1 1 auto;min-width:0"
         const CTL_TRIGGER_CSS = "height:40px;border-radius:12px;border:1px solid rgba(255,255,255,0.12);background-color:#0b0b0b;color:#d1d1d1;font-size:14px;font-family:inherit"
         const TRIGGER_OVERRIDE_CSS = "display:flex;align-items:center;justify-content:space-between;padding-left:0.75rem;padding-right:0.75rem;width:100%;box-sizing:border-box;cursor:pointer"
         const SEL_CONTENT_CLASS = "UI-Select__content w-full overflow-hidden rounded-[--radius] shadow-md bg-[--paper] border leading-none z-[100]"

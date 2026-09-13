@@ -9,6 +9,7 @@ class Provider {
     private baseUrl = "{{baseUrl}}"
     private cacheTtl = 900000
     private srcCacheTtl = 300000
+    private subExts = "ass|srt|vtt"
     private pageBudget = 45000
     private probeBudget = 20000
 
@@ -289,7 +290,6 @@ class Provider {
         const parts = episode.id.split("$")
         const shortid = parts[0]
         const n = parts[1] || String(episode.number)
-        const alId = this.alOf(episode.id)
         const audio = this.audioOf(episode.id)
         const cacheKey = `anizone:src:${shortid}:${n}`
         let cached = this.readCache<{ m3u8: string; subs: { origin: string; lang: string; ext: string; label?: string; def?: boolean }[] }>(cacheKey, this.srcCacheTtl)
@@ -306,7 +306,7 @@ class Provider {
         }
         const m3u8 = cached.m3u8
         if (audio === "dub" && !(await this.hasEnglishAudio(m3u8, shortid, n))) throw this.fail("server", "anizone: no dub available for this episode")
-        const subtitles = await this.buildSubs(cached.subs, alId, parseInt(n, 10) || episode.number)
+        const subtitles = this.buildSubs(cached.subs)
         return {
             server: server === "Auto" || server === "default" || !server ? "Auto" : server,
             headers: { Referer: `${this.normBase()}/` },
@@ -626,6 +626,8 @@ class Provider {
             .replace(/&quot;/gi, '"')
             .replace(/&#0?39;|&apos;/gi, "'")
             .replace(/&nbsp;/gi, " ")
+            .replace(/&#x([0-9a-f]+);/gi, (_m, h) => String.fromCharCode(parseInt(h, 16)))
+            .replace(/&#(\d+);/g, (_m, d) => String.fromCharCode(parseInt(d, 10)))
             .trim()
     }
 
@@ -642,13 +644,13 @@ class Provider {
             if (kind && kind !== "subtitles" && kind !== "captions") continue
             if (seen["#" + src]) continue
             seen["#" + src] = true
-            const fromUrl = src.match(/\/subtitles\/[0-9]+_([A-Za-z0-9-]+)\.(ass|srt|vtt)/i)
+            const fromUrl = src.match(new RegExp("/subtitles/[0-9]+_([A-Za-z0-9-]+)\\.(" + this.subExts + ")", "i"))
             const lang = this.tagAttr(tag, "srclang") || (fromUrl ? fromUrl[1] : "") || "en"
             const ext = (this.tagAttr(tag, "data-type") || (fromUrl ? fromUrl[2] : "") || "ass").toLowerCase()
             out.push({ origin: src, lang, ext, label: this.decodeEntities(this.tagAttr(tag, "label")), def: /(?:^|\s)default(?:[\s/>=])/i.test(tag) })
         }
         if (out.length > 0) return out
-        const re = /https?:\/\/[^"'\s]+\/subtitles\/[0-9]+_([A-Za-z0-9-]+)\.(ass|srt)/g
+        const re = new RegExp("https?://[^\"'\\s]+/subtitles/[0-9]+_([A-Za-z0-9-]+)\\.(" + this.subExts + ")", "g")
         let m: RegExpExecArray | null
         while ((m = re.exec(html)) !== null) {
             if (seen["#" + m[0]]) continue
@@ -688,7 +690,7 @@ class Provider {
         return `${name} - ${label}`
     }
 
-    private async buildSubs(subs: { origin: string; lang: string; ext: string; label?: string; def?: boolean; forced?: boolean }[], anilistId: number, episode: number): Promise<VideoSubtitle[]> {
+    private buildSubs(subs: { origin: string; lang: string; ext: string; label?: string; def?: boolean; forced?: boolean }[]): VideoSubtitle[] {
         const out: VideoSubtitle[] = []
         const nonDialogue: boolean[] = []
         const seen: { [key: string]: boolean } = {}
@@ -771,6 +773,7 @@ class Provider {
     }
 
     private collectEps(html: string, shortid: string, nums: { [key: number]: boolean }): void {
+        if (!/^[\w-]{1,64}$/.test(shortid)) return
         const re = new RegExp(`/anime/${shortid}/(\\d+)`, "g")
         let m: RegExpExecArray | null
         while ((m = re.exec(html)) !== null) {

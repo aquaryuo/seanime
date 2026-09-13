@@ -6,9 +6,6 @@ function init() {
 
         const AQ_SEH_MARKER = "SEHERRv1"
         const AQ_LINE_RE = /^\d{2}:\d{2}:\d{2}\.\d{3} (ERR|WRN|OK|INF|DBG)\s/
-        const AQ_GO_RE = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})\s+(INFO|ERROR|WARNING|WARN|DIAG|DEBUG)\s+/
-        const AQ_SCOPE_RE = /^\[([A-Za-z0-9_/-]{2,24})\]\s*/
-
         const AQ_COLOR: { [k: string]: string } = {
             ERR: "rgba(255,138,138,0.95)",
             WRN: "rgba(255,199,120,0.95)",
@@ -55,49 +52,6 @@ function init() {
             if (/\b(error|fatal|panic|failed|failure|refused|denied)\b/i.test(text)) return "ERR"
             if (/\b(warn|warning|deprecated)\b/i.test(text)) return "WRN"
             return "INF"
-        }
-
-        function aqMapLevel(tag: string): AqLevel {
-            switch (tag.toUpperCase()) {
-                case "ERROR":
-                    return "ERR"
-                case "WARNING":
-                case "WARN":
-                    return "WRN"
-                case "DIAG":
-                case "DEBUG":
-                    return "DBG"
-                default:
-                    return "INF"
-            }
-        }
-
-        function aqNormalize(line: string, defScope: string): string {
-            const raw = aqText(line)
-            if (!raw) return ""
-            if (AQ_LINE_RE.test(raw)) return raw
-            let rest = raw
-            let ms = 0
-            let lvl: AqLevel | undefined = undefined
-            let scope = defScope
-            const g = AQ_GO_RE.exec(rest)
-            if (g) {
-                try {
-                    ms = new Date(parseInt(g[1], 10), parseInt(g[2], 10) - 1, parseInt(g[3], 10),
-                        parseInt(g[4], 10), parseInt(g[5], 10), parseInt(g[6], 10)).getTime()
-                } catch (_e) {
-                    ms = 0
-                }
-                lvl = aqMapLevel(g[7])
-                rest = rest.slice(g[0].length)
-            }
-            const s = AQ_SCOPE_RE.exec(rest)
-            if (s) {
-                const sub = s[1]
-                scope = defScope ? defScope + "/" + sub : sub
-                rest = rest.slice(s[0].length)
-            }
-            return aqLine(lvl === undefined ? aqGuessLevel(rest) : lvl, scope, rest, ms)
         }
 
         function aqStyle(lvl: AqLevel): { [k: string]: string } {
