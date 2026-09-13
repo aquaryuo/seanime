@@ -33,8 +33,7 @@ class Provider {
         for (const q of queries) {
             let data: AnimeData[] | undefined
             let shapeErr = ""
-            this.lastFailKind = ""
-            this.lastResp = undefined
+            this.clearLastFailure()
             const ckey = `apahe:srch:${q.toLowerCase()}`
             const cachedData = this.readCache<AnimeData[]>(ckey, 300000)
             if (cachedData && cachedData.length > 0) {
@@ -600,6 +599,11 @@ class Provider {
             .replace(/\s+/g, " ")
             .replace(/[^\x20-\x7e]/g, "?")
             .replace(/^ +| +$/g, "")
+    }
+
+    private clearLastFailure(): void {
+        this.lastFailKind = ""
+        this.lastResp = undefined
     }
 
     private fail(scope: string, message: string, kind?: string): string {
