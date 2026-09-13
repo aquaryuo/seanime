@@ -78,3 +78,9 @@ jobs:
             echo "so a payload change without a bump reaches nobody and makes the version meaningless." >&2
           fi
           exit $rc
+      - name: marketplace.json matches the manifests
+        if: always()
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main:refs/remotes/origin/main || true
+          node tools/gen-marketplace.mjs --check

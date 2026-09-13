@@ -2,6 +2,7 @@
   {
     "id": "aq-anikoto-beta",
     "name": "Anikoto - BETA",
+    "version": "1.3.84",
     "description": "Only anikoto compatibility layer you'll ever need",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
@@ -14,30 +15,20 @@
   {
     "id": "aq-animelok-beta",
     "name": "Animelok - BETA",
+    "version": "0.1.11",
     "description": "Only animelok compatibility layer you'll ever need",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
     "language": "typescript",
     "lang": "en",
     "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/animelok/icon.png",
-    "website": "https://animelok.online",
+    "website": "https://animelok.live",
     "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/animelok/manifest.json"
-  },
-  {
-    "id": "aq-anizone-beta",
-    "name": "AniZone - BETA",
-    "description": "Only anizone compatibility layer you'll ever need",
-    "author": "aquaryuo",
-    "type": "onlinestream-provider",
-    "language": "typescript",
-    "lang": "en",
-    "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/anizone/icon.png",
-    "website": "https://anizone.to",
-    "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/anizone/manifest.json"
   },
   {
     "id": "aq-animepahe-beta",
     "name": "AnimePahe - BETA",
+    "version": "0.2.31",
     "description": "Only animepahe compatibility layer you'll ever need",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
@@ -48,20 +39,22 @@
     "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/animepahe/manifest.json"
   },
   {
-    "id": "aq-aquatils-beta",
-    "name": "Aqua's Utils - BETA",
-    "description": "Toolbox plugin: surfaces compatible extension errors, launches a self-contained solver (or connects to a remote one you run) to reach guarded sites, and more.",
+    "id": "aq-anizone-beta",
+    "name": "AniZone - BETA",
+    "version": "1.1.26",
+    "description": "Only anizone compatibility layer you'll ever need",
     "author": "aquaryuo",
-    "type": "plugin",
+    "type": "onlinestream-provider",
     "language": "typescript",
-    "lang": "multi",
-    "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/icon.png",
-    "website": "https://github.com/aquaryuo/seanime",
-    "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/manifest.json"
+    "lang": "en",
+    "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/anizone/icon.png",
+    "website": "https://anizone.to",
+    "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/extensions/anizone/manifest.json"
   },
   {
     "id": "aq-aquaprefs-beta",
     "name": "Aqua's Prefs - BETA",
+    "version": "1.1.64",
     "description": "Remembers your player and series options.",
     "author": "aquaryuo",
     "type": "plugin",
@@ -72,8 +65,35 @@
     "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquaprefs/manifest.json"
   },
   {
+    "id": "aq-aquatils-beta",
+    "name": "Aqua's Utils - BETA",
+    "version": "0.10.13",
+    "description": "Toolbox plugin: surfaces compatible extension errors, launches a self-contained solver (or connects to a remote one you run) to reach guarded sites, and more.",
+    "author": "aquaryuo",
+    "type": "plugin",
+    "language": "typescript",
+    "lang": "multi",
+    "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/icon.png",
+    "website": "https://github.com/aquaryuo/seanime",
+    "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquatils/manifest.json"
+  },
+  {
+    "id": "aq-seatags-beta",
+    "name": "SeaTags - BETA",
+    "version": "1.7.18",
+    "description": "Plugin dedicated to displaying status of plugins/extensions within installed/marketplace pages; as well as filter based on author & show score",
+    "author": "aquaryuo",
+    "type": "plugin",
+    "language": "typescript",
+    "lang": "multi",
+    "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/seatags/icon.png",
+    "website": "https://github.com/aquaryuo/seanime",
+    "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/seatags/manifest.json"
+  },
+  {
     "id": "aq-anikoto",
     "name": "Anikoto",
+    "version": "1.3.81",
     "description": "Only anikoto compatibility layer you'll ever need",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
@@ -86,6 +106,7 @@
   {
     "id": "aq-anizone",
     "name": "AniZone",
+    "version": "1.1.23",
     "description": "Only anizone compatibility layer you'll ever need",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
@@ -98,6 +119,7 @@
   {
     "id": "aq-aquaprefs",
     "name": "Aqua's Prefs",
+    "version": "1.1.63",
     "description": "Remembers your player and series options.",
     "author": "aquaryuo",
     "type": "plugin",
@@ -110,6 +132,7 @@
   {
     "id": "aq-aquatils",
     "name": "Aqua's Utils",
+    "version": "0.10.10",
     "description": "Toolbox plugin: surfaces compatible extension errors, launches a self-contained solver (or connects to a remote one you run) to reach guarded sites, and more.",
     "author": "aquaryuo",
     "type": "plugin",
@@ -122,6 +145,7 @@
   {
     "id": "aq-seatags",
     "name": "SeaTags",
+    "version": "1.7.16",
     "description": "Plugin dedicated to displaying status of plugins/extensions within installed/marketplace pages; as well as filter based on author & show score",
     "author": "aquaryuo",
     "type": "plugin",
@@ -130,17 +154,5 @@
     "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/main/plugins/seatags/icon.png",
     "website": "https://github.com/aquaryuo/seanime",
     "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/plugins/seatags/manifest.json"
-  },
-  {
-    "id": "aq-seatags-beta",
-    "name": "SeaTags - BETA",
-    "description": "Plugin dedicated to displaying status of plugins/extensions within installed/marketplace pages; as well as filter based on author & show score",
-    "author": "aquaryuo",
-    "type": "plugin",
-    "language": "typescript",
-    "lang": "multi",
-    "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/seatags/icon.png",
-    "website": "https://github.com/aquaryuo/seanime",
-    "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/seatags/manifest.json"
   }
 ]
