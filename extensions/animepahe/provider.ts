@@ -815,6 +815,11 @@ class Provider {
         const t = this.now()
         const max = ttl === undefined ? this.epCacheTtl : ttl
         if (entry && t > 0 && entry.at > 0 && t - entry.at < max) return entry.data
+        if (entry !== undefined && entry !== null) {
+            try {
+                $store.remove(key)
+            } catch (_e) {}
+        }
         return undefined
     }
 

@@ -24,6 +24,7 @@ function init() {
         }
 
         const SRC = "https://raw.githubusercontent.com/Bas1874/Seanime-Marketplace/main/Marketplace/Main.json"
+        const OWN_SRC = "https://raw.githubusercontent.com/aquaryuo/seanime/beta/marketplace.json"
         const EXT_ID = "aq-seatags-beta"
         const NS = EXT_ID
         const A_TAGS = "data-" + NS
@@ -549,6 +550,18 @@ function init() {
         try { ctx.dom.onMainTabReady(() => { resetForReady().then(() => onDomReady(), () => onDomReady()) }) } catch (_e) {}
         try { ctx.screen.onNavigate(() => { startControls(); startCards(); load(false).catch(() => {}) }) } catch (_e) {}
 
+        async function fetchOwn(): Promise<Entry[]> {
+            try {
+                const res = await fetch(OWN_SRC)
+                if (!res.ok) return []
+                const data = res.json<any>()
+                if (!Array.isArray(data)) return []
+                return (data as any[]).filter((e) => e && typeof e === "object" && e.id) as Entry[]
+            } catch (_e) {
+                return []
+            }
+        }
+
         let inflight = false
         let loadFails = 0
         let loadWarned = false
@@ -586,6 +599,14 @@ function init() {
                     if (Array.isArray(data)) {
                         ok = true
                         const clean = (data as any[]).filter((e) => e && typeof e === "object")
+                        const haveId: { [k: string]: boolean } = {}
+                        for (const e of clean) { if (e && e.id) haveId["#" + String(e.id)] = true }
+                        for (const e of await fetchOwn()) {
+                            const k = "#" + String(e.id)
+                            if (haveId[k]) continue
+                            haveId[k] = true
+                            clean.push(e)
+                        }
                         try { dataChanged = JSON.stringify(entriesState.get()) !== JSON.stringify(clean) } catch (_e) { dataChanged = true }
                         entriesState.set(clean as Entry[])
                         rebuildMaps()

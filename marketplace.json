@@ -28,7 +28,7 @@
   {
     "id": "aq-animepahe-beta",
     "name": "AnimePahe - BETA",
-    "version": "0.2.36",
+    "version": "0.2.37",
     "description": "Only animepahe compatibility layer you'll ever need",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
@@ -80,7 +80,7 @@
   {
     "id": "aq-seatags-beta",
     "name": "SeaTags - BETA",
-    "version": "1.7.21",
+    "version": "1.7.22",
     "description": "Plugin dedicated to displaying status of plugins/extensions within installed/marketplace pages; as well as filter based on author & show score",
     "author": "aquaryuo",
     "type": "plugin",
