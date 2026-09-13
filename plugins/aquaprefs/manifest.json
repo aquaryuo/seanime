@@ -1,11 +1,11 @@
 {
   "id": "aq-aquaprefs-beta",
   "name": "Aqua's Prefs - BETA",
-  "version": "1.1.64",
+  "version": "1.1.65",
   "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquaprefs/manifest.json",
   "language": "typescript",
   "type": "plugin",
-  "description": "Remembers your player and series options.",
+  "description": "Remembers one set of player options and reapplies it on every video.",
   "author": "aquaryuo",
   "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquaprefs/icon.png",
   "website": "https://github.com/aquaryuo/seanime",
@@ -14,7 +14,10 @@
   "plugin": {
     "version": "1",
     "permissions": {
-      "scopes": ["playback", "storage"]
+      "scopes": [
+        "playback",
+        "storage"
+      ]
     }
   }
 }

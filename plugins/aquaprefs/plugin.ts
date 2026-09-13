@@ -79,6 +79,8 @@ function init() {
         const EXT_ID = "aq-aquaprefs-beta"
         const CFG_KEY = "cfg"
         const IDX_KEY = "pref:__index"
+        const PREF_KEY = "pref:global"
+        const PURGED_KEY = "pref:purged"
         const LOG_KEY = "log"
         const LOG_CAP = 30
         const CLICK_SUPPRESS = 2500
@@ -205,23 +207,33 @@ function init() {
             return 0
         }
 
-        function writeKey(): string { return "pref:global" }
+        function writeKey(): string { return PREF_KEY }
         function readCascade(): any {
-            const g = sget<any>("pref:global", null)
+            const g = sget<any>(PREF_KEY, null)
             if (!g) return null
             return (g.sub || g.cap) ? g : null
         }
-        function ctxStr(): string { return "media=" + curMediaId() + " · ep=" + curEpisode() }
+        function ctxStr(): string { return "media=" + curMediaId() + " - ep=" + curEpisode() }
 
-        function indexAdd(k: string): void {
-            const idx = sget<string[]>(IDX_KEY, [])
-            if (idx.indexOf(k) < 0) { idx.push(k); sset(IDX_KEY, idx) }
+        function purgeLegacyKeys(): void {
+            if (sget<boolean>(PURGED_KEY, false)) return
+            try {
+                const idx = sget<string[]>(IDX_KEY, [])
+                if (Array.isArray(idx)) {
+                    for (const k of idx) {
+                        if (k && k !== PREF_KEY) sset(k, null)
+                    }
+                }
+                sset(IDX_KEY, null)
+            } catch (_e) {}
+            sset(PURGED_KEY, true)
         }
+        purgeLegacyKeys()
+
         function recordTo(k: string, patch: any): void {
             if (!k) return
             const cur = sget<any>(k, {})
             sset(k, Object.assign({}, cur, patch, { updatedAt: nowMs() }))
-            indexAdd(k)
         }
         function trackList(): any[] | undefined {
             const pi = pinfo()

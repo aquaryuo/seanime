@@ -54,8 +54,8 @@
   {
     "id": "aq-aquaprefs-beta",
     "name": "Aqua's Prefs - BETA",
-    "version": "1.1.64",
-    "description": "Remembers your player and series options.",
+    "version": "1.1.65",
+    "description": "Remembers one set of player options and reapplies it on every video.",
     "author": "aquaryuo",
     "type": "plugin",
     "language": "typescript",
