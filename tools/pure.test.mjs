@@ -181,6 +181,10 @@ console.log("aquatils (source invariants)")
     eq(has('const staging = dir + ".new"'), true, "chromium: the download lands beside the working copy")
     eq(has("$os.rename(dir, previous)"), true, "chromium: the working copy is moved aside, not deleted in place")
 
+    eq(has("aqText(scrubLog(msg))"), true, "privacy: reported errors are scrubbed before they leave")
+    eq(has('out.push("lastError=" + scrubLog(err))'), true, "privacy: the diagnostics the user copies are scrubbed")
+    eq(has("dl.cancel(fsChromiumDownloadId)"), true, "downloads: Stop cancels a browser download in flight")
+    eq(has('setErr("The solver download failed: "'), true, "downloads: a failed solver download is reported, not only noted")
     eq(has("const avEvidence ="), true, "windows: a scanner verdict needs scanner evidence")
     eq(has("execRefused && !avEvidence"), true, "windows: a refusal to execute is reported as itself")
 }

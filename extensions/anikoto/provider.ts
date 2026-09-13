@@ -6,6 +6,7 @@ class Provider implements AnimeProvider {
     private useCustomSolver = this.cfg("useCustomSolver", "{{useCustomSolver}}", "off")
     private solverUrl = this.cfg("solverUrl", "{{solverUrl}}", "http://127.0.0.1:8191/v1")
     private solverCooldown = 90000
+    private badgeReported = false
     private mirrors = ["https://anikototv.to", "https://anikoto.cz", "https://anikoto.me", "https://anikoto.net", "https://anikototv.se"]
     private cacheTtl = 900000
     private serverCacheTtl = 300000
@@ -361,6 +362,7 @@ class Provider implements AnimeProvider {
         part: number
     ): number {
         let cards = 0
+        let badges = 0
         $("div.item").each((_i, card) => {
             cards++
             const titleLink = card.find("a.name.d-title").first()
@@ -381,6 +383,7 @@ class Provider implements AnimeProvider {
 
             const hasSub = card.find(".ep-status.sub").length() > 0
             const hasDub = card.find(".ep-status.dub").length() > 0
+            if (hasSub || hasDub) badges++
             if (dub && !hasDub) return
 
             seen[seriesUrl] = true
@@ -394,6 +397,10 @@ class Provider implements AnimeProvider {
             if (anilistId > 0) this.writeCache(`anikoto:al:${seriesUrl}`, anilistId)
             results.push({ id: this.withMeta(seriesUrl, audio, anilistId, epCount, part), title, url: seriesUrl, subOrDub })
         })
+        if (cards > 0 && badges === 0 && !this.badgeReported) {
+            this.badgeReported = true
+            this.reportError("search", `the site listed ${cards} results but no sub/dub badges on any of them, so every result is assumed sub-only${dub ? " and a dub search returns nothing" : ""} — the site layout may have changed`)
+        }
         return cards
     }
 

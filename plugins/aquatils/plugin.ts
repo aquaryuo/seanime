@@ -115,7 +115,7 @@ function init() {
 
         function aqReport(ext: string, scope: string, msg: string): void {
             try {
-                const body = aqText(msg)
+                const body = aqText(scrubLog(msg))
                 if (!body) return
                 console.error(AQ_SEH_MARKER + " " + JSON.stringify({ t: Date.now(), ext: ext, scope: scope, msg: body }))
             } catch (_e) {}
@@ -191,6 +191,7 @@ function init() {
         let fsBindRetries = 0
         let fsAvBlocked = sget<boolean>("fs.avBlocked", false)
         let fsDownloadId = ""
+        let fsChromiumDownloadId = ""
         let fsLastOut = ""
         let fsCleanOut = ""
         let fsPollSkip = false
@@ -569,9 +570,9 @@ function init() {
             out.push("solver: bundled=" + SOLVER_VERSION + " running=" + (fsVersion.get() || "?"))
             try { out.push("downloaded: solver=" + binaryDownloaded() + " chromium=" + (chromiumDownloadedHere() ? chromiumCachedVersion() : "none")) } catch (_e) {}
             const err = fsErr.get()
-            if (err) out.push("lastError=" + err)
+            if (err) out.push("lastError=" + scrubLog(err))
             const note = fsNote.get()
-            if (note && note !== err) out.push("note=" + note)
+            if (note && note !== err) out.push("note=" + scrubLog(note))
             const log = currentLog()
             if (log) { out.push("--- log tail ---"); out.push(log.split("\n").slice(-30).join("\n")) }
             return out.join("\n")
@@ -1207,6 +1208,7 @@ function init() {
             const zip = $filepath.join(staging, "chrome.zip")
             let id = ""
             try { id = dl.download(st.url, zip, { timeout: 900.5 }) } catch (_e) { try { $os.removeAll(staging) } catch (_e2) {} setErr("Chromium download couldn't start: " + String(_e)); done(false); return }
+            fsChromiumDownloadId = id
             plog("downloading Chromium" + (st.version ? " " + st.version : "") + " (browser solver)")
             dlLogAt = 0
 
@@ -1217,6 +1219,7 @@ function init() {
                     tray.update()
                 } else if (p.status === "completed") {
                     cancel()
+                    fsChromiumDownloadId = ""
                     plog("extracting Chromium…")
                     let unzipOk = true
                     try { $osExtra.unzip(zip, staging) } catch (_e) { unzipOk = false }
@@ -1253,13 +1256,17 @@ function init() {
                     done(ok)
                 } else if (p.status === "error") {
                     cancel()
+                    fsChromiumDownloadId = ""
                     try { $os.removeAll(staging) } catch (_e) {}
                     setErr("Chromium download failed: " + (p.error || "unknown error"))
                     done(false)
                 } else if (p.status === "cancelled") {
                     cancel()
+                    fsChromiumDownloadId = ""
                     try { $os.removeAll(staging) } catch (_e) {}
-                    setErr("Chromium download timed out — the copy already installed was left in place. Press Start to try again.")
+                    if (!fsManualStop) {
+                        setErr("Chromium download timed out — the copy already installed was left in place. Press Start to try again.")
+                    }
                     done(false)
                 }
             })
@@ -1527,6 +1534,11 @@ function init() {
             fsBinaryGen++
             const stopGen = fsBinaryGen
             const guardedDone = (): void => { if (stopGen === fsBinaryGen && done) done() }
+            if (dl && fsChromiumDownloadId) {
+                try { dl.cancel(fsChromiumDownloadId) } catch (_e) {}
+                fsChromiumDownloadId = ""
+                plog("cancelled the Chromium download")
+            }
             if (dl && fsDownloadId) {
                 try {
                     dl.cancel(fsDownloadId)
@@ -1918,6 +1930,7 @@ function init() {
                     fsDownloadId = ""
                     fsBusy = false
                     setStatus("down")
+                    setErr("The solver download failed: " + (p.error || "unknown error") + " — press Start to try again.")
                     setNote("Download failed: " + (p.error || ""))
                     tray.update()
                 } else if (p.status === "cancelled") {
@@ -1925,6 +1938,9 @@ function init() {
                     fsDownloadId = ""
                     fsBusy = false
                     setStatus("down")
+                    if (!fsManualStop) {
+                        setErr("The solver download did not finish — press Start to try again.")
+                    }
                     setNote("The solver download timed out — press Start to retry.")
                     tray.update()
                 }
