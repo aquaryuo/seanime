@@ -125,13 +125,7 @@ function init() {
 
         const CTL_INPUT_CSS = "height:40px;border-radius:12px;border:1px solid rgba(255,255,255,0.12);background:#0b0b0b;color:#d1d1d1;font-size:14px;outline:none;font-family:inherit;box-sizing:border-box;padding:0 12px;min-width:180px"
         const CTL_TRIGGER_CSS = "height:40px;border-radius:12px;border:1px solid rgba(255,255,255,0.12);background-color:#0b0b0b;color:#d1d1d1;font-size:14px;font-family:inherit"
-        const TRIGGER_OVERRIDE_CSS = "display:flex;align-items:center;justify-content:space-between;padding-left:0.75rem;padding-right:0.75rem;width:100%;box-sizing:border-box;cursor:pointer"
-        const SEL_CONTENT_CLASS = "UI-Select__content w-full overflow-hidden rounded-[--radius] shadow-md bg-[--paper] border leading-none z-[100]"
-        const SEL_VIEWPORT_CLASS = "UI-Select__viewport p-1"
-        const SEL_ITEM_CLASS = "UI-Select__item seatags-status-item text-base leading-none rounded-[--radius] flex items-center h-8 pr-2 pl-8 relative select-none"
-        const CHECK_ICON_CLASS = "UI-Select__checkIcon absolute left-2 w-4 inline-flex items-center justify-center"
-        const CHECK_SVG = "<svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='20 6 9 17 4 12'></polyline></svg>"
-        const CHEVRON_SVG = "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'></path></svg>"
+        const SELECT_OVERRIDE_CSS = "flex:none;width:200px;padding-left:0.75rem;padding-right:0.75rem;box-sizing:border-box;cursor:pointer;appearance:auto"
         const PERSON_SVG = "<svg width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2'></path><circle cx='12' cy='7' r='4'></circle></svg>"
         const ICON_CLASS = "UI-Input__addons--icon pointer-events-none absolute inset-y-0 left-0 w-12 grid place-content-center text-gray-500 dark:text-gray-300"
 
@@ -282,129 +276,39 @@ function init() {
                 }).catch(() => {})
             } catch (_e) {}
         }
-        function statusLabel(v: string): string {
-            for (let i = 0; i < STATUS_OPTS.length; i++) if (STATUS_OPTS[i][0] === v) return STATUS_OPTS[i][1]
-            return STATUS_OPTS[0][1]
-        }
-        function selIndex(v: string): number {
-            for (let i = 0; i < STATUS_OPTS.length; i++) if (STATUS_OPTS[i][0] === v) return i
-            return 0
-        }
-        const ITEM_H = 32
-        let hoverStyle: any = null
-        async function ensureHoverStyle(): Promise<void> {
-            if (hoverStyle) return
-            try {
-                const b = await ctx.dom.queryOne("body")
-                if (!b) return
-                const s = await ctx.dom.createElement("style")
-                try { s.setAttribute(A_STYLE, "hover") } catch (_e) {}
-                s.setText(".seatags-status-item:hover{background-color:var(--subtle)}")
-                b.append(s)
-                hoverStyle = s
-            } catch (_e) {}
-        }
-
-        type Menu = { open: boolean; cancel: any; content: any; body: any; checks: any[]; gen: number; eid: string }
-        function updateChecks(st: Menu): void {
-            if (!st.checks) return
-            const v = filterState.get()
-            for (let i = 0; i < st.checks.length; i++) {
-                const c = st.checks[i]
-                if (c && c.el) { try { c.el.setStyle("display", c.val === v ? "inline-flex" : "none") } catch (_e) {} }
-            }
-        }
-        function closeMenu(st: Menu): void {
-            try { st.content.setStyle("display", "none") } catch (_e) {}
-            st.open = false
-            if (st.cancel) { try { st.cancel() } catch (_e) {} ; st.cancel = null }
-        }
-        function openMenu(st: Menu): void {
-            const idx = selIndex(filterState.get())
-            try { st.content.setStyle("top", (-(1 + idx * ITEM_H)) + "px") } catch (_e) {}
-            updateChecks(st)
-            try { st.content.setStyle("display", "block") } catch (_e) {}
-            st.open = true
-            if (st.body) { try { st.cancel = st.body.addEventListener("click", () => { if (!live(st.eid, st.gen)) return; closeMenu(st) }) } catch (_e) {} }
-        }
-        function toggleMenu(st: Menu): void { if (st.open) closeMenu(st); else openMenu(st) }
-
-        let cachedBody: any = null
-        async function getBody(): Promise<any> {
-            if (cachedBody) return cachedBody
-            try { cachedBody = await ctx.dom.queryOne("body") } catch (_e) {}
-            return cachedBody
-        }
-
         async function buildStatusDropdown(boxClass: string, gen: number, eid: string): Promise<any> {
-            await ensureHoverStyle()
-            const body = await getBody()
-
-            let container: any = null, trigger: any = null, content: any = null
-            try {
-                const made = await Promise.all([
-                    ctx.dom.createElement("div").catch(() => null),
-                    ctx.dom.createElement("div").catch(() => null),
-                    ctx.dom.createElement("div").catch(() => null),
-                ])
-                container = made[0]; trigger = made[1]; content = made[2]
-            } catch (_e) {}
-            if (!container || !trigger || !content) return null
-
-            try { container.setCssText("position:relative;flex:none;width:200px;box-sizing:border-box") } catch (_e) {}
+            let sel: any = null
+            try { sel = await ctx.dom.createElement("select") } catch (_e) {}
+            if (!sel) return null
 
             if (boxClass) {
-                try { trigger.setAttribute("class", boxClass) } catch (_e) {}
-                try { trigger.setCssText(TRIGGER_OVERRIDE_CSS) } catch (_e) {}
+                try { sel.setAttribute("class", boxClass) } catch (_e) {}
+                try { sel.setCssText(SELECT_OVERRIDE_CSS) } catch (_e) {}
             } else {
-                try { trigger.setCssText(CTL_TRIGGER_CSS + ";" + TRIGGER_OVERRIDE_CSS) } catch (_e) {}
+                try { sel.setCssText(CTL_TRIGGER_CSS + ";" + SELECT_OVERRIDE_CSS) } catch (_e) {}
             }
-            const labelStyle = "flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
-            try { trigger.setInnerHTML('<span class="seatags-label" style="' + labelStyle + '">' + esc(statusLabel(filterState.get())) + '</span><span class="UI-Combobox__chevronIcon ml-2 h-4 w-4 shrink-0 opacity-50">' + CHEVRON_SVG + '</span>') } catch (_e) {}
+            try { sel.setAttribute("aria-label", "Filter extensions by status") } catch (_e) {}
+            try { sel.setAttribute("title", "Filter extensions by status") } catch (_e) {}
 
-            try { content.setAttribute("class", SEL_CONTENT_CLASS) } catch (_e) {}
-            try { content.setCssText("position:absolute;top:0;left:-24px;width:224px;box-sizing:border-box;display:none") } catch (_e) {}
-            let itemsHtml = '<div class="' + SEL_VIEWPORT_CLASS + '">'
+            let optsHtml = ""
             for (let i = 0; i < STATUS_OPTS.length; i++) {
-                const cdisp = STATUS_OPTS[i][0] === filterState.get() ? "inline-flex" : "none"
-                itemsHtml += '<div class="' + SEL_ITEM_CLASS + '" style="cursor:default">'
-                itemsHtml += '<span class="' + CHECK_ICON_CLASS + ' seatags-check" style="display:' + cdisp + '">' + CHECK_SVG + '</span>'
-                itemsHtml += '<span>' + esc(STATUS_OPTS[i][1]) + '</span></div>'
+                optsHtml += '<option value="' + esc(STATUS_OPTS[i][0]) + '">' + esc(STATUS_OPTS[i][1]) + "</option>"
             }
-            itemsHtml += '</div>'
-            try { content.setInnerHTML(itemsHtml) } catch (_e) {}
+            try { sel.setInnerHTML(optsHtml) } catch (_e) {}
+            try { sel.setProperty("value", filterState.get()) } catch (_e) {}
 
-            try { container.append(trigger) } catch (_e) {}
-            try { container.append(content) } catch (_e) {}
-
-            let label: any = null, items: any[] = [], checks: any[] = []
-            try {
-                const q = await Promise.all([
-                    trigger.query(".seatags-label").catch(() => []),
-                    content.query(".seatags-status-item").catch(() => []),
-                    content.query(".seatags-check").catch(() => []),
-                ])
-                if (q[0] && q[0].length) label = q[0][0]
-                items = q[1] || []
-                checks = q[2] || []
-            } catch (_e) {}
-
-            const st: Menu = { open: false, cancel: null, content: content, body: body, checks: [], gen: gen, eid: eid }
-            if (checks) {
-                for (let i = 0; i < checks.length && i < STATUS_OPTS.length; i++) {
-                    if (checks[i]) st.checks.push({ val: STATUS_OPTS[i][0], el: checks[i] })
-                }
+            const onPick = (): void => {
+                if (!live(eid, gen)) return
+                try {
+                    sel.getProperty("value").then((v: any) => {
+                        if (!live(eid, gen)) return
+                        filterState.set(v == null ? STATUS_OPTS[0][0] : String(v))
+                        applyFilter().catch(() => {})
+                    }).catch(() => {})
+                } catch (_e) {}
             }
-            if (items) {
-                for (let i = 0; i < items.length && i < STATUS_OPTS.length; i++) {
-                    const val = STATUS_OPTS[i][0]
-                    const lbl = STATUS_OPTS[i][1]
-                    const it = items[i]
-                    if (it) { try { it.addEventListener("click", () => { if (!live(eid, gen)) return; filterState.set(val); if (label) { try { label.setText(lbl) } catch (_e) {} } updateChecks(st); applyFilter().catch(() => {}); closeMenu(st) }) } catch (_e) {} }
-                }
-            }
-            try { trigger.addEventListener("click", () => { if (!live(eid, gen)) return; toggleMenu(st) }) } catch (_e) {}
-            return container
+            try { sel.addEventListener("change", onPick) } catch (_e) {}
+            return sel
         }
 
         async function buildAuthorInput(inputClass: string, gen: number, eid: string): Promise<any> {
@@ -413,7 +317,7 @@ function init() {
                 try { author = await ctx.dom.createElement("div") } catch (_e) {}
                 if (!author) return null
                 try { author.setCssText("position:relative;display:flex;align-items:center;flex:none;width:220px;max-width:220px;box-sizing:border-box") } catch (_e) {}
-                try { author.setInnerHTML('<span class="' + ICON_CLASS + '" style="z-index:1">' + PERSON_SVG + '</span><input type="text" placeholder="Search by author..." class="' + esc(inputClass) + '" />') } catch (_e) {}
+                try { author.setInnerHTML('<span class="' + ICON_CLASS + '" style="z-index:1" aria-hidden="true">' + PERSON_SVG + '</span><input type="text" placeholder="Search by author..." aria-label="Search extensions by author" class="' + esc(inputClass) + '" />') } catch (_e) {}
                 let ains: any[] = []
                 try { ains = await author.query("input") } catch (_e) {}
                 if (ains && ains.length) {
@@ -429,6 +333,7 @@ function init() {
             if (!author) return null
             try { author.setAttribute("type", "text") } catch (_e) {}
             try { author.setAttribute("placeholder", "Search by author...") } catch (_e) {}
+            try { author.setAttribute("aria-label", "Search extensions by author") } catch (_e) {}
             try { author.setCssText(CTL_INPUT_CSS) } catch (_e) {}
             try { author.setProperty("value", authorState.get()) } catch (_e) {}
             try { author.addEventListener("input", () => { if (!live(eid, gen)) return; onAuthorInput(author) }) } catch (_e) {}
@@ -525,8 +430,6 @@ function init() {
         }
         async function resetForReady(): Promise<void> {
             filterStyle = null
-            hoverStyle = null
-            cachedBody = null
             injectedIds = {}
             genById = {}
             try {

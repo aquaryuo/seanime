@@ -1,11 +1,11 @@
 {
   "id": "aq-aquaprefs-beta",
   "name": "Aqua's Prefs - BETA",
-  "version": "1.1.65",
+  "version": "1.1.66",
   "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquaprefs/manifest.json",
   "language": "typescript",
   "type": "plugin",
-  "description": "Remembers one set of player options and reapplies it on every video.",
+  "description": "Remembers one set of player options and reapplies it on local playback. Online streams keep Seanime's own per-series choice.",
   "author": "aquaryuo",
   "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/beta/plugins/aquaprefs/icon.png",
   "website": "https://github.com/aquaryuo/seanime",
