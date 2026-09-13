@@ -67,8 +67,13 @@ jobs:
           rc=0
           for f in $(echo "$changed" | grep -E '^(extensions|plugins)/[^/]+/(provider|plugin)\.ts$' || true); do
             dir=$(dirname "$f")
-            if ! echo "$changed" | grep -qx "$dir/manifest.json"; then
-              echo "$f changed without a bump in $dir/manifest.json" >&2
+            old=$(git show "$BEFORE:$dir/manifest.json" 2>/dev/null | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{console.log(JSON.parse(d).version||"")}catch{console.log("")}})')
+            new=$(git show "$AFTER:$dir/manifest.json" 2>/dev/null | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{console.log(JSON.parse(d).version||"")}catch{console.log("")}})')
+            if [ -z "$new" ]; then
+              echo "$dir/manifest.json has no readable version" >&2
+              rc=1
+            elif [ "$old" = "$new" ]; then
+              echo "$f changed but $dir/manifest.json version stayed at $new" >&2
               rc=1
             fi
           done
