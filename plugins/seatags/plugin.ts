@@ -142,16 +142,11 @@ function init() {
             return t
         }
         const PILL_LABEL: { [k: string]: string } = { working: "Working", broken: "Broken", deprecated: "Deprecated" }
-        function cap(s: string): string { s = s || ""; return s ? (s.charAt(0).toUpperCase() + s.slice(1)) : "" }
         function esc(s: string): string {
-            return (s == null ? "" : String(s)).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
+            return (s == null ? "" : String(s)).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;")
         }
         function chipCss(kind: string): string {
             const base = "display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:6px;font-size:11px;font-weight:600;line-height:1;white-space:nowrap;border:1px solid transparent;box-sizing:border-box"
-            if (kind === "version") return base + ";background:rgba(225,225,225,0.10);color:#cacaca;border-color:rgba(90,90,90,0.40)"
-            if (kind === "author") return base + ";background:transparent;color:#cacaca;border-color:rgba(255,255,255,0.10)"
-            if (kind === "lang") return base + ";background:rgba(239,246,255,0.10);color:#93c5fd"
-            if (kind === "language") return base + ";background:transparent;color:rgba(255,255,255,0.40);padding:0"
             if (kind === "broken") return base + ";font-weight:700;background:rgba(255,80,80,0.18);color:#ff8585;border-color:rgba(255,80,80,0.50)"
             if (kind === "deprecated") return base + ";font-weight:700;background:rgba(255,180,60,0.18);color:#ffce80;border-color:rgba(255,180,60,0.50)"
             if (kind === "working") return base + ";font-weight:700;background:rgba(62,207,142,0.18);color:#5fe0a6;border-color:rgba(62,207,142,0.50)"
@@ -164,15 +159,12 @@ function init() {
         function blockHtml(info: Entry, tags: string[]): string {
             const rcss = "display:flex;flex-wrap:wrap;gap:6px;align-items:center"
             let r1 = ""
-            if (info.version) r1 += chipHtml(String(info.version), "version")
             for (let i = 0; i < tags.length; i++) r1 += chipHtml(PILL_LABEL[tags[i]] || tags[i], tags[i])
-            const lang = (info.lang || "").toString()
-            if (lang) r1 += chipHtml(lang.toUpperCase(), lang.toLowerCase() === "multi" ? "language" : "lang")
-            let r2 = ""
-            if (info.author) r2 += chipHtml(String(info.author), "author")
-            if (info.language) r2 += chipHtml(cap(String(info.language)), "language")
-            if (typeof info.stars === "number" && info.stars > 0) r2 += chipHtml("★ " + info.stars, "stars")
-            return '<div style="' + rcss + '">' + r1 + '</div><div style="' + rcss + '">' + r2 + "</div>"
+            if (typeof info.stars === "number" && info.stars > 0) r1 += chipHtml("★ " + info.stars, "stars")
+            return '<div style="' + rcss + '">' + r1 + "</div>"
+        }
+        function hasChips(info: Entry, tags: string[]): boolean {
+            return tags.length > 0 || (typeof info.stars === "number" && info.stars > 0)
         }
         function extractId(html: string): string {
             const m = html.match(/opacity-30[^>]*>([^<]+)</)
@@ -195,13 +187,13 @@ function init() {
             } catch (e) { dsetErr("findrow") }
             for (let i = 0; i < existing.length; i++) { try { existing[i].remove() } catch (_e) {} }
             if (!block) return
+            if (!hasChips(info, tags)) return
             let row: any = null
             if (badges.length) { try { row = await badges[0].getParent() } catch (_e) {} }
             try { block.setAttribute("class", C_BLOCK) } catch (_e) {}
-            try { block.setCssText("display:flex;flex-direction:column;gap:6px;margin-top:8px") } catch (_e) {}
+            try { block.setCssText("display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px") } catch (_e) {}
             try { block.setInnerHTML(blockHtml(info, tags)) } catch (e) { dsetErr("html") }
             if (row) {
-                try { row.setStyle("display", "none") } catch (_e) {}
                 try { row.after(block) } catch (e) { dsetErr("insert") }
             } else {
                 try { card.append(block) } catch (e) { dsetErr("append") }

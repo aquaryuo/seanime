@@ -798,7 +798,9 @@ document was first written, so any SHA quoted in the body above is dead — trus
 | Nits (Batch A/B) | `9ce635c` — animepahe's search `subOrDub` is `"both"` (it was asserted from the request, not the data); anikoto strips the site's `(- Native (Region))` label artifacts |
 | `seatags-installed-id-fallback` | duplicate names are dropped from the lookup, so an ambiguous card reads "Untagged" instead of inheriting another entry's verdict |
 | `seatags-reset-loses-controls` | the reset now clears its own toolbar marker, mirroring the existing stylesheet cleanup, so the controls come back instead of going silently inert |
-| `seatags-load-never-retried` | `onNavigate` retries (TTL makes it free), with bounded backoff, one warning toast on final failure, and a JSON parse failure no longer reported as a transport failure |
+| `seatags-load-never-retried` | `5a6bc68` — `onNavigate` retries (TTL makes it free), with bounded backoff, one warning toast on final failure, and a JSON parse failure no longer reported as a transport failure |
+| `seatags-author-filter-hides-everything` (cheap half) | `5a6bc68` — the author rule is gated on loaded data like the status rule, so typing one character offline no longer empties the grid. The structural half (read the author off the card's own DOM) is still open |
+| `seatags-version-overwrite`, `seatags-hidden-badges`, `seatags-row-never-restored` | one change: append the chips, never hide the native row. The remote list no longer overwrites anything describing the local install — version, author and language chips are gone, leaving only the status tags and stars, which are genuinely community data. Built-in / Disabled / the clickable version-diff / "Update available" all survive, and a card that stops matching keeps its native badges |
 
 Not filed in this document, because they arrived as user reports rather than review findings:
 
