@@ -773,6 +773,13 @@ document was first written, so any SHA quoted in the body above is dead — trus
 | `fixtures-assert-substrings` | private repo `64fb5ff` — per-provider search canaries, `startsAt`/`contiguous`, `urlMatches` |
 | `tsconfig-and-goja-gate` (part 2) | `5ae3426`, `b014c01` — CI runs the host's own esbuild transform over every payload |
 | `push-beta` | resolved — `beta` is pushed and in sync |
+| `anizone-pagination-budget` | `2fe152b` — 45 s deadline plus an exact bound from the paginator instead of a blind 60 |
+| `anikoto-server-budget-unconditional` | `2192b5a` — the deadline now breaks unconditionally, and `fetchRetry` skips its retry when out of time |
+| `anikoto-mirror-ordering` | `2192b5a` — one ordered list; `currentBase()` is `candidateBases()[0]` and both validate |
+| `scratch-files-untracked` | `4f87952` — `hls.ts` and `RENAMED.md` moved out of the tree and ignored on both channels |
+| `main-has-no-gate` | `d1d0d9f` — `.gitignore` added to `main`; the workflow halves were already identical (2114 bytes each) |
+| `version-bump-gate` | `869ba07` — CI job fails a push whose payload changed without its sibling manifest |
+| Nits (Batch A/F, anizone) | `2fe152b` — result cap `break`s, dedup keys prefixed, `hasEnglishAudio` no longer caches a fetch failure |
 
 Not filed in this document, because they arrived as user reports rather than review findings:
 
@@ -783,6 +790,7 @@ Not filed in this document, because they arrived as user reports rather than rev
 | anikoto `isPlayable` probed every variant in parallel, tripping the CDN's rate limiter and hanging playback | `509b667` |
 | All comments stripped from the seven payloads, per the global no-comments rule | `6f227d9`, `bfcd958` |
 | megaplay stopped returning `sources` and moved the URL into an encrypted `enc` field — every anikoto stream failed on both channels | `9a93bb8` (beta), `2513cf7` (main) |
+| anizone listed three episodes that do not exist — the series page states 1180 for One Piece while 1177 is the highest that resolves, and the stated count was trusted outright | `2fe152b` |
 
 **Promoted to stable 2026-09-06 (`5c95f69`)**: anikoto 1.3.76, anizone 1.1.23, aquaprefs 1.1.63,
 aquatils 0.10.10. Verified against the live CDN by content, not manifest version. `animelok` and
@@ -801,6 +809,17 @@ animepahe.pw serves a hard Cloudflare interstitial that the solver's uTLS stage 
 enabled in Aqua's Utils. The provider reports that precisely, but Seanime's search layer
 replaces the provider's message with `anime not found, try manual matching`, which is why a
 solver problem reads to users as an extension bug.
+
+**Correction to `anizone-pagination-budget` as filed:** the entry assumed the `gotoPage` walk was
+live. It is not — the current series page emits no `gotoPage(` at all, so that branch never runs
+and the "59 sequential requests" cost is latent rather than real. The series page is 107 KB and
+answers in ~350 ms. The 2.48 MB figure belongs to the *episode* page, not the series page. The
+deadline and the derived bound shipped anyway, because the branch is still reachable if the site
+restores the paginator.
+
+**First thing the `version-bump-gate` caught:** `342c0fb` changed `plugins/aquatils/plugin.ts`
+after the last bump, so that work is stranded at 0.10.11 and reaches no user until the next bump.
+Left alone rather than bumped from here — it is the other session's component.
 
 **Correction to the entry above on `aquaprefs-go-bool`:** the underlying claim was never proven.
 `UseLibassRenderer` is `*bool` and `getCurrentPlaybackInfo` returns `vm.ToValue(info)` with no JSON
