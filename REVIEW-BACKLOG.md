@@ -780,6 +780,17 @@ document was first written, so any SHA quoted in the body above is dead — trus
 | `main-has-no-gate` | `d1d0d9f` — `.gitignore` added to `main`; the workflow halves were already identical (2114 bytes each) |
 | `version-bump-gate` | `869ba07` — CI job fails a push whose payload changed without its sibling manifest |
 | Nits (Batch A/F, anizone) | `2fe152b` — result cap `break`s, dedup keys prefixed, `hasEnglishAudio` no longer caches a fetch failure |
+| `anikoto-episode-servers-list` | `3421bf2` — `episodeServers: ["Auto"]`; all three servers were proven to return one identical master playlist |
+| `anikoto-subtitle-languages-collapse` | `3421bf2` — one proxied entry instead of nine identical ones (interim; the real fix is backend-side) |
+| `anikoto-fallbackcode-defaults-english` | `3421bf2` — unknown language returns `""` and the slot falls back to `und`; six more prefixes added |
+| `extof-dead-extension` | `3421bf2` — `extOf` deleted, `.vtt` hard-coded |
+| `anikoto-empty-pool-fallback` | `3421bf2` — the empty-pool fallback now requires prefix containment instead of returning the raw pool |
+| `tsconfig-and-goja-gate` (part 1) | `5ca7d72` — `noUnusedLocals` on and `skipLibCheck` off across all seven; found and removed 145 lines of dead code |
+| `userconfig-placeholders`, `userconfig-injection` | `94c3713` — a `cfg()` resolver reads `$getUserPreference` and falls back to the manifest default when a placeholder survives |
+| `seatags-dom-namespace` | `94c3713` — every marker, class and selector derives from `EXT_ID` |
+| `manifest-marketplace-generated` | `14fbeca` — `tools/gen-marketplace.mjs` generates it from the manifests; CI fails on drift |
+| `seherr-non-ascii` | `81e6407` — `reportError` normalises through `plain()` in all four providers, so the constraint holds by construction |
+| `seatags-error-codes` | `81e6407` — the thirteen bare tokens map to sentences; the code stays the dedup key |
 
 Not filed in this document, because they arrived as user reports rather than review findings:
 
@@ -820,6 +831,37 @@ restores the paginator.
 **First thing the `version-bump-gate` caught:** `342c0fb` changed `plugins/aquatils/plugin.ts`
 after the last bump, so that work is stranded at 0.10.11 and reaches no user until the next bump.
 Left alone rather than bumped from here — it is the other session's component.
+
+**Declined — `semver-constraint`.** Every `$scannerUtils` call in all three providers is already
+inside a `try/catch`, so a host without it degrades gracefully today. Adding `semverConstraint`
+would convert that graceful degradation into outright rejection of the extension on older hosts,
+which is worse for the user. The item is a regression as specified.
+
+**Refuted in its specifics — `anikoto-episode-servers-list`.** The entry claimed only two server
+names ever appear and that `VidPlay-1` was never among them. HD-2 is real (seen on two of five
+sampled series), and the advertised list had already been corrected. What survives is the cost
+argument, and a stronger reason than the one filed: Vidstream-2, HD-1 and HD-2 were verified to
+return **one identical master playlist**, differing only by a `?s=tcdn` / `?s=bcdn` CDN hint on
+the embed. Manual server choice could not affect playback, so the list collapsed to `Auto`.
+This also explains the Tensura ep22 report — all three "servers" were always the same stream.
+
+**Not reproducible — anizone `langName` "lacks ~14 codes".** Sampled a 19-track episode: the map
+covers all 17 codes the site served, including `zh-Hans`, `pt-BR` and `es-419`. The site also
+uses `my` for Malay, matching our map, so that entry is right for this data source rather than
+wrong by ISO.
+
+**Deferred — `anizone-dub-selects-nothing`.** Verified exactly as filed (the master marks
+Japanese `DEFAULT=YES`, English `DEFAULT=NO`). Both proposed workarounds depend on unverifiable
+host behaviour, and shipping a player hack that cannot be tested here is how the earlier
+regressions happened. Needs the upstream `--alang` route.
+
+**Process note.** `81e6407` swept `plugins/aquatils` into an unrelated commit via `git add -A`
+while the other session had uncommitted work there. Nothing was lost and nothing shipped — the
+aquatils version is unchanged at 0.10.14, so the payload does not reach users — but that change
+is now stranded in the same way `342c0fb` is. Two consequences: stage explicit paths, never
+`-A`; and the `version-gate` was too weak to catch it, because it only checked that
+`manifest.json` appeared in the diff. `06a08a6` compares the parsed `version` value instead, and
+that stricter gate does flag `81e6407`.
 
 **Correction to the entry above on `aquaprefs-go-bool`:** the underlying claim was never proven.
 `UseLibassRenderer` is `*bool` and `getCurrentPlaybackInfo` returns `vm.ToValue(info)` with no JSON
