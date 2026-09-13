@@ -17,6 +17,7 @@ class Provider {
     private searchCacheTtl = 60000
     private deadline = 0
     private clearanceTtl = 1200000
+    private inlineBudget = 700000
 
     private cfg(name: string, raw: string, fallback: string): string {
         if (raw && raw.indexOf("{{") === -1) return raw
@@ -1030,9 +1031,17 @@ class Provider {
 
         if (collected.length === 0) return collected
         collected[pick].isDefault = true
-        if (embedOrigin && !this.outOfTime()) {
-            const inlined = await this.inlineTrack(srcOf[pick], embedOrigin)
-            if (inlined) collected[pick].url = inlined
+        if (embedOrigin) {
+            const order = [pick]
+            for (let i = 0; i < collected.length; i++) if (i !== pick) order.push(i)
+            let budget = this.inlineBudget
+            for (const i of order) {
+                if (this.outOfTime() || budget <= 0) break
+                const inlined = await this.inlineTrack(srcOf[i], embedOrigin)
+                if (!inlined) continue
+                collected[i].url = inlined
+                budget -= inlined.length
+            }
         }
         const head: VideoSubtitle[] = []
         const tail: VideoSubtitle[] = []
@@ -1071,10 +1080,18 @@ class Provider {
             const body = res.text()
             if (!body || body.length > 524288) return undefined
             if (body.indexOf("WEBVTT") === -1) return undefined
-            return `data:text/vtt;charset=utf-8,${encodeURIComponent(body)}`
+            return this.asDataUri(body)
         } catch (_e) {
             return undefined
         }
+    }
+
+    private asDataUri(body: string): string {
+        try {
+            const b64 = CryptoJS.enc.Base64.stringify($toBytes(body) as any)
+            if (b64) return `data:text/vtt;base64,${b64}`
+        } catch (_e) {}
+        return `data:text/vtt;charset=utf-8,${encodeURIComponent(body)}`
     }
 
     private cleanLabel(label: string): string {

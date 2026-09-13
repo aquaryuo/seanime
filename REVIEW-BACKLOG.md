@@ -980,6 +980,24 @@ right that subtitle headers are dropped, and the claim in `anikoto-subtitle-lang
 that "the host applies the video source's headers to subtitle URLs through its proxy" is **wrong**.
 Raw referer-gated subtitle URLs cannot work in the player, which is what the proxy existed for.
 
+**Alternate languages solved — every track is inlined, base64.** No ungated route exists: the CDN
+wants exactly `Referer: https://megaplay.buzz/`, and a bare host, the deep embed path, `http`, a
+subdomain, `Origin` alone and a `Range`-only request all 403. `VideoSubtitle` is
+`{id, url, language, isDefault}` with no headers field, so a per-track Referer cannot be declared,
+and `access-control-allow-origin: *` confirms CORS is not the obstacle — only the Referer is, and
+a browser will not forge one. So all tracks are fetched server-side and inlined, default first,
+under a 700 KB budget and the existing time guard; overflow degrades to URLs rather than bloating
+the response. Measured on the 9-track episode: **9/9 inlined, 210 KB, `findEpisodeServer` 5.7 s**.
+Kept sequential on purpose — parallel probing of this CDN is what caused the playback hang earlier
+in the session. Typical episodes carry 1-3 tracks, so the usual cost is ~1-2 s.
+
+**Correction — percent-encoding was the wrong encoding.** The first version used
+`encodeURIComponent` to avoid depending on an unverified `d.ts` claim. Measured over the real
+9-track set that is **1.91x** raw against base64's **1.44x**, and far worse for non-Latin scripts
+(Arabic 15 KB -> 47 KB, Russian 15 KB -> 51 KB) because every space and non-ASCII byte expands.
+`CryptoJS.enc.Base64.stringify($toBytes(text))` was then verified to work in goja rather than
+assumed, and is now used with the percent-encoded form kept only as a fallback.
+
 **Fixed provider-side — the default track is inlined.** An extension cannot make a browser forge
 a `Referer`, but it can fetch the file itself: the provider requests the picked track server-side
 with the embed origin and returns `data:text/vtt;charset=utf-8,…`, so the browser makes no gated
