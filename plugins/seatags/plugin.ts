@@ -25,6 +25,12 @@ function init() {
 
         const SRC = "https://raw.githubusercontent.com/Bas1874/Seanime-Marketplace/main/Marketplace/Main.json"
         const EXT_ID = "aq-seatags-beta"
+        const NS = EXT_ID
+        const A_TAGS = "data-" + NS
+        const A_AUTHOR = A_TAGS + "-author"
+        const A_STYLE = A_TAGS + "-style"
+        const A_TB = A_TAGS + "-tb"
+        const C_BLOCK = NS + "-block"
         const CACHE_KEY = "seatags:cache"
         const CACHE_TTL = 3600000
 
@@ -161,7 +167,7 @@ function init() {
                 const r = await Promise.all([
                     card.query(".UI-Badge__root").catch(() => []),
                     ctx.dom.createElement("div").catch(() => null),
-                    card.query(".seatags-block").catch(() => []),
+                    card.query("." + C_BLOCK).catch(() => []),
                 ])
                 badges = r[0] || []; block = r[1]; existing = r[2] || []
             } catch (e) { dsetErr("findrow") }
@@ -169,7 +175,7 @@ function init() {
             if (!block) return
             let row: any = null
             if (badges.length) { try { row = await badges[0].getParent() } catch (_e) {} }
-            try { block.setAttribute("class", "seatags-block") } catch (_e) {}
+            try { block.setAttribute("class", C_BLOCK) } catch (_e) {}
             try { block.setCssText("display:flex;flex-direction:column;gap:6px;margin-top:8px") } catch (_e) {}
             try { block.setInnerHTML(blockHtml(info, tags)) } catch (e) { dsetErr("html") }
             if (row) {
@@ -194,8 +200,8 @@ function init() {
                 }
                 const tags = info ? tagsOf(info) : []
                 const author = info && info.author ? String(info.author).toLowerCase() : ""
-                try { card.setAttribute("data-seatags", tags.length ? tags.join(" ") : "untagged") } catch (e) { dsetErr("attr") }
-                try { card.setAttribute("data-seatags-author", author) } catch (_e) {}
+                try { card.setAttribute(A_TAGS, tags.length ? tags.join(" ") : "untagged") } catch (e) { dsetErr("attr") }
+                try { card.setAttribute(A_AUTHOR, author) } catch (_e) {}
                 if (info) await rebuildBadges(card, info, tags)
             } finally {
                 if (cid) delete decorating[cid]
@@ -217,13 +223,13 @@ function init() {
             let cards: any[] = [], blocks: any[] = []
             try {
                 const r = await Promise.all([
-                    ctx.dom.query("[data-seatags]").catch(() => []),
-                    ctx.dom.query(".seatags-block").catch(() => []),
+                    ctx.dom.query("[" + A_TAGS + "]").catch(() => []),
+                    ctx.dom.query("." + C_BLOCK).catch(() => []),
                 ])
                 cards = r[0] || []; blocks = r[1] || []
             } catch (_e) {}
             for (let i = 0; i < blocks.length; i++) { try { blocks[i].remove() } catch (_e) {} }
-            for (let i = 0; i < cards.length; i++) { try { cards[i].removeAttribute("data-seatags") } catch (_e) {} }
+            for (let i = 0; i < cards.length; i++) { try { cards[i].removeAttribute(A_TAGS) } catch (_e) {} }
         }
 
         async function ensureFilterStyle(): Promise<void> {
@@ -232,7 +238,7 @@ function init() {
                 const body = await ctx.dom.queryOne("body")
                 if (body) {
                     const s = await ctx.dom.createElement("style")
-                    try { s.setAttribute("data-seatags-style", "filter") } catch (_e) {}
+                    try { s.setAttribute(A_STYLE, "filter") } catch (_e) {}
                     s.setText("")
                     body.append(s)
                     filterStyle = s
@@ -245,8 +251,8 @@ function init() {
             const f = filterState.get()
             const a = authorState.get().toLowerCase().replace(/["\\]/g, "")
             let css = ""
-            if (f && f !== "all" && entriesState.get().length > 0) css += '[class*="extension-card"]:not([data-seatags~="' + f + '"]){display:none !important}'
-            if (a) css += '[class*="extension-card"]:not([data-seatags-author*="' + a + '"]){display:none !important}'
+            if (f && f !== "all" && entriesState.get().length > 0) css += '[class*="extension-card"]:not([' + A_TAGS + '~="' + f + '"]){display:none !important}'
+            if (a) css += '[class*="extension-card"]:not([' + A_AUTHOR + '*="' + a + '"]){display:none !important}'
             try { filterStyle.setText(css) } catch (e) { dsetErr("filter") }
         }
 
@@ -277,7 +283,7 @@ function init() {
                 const b = await ctx.dom.queryOne("body")
                 if (!b) return
                 const s = await ctx.dom.createElement("style")
-                try { s.setAttribute("data-seatags-style", "hover") } catch (_e) {}
+                try { s.setAttribute(A_STYLE, "hover") } catch (_e) {}
                 s.setText(".seatags-status-item:hover{background-color:var(--subtle)}")
                 b.append(s)
                 hoverStyle = s
@@ -436,7 +442,7 @@ function init() {
                 const eid = input && input.id ? String(input.id) : ""
                 if (eid && injectedIds[eid]) continue
                 if (eid) injectedIds[eid] = true
-                try { input.setAttribute("data-seatags-tb", "1") } catch (_e) {}
+                try { input.setAttribute(A_TB, "1") } catch (_e) {}
                 const gen = ++genSeq
                 genById[eid] = gen
 
@@ -488,7 +494,7 @@ function init() {
             if (!domReady) return
             if (controlsCancel) { try { controlsCancel() } catch (_e) {} controlsCancel = null }
             try {
-                const r: any = ctx.dom.observe('input[placeholder^="Search"][placeholder*="extensions"]:not([data-seatags-tb])', injectControls)
+                const r: any = ctx.dom.observe('input[placeholder^="Search"][placeholder*="extensions"]:not([' + A_TB + '])', injectControls)
                 controlsCancel = (r && r.length) ? r[0] : null
             } catch (e) { dsetErr("obs-ctl") }
         }
@@ -497,7 +503,7 @@ function init() {
             if (entriesState.get().length === 0) { applyFilter().catch(() => {}); return }
             if (cardsCancel) { try { cardsCancel() } catch (_e) {} cardsCancel = null }
             try {
-                const r: any = ctx.dom.observe('[class*="extension-card"]:not([data-seatags])', decorateCards, { withInnerHTML: true })
+                const r: any = ctx.dom.observe('[class*="extension-card"]:not([' + A_TAGS + '])', decorateCards, { withInnerHTML: true })
                 cardsCancel = (r && r.length) ? r[0] : null
             } catch (e) { dsetErr("obs-cards") }
             applyFilter().catch(() => {})
@@ -509,7 +515,7 @@ function init() {
             injectedIds = {}
             genById = {}
             try {
-                ctx.dom.query("[data-seatags-style]").then((olds: any[]) => {
+                ctx.dom.query("[" + A_STYLE + "]").then((olds: any[]) => {
                     if (olds) for (let i = 0; i < olds.length; i++) { try { olds[i].remove() } catch (_e) {} }
                 }, () => {})
             } catch (_e) {}

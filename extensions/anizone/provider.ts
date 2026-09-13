@@ -6,7 +6,7 @@ type Target = { t: string; w: number }
 type Scored = { c: Cand; s: number; adj: number; ep: number }
 
 class Provider {
-    private baseUrl = "{{baseUrl}}"
+    private baseUrl = this.cfg("baseUrl", "{{baseUrl}}", "https://anizone.to")
     private cacheTtl = 900000
     private srcCacheTtl = 300000
     private subExts = "ass|srt|vtt"
@@ -51,6 +51,15 @@ class Provider {
         if (!anyOk) throw this.fail("search", "anizone: search failed (site unreachable)")
         if (!anyShape) throw this.fail("search", "anizone: search page layout not recognized")
         return this.pickBest(cands, opts.media, sq.season, sq.part)
+    }
+
+    private cfg(name: string, raw: string, fallback: string): string {
+        if (raw && raw.indexOf("{{") === -1) return raw
+        try {
+            const v = $getUserPreference(name)
+            if (typeof v === "string" && v && v.indexOf("{{") === -1) return v
+        } catch (_e) {}
+        return fallback
     }
 
     private pickBest(cands: Cand[], media: Media, season: number, part: number): SearchResult[] {

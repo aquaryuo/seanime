@@ -1,10 +1,10 @@
 declare const console: { log(...args: any[]): void; info(...args: any[]): void; warn(...args: any[]): void; error(...args: any[]): void }
 
 class Provider {
-    private baseUrl = "{{baseUrl}}"
-    private loadSubtitles = "{{loadSubtitles}}"
-    private useCustomSolver = "{{useCustomSolver}}"
-    private solverUrl = "{{solverUrl}}"
+    private baseUrl = this.cfg("baseUrl", "{{baseUrl}}", "https://anikototv.to")
+    private loadSubtitles = this.cfg("loadSubtitles", "{{loadSubtitles}}", "enabled")
+    private useCustomSolver = this.cfg("useCustomSolver", "{{useCustomSolver}}", "off")
+    private solverUrl = this.cfg("solverUrl", "{{solverUrl}}", "http://127.0.0.1:8191/v1")
     private solverCooldown = 90000
     private mirrors = ["https://anikototv.to", "https://anikoto.cz", "https://anikoto.me", "https://anikoto.net", "https://anikototv.se"]
     private cacheTtl = 900000
@@ -17,6 +17,15 @@ class Provider {
     private deadline = 0
     private clearanceTtl = 1200000
     private subEndpoint = "https://sub.ryuo.to"
+
+    private cfg(name: string, raw: string, fallback: string): string {
+        if (raw && raw.indexOf("{{") === -1) return raw
+        try {
+            const v = $getUserPreference(name)
+            if (typeof v === "string" && v && v.indexOf("{{") === -1) return v
+        } catch (_e) {}
+        return fallback
+    }
 
     private normBase(u: string): string {
         return u.replace(/\/+$/, "")

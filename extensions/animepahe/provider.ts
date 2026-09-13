@@ -1,10 +1,10 @@
 declare const console: { log(...args: any[]): void; info(...args: any[]): void; warn(...args: any[]): void; error(...args: any[]): void }
 
 class Provider {
-    private baseUrl = "{{baseUrl}}"
+    private baseUrl = this.cfg("baseUrl", "{{baseUrl}}", "https://animepahe.pw")
     private mirrors = ["https://animepahe.pw", "https://animepahe.com", "https://animepahe.org"]
-    private solverUrl = ("{{solverUrl}}" as string)
-    private solverSession = ("{{solverSession}}" as string)
+    private solverUrl = this.cfg("solverUrl", "{{solverUrl}}", "http://127.0.0.1:8191/v1")
+    private solverSession = this.cfg("solverSession", "{{solverSession}}", "seanime")
     private lastResp: { url: string; status: number; statusText: string; ct: string; len: number; redirected: boolean; finalUrl: string; snippet: string; hit: string } | undefined = undefined
     private lastSolver: { ran: boolean; http: number; snippet: string; reason: string } | undefined = undefined
     private cookieTtl = 10800000
@@ -69,6 +69,15 @@ class Provider {
             throw lastErr
         }
         return this.filterBySeason(results, opts)
+    }
+
+    private cfg(name: string, raw: string, fallback: string): string {
+        if (raw && raw.indexOf("{{") === -1) return raw
+        try {
+            const v = $getUserPreference(name)
+            if (typeof v === "string" && v && v.indexOf("{{") === -1) return v
+        } catch (_e) {}
+        return fallback
     }
 
     private searchShapeError(json: SearchResponse | undefined): string {

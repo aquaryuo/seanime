@@ -6,7 +6,7 @@ type Availability = { exists: boolean; audio: string; subOrDub: SubOrDub; broken
 type VibeResult = { status: "ok" | "notfound" | "nosource" | "fail" | "badshape"; url: string; tracks: VibeTrack[]; headers: { [key: string]: string } }
 
 class Provider {
-    private baseUrl = "{{baseUrl}}"
+    private baseUrl = this.cfg("baseUrl", "{{baseUrl}}", "https://animelok.live")
     private cacheTtl = 900000
     private srcCacheTtl = 300000
     private availFailTtl = 45000
@@ -72,6 +72,15 @@ class Provider {
         if (v.status === "nosource") throw this.fail("server", `animelok: no source for episode ${meta.num} right now (the site returned an error; try again later)`)
         if (v.status === "badshape") throw this.fail("server", `animelok: the site answered for episode ${meta.num} in a shape this extension does not understand — the site changed its API; this extension needs an update.`)
         throw this.fail("server", `animelok: source temporarily unavailable (failed to extract episode ${meta.num}; try again)`)
+    }
+
+    private cfg(name: string, raw: string, fallback: string): string {
+        if (raw && raw.indexOf("{{") === -1) return raw
+        try {
+            const v = $getUserPreference(name)
+            if (typeof v === "string" && v && v.indexOf("{{") === -1) return v
+        } catch (_e) {}
+        return fallback
     }
 
     private streamHeaders(apiHeaders: { [key: string]: string }): { [key: string]: string } {
