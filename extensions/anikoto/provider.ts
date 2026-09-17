@@ -528,10 +528,14 @@ class Provider implements AnimeProvider {
         const label = "Auto"
         const wantSubs = this.loadSubtitles !== "disabled"
         let firstResolved: EpisodeServer | undefined
+        let firstResolvedProbed = false
         let playableNoSubs: EpisodeServer | undefined
         let lastReason = ""
+        const seenUrl: { [key: string]: boolean } = {}
+        const tried: string[] = []
         for (const c of candidates) {
             if (this.outOfTime()) break
+            tried.push(c.linkId)
             let resolved: EpisodeServer | undefined
             try {
                 resolved = await this.resolveServer(c.linkId, c.name, audio)
@@ -540,20 +544,29 @@ class Provider implements AnimeProvider {
                 resolved = undefined
             }
             if (!resolved) continue
+            const sourceUrl = resolved.videoSources[0].url
+            if (seenUrl[`#${sourceUrl}`]) continue
+            seenUrl[`#${sourceUrl}`] = true
             if (label) resolved.server = label
             if (!firstResolved) firstResolved = resolved
-            if (await this.isPlayable(resolved, !playableNoSubs)) {
+            const playable = await this.isPlayable(resolved, !playableNoSubs)
+            if (resolved === firstResolved) firstResolvedProbed = true
+            if (playable) {
                 const vs = resolved.videoSources[0]
                 if (!wantSubs || (vs && vs.subtitles && vs.subtitles.length > 0)) return resolved
                 if (!playableNoSubs) playableNoSubs = resolved
             }
         }
         if (playableNoSubs) return playableNoSubs
-        if (firstResolved) {
+        if (firstResolved && !firstResolvedProbed) {
             const cl = this.cachedClearance(this.hostOf(firstResolved.videoSources[0].url))
             if (cl) firstResolved.headers = this.withClearance(firstResolved.headers, cl)
             return firstResolved
         }
+        try {
+            for (const id of tried) $store.remove(`anikoto:src:${id}`)
+            $store.remove(`anikoto:slist:${dataIds}`)
+        } catch (_e) {}
         const hint = this.solverEnabled() ? "" : "; if sources are Cloudflare-protected, enable the custom solver in settings (run it via Aqua's Utils)"
         throw this.fail("server", "no playable server found for this episode" + (lastReason ? ` — ${lastReason}` : hint))
     }
@@ -627,7 +640,9 @@ class Provider implements AnimeProvider {
                 }
             }
         } catch (_e) {}
-        if (out.length > 0) this.reportError("server", "the source endpoint moved; found " + out.join(", "))
+        const known = this.sourcePaths(origin)
+        const fresh = out.filter((p) => known.indexOf(p) === -1)
+        if (fresh.length > 0) this.reportError("server", "the source endpoint moved; found " + fresh.join(", "))
         return out
     }
 
@@ -729,7 +744,13 @@ class Provider implements AnimeProvider {
         let b64 = enc.replace(/-/g, "+").replace(/_/g, "/")
         const pad = b64.length % 4
         if (pad) b64 = b64 + "====".slice(pad)
-        for (const pair of await this.encKeys(origin, embedUrl)) {
+        const hit = this.tryKeys(origin, b64, this.knownKeys(origin))
+        if (hit) return hit
+        return this.tryKeys(origin, b64, await this.scanEncKeys(origin, embedUrl))
+    }
+
+    private tryKeys(origin: string, b64: string, pairs: { key: string; iv: string }[]): { file?: string } | undefined {
+        for (const pair of pairs) {
             try {
                 const keyBytes = new Uint8Array(32)
                 const raw = $toBytes(pair.key)
@@ -747,14 +768,11 @@ class Provider implements AnimeProvider {
         return undefined
     }
 
-    private async encKeys(origin: string, embedUrl: string): Promise<{ key: string; iv: string }[]> {
+    private knownKeys(origin: string): { key: string; iv: string }[] {
         const out: { key: string; iv: string }[] = []
         const learned = this.readCache<{ key: string; iv: string }>(`anikoto:enckey:${origin}`, this.tokenTtl)
         if (learned && learned.key && learned.iv) out.push(learned)
         out.push({ key: "i?LMTAx0Q6,:}50U", iv: "W0;27ToaUpl_P%'c" })
-        for (const pair of await this.scanEncKeys(origin, embedUrl)) {
-            if (!out.some((p) => p.key === pair.key && p.iv === pair.iv)) out.push(pair)
-        }
         return out
     }
 
@@ -792,7 +810,10 @@ class Provider implements AnimeProvider {
                 }
             }
         } catch (_e) {}
-        if (out.length > 0) this.reportError("server", "the source cipher changed; trying recovered keys")
+        const known = this.knownKeys(origin)
+        if (out.some((p) => !known.some((k) => k.key === p.key && k.iv === p.iv))) {
+            this.reportError("server", "the source cipher changed; trying recovered keys")
+        }
         return out
     }
 
@@ -821,11 +842,12 @@ class Provider implements AnimeProvider {
         const current = this.hostOf(url)
         if (!current) return undefined
         for (const h of this.cdnHosts()) {
-            if (h === current || this.outOfTime()) continue
+            if (h === current) continue
             const candidate = url.replace("://" + current + "/", "://" + h + "/")
             if (candidate === url) continue
             const body = await this.fetchPlaylist(candidate, headers)
             if (body !== undefined) return { url: candidate, body: body }
+            if (this.outOfTime()) break
         }
         return undefined
     }
@@ -995,6 +1017,10 @@ class Provider implements AnimeProvider {
             }
             if (body && !data) data = body
         }
+        if (data && !data.sources && data.enc) {
+            const plain = await this.decodeEnc(origin, embedUrl, String(data.enc))
+            if (plain && plain.file) data.sources = { file: plain.file }
+        }
         if (!data || !data.sources) {
             for (const path of await this.discoverSourcePaths(origin, embedUrl)) {
                 const body = await this.trySourcePath(origin, path, dataId, embedUrl)
@@ -1004,10 +1030,6 @@ class Provider implements AnimeProvider {
                     break
                 }
             }
-        }
-        if (data && !data.sources && data.enc) {
-            const plain = await this.decodeEnc(origin, embedUrl, String(data.enc))
-            if (plain && plain.file) data.sources = { file: plain.file }
         }
         if (!data || !data.sources) return undefined
         const raw = Array.isArray(data.sources) ? (data.sources[0] || ({} as any)).file : data.sources.file
