@@ -79,6 +79,29 @@ console.log("anikoto")
     eq(/^[\x20-\x7e]*$/.test(p.plain("日本語")), true, "plain: output is ASCII only")
 }
 
+console.log("anikoto: enc resolve cost")
+{
+    const EMBED = "https://megaplay.buzz/stream/s-2/1/sub"
+    const fetched = []
+    const res = (body, ok = true, status = 200) => ({ ok, status, text: () => body, json: () => JSON.parse(body) })
+    const p = load("anikoto", {
+        LoadDoc: () => () => ({ first: () => ({ attr: () => "", text: () => "" }), length: () => 0, each: () => {}, find: () => ({ first: () => ({ text: () => "" }) }) }),
+        CryptoJS: { AES: { decrypt: () => ({ toString: () => JSON.stringify({ file: "https://cdn.test/a/master.m3u8" }) }) }, enc: { Utf8: 1 } },
+        fetch: (url) => {
+            fetched.push(url)
+            if (url.indexOf("/ajax/server?get=") !== -1) return Promise.resolve(res(JSON.stringify({ status: 200, result: { url: EMBED } })))
+            if (url === EMBED) return Promise.resolve(res('<div id="megaplay-player" data-id="177919"></div><script src="/lib/newclient.min.js"></script>'))
+            if (url.indexOf("getSources") !== -1) return Promise.resolve(res(JSON.stringify({ tracks: [], enc: "AAAA" })))
+            return Promise.resolve(res("", false, 404))
+        },
+    })
+
+    const got = await p.fetchSources("L1")
+    eq(got && got.file, "https://cdn.test/a/master.m3u8", "enc: the hardcoded key resolves the file")
+    eq(fetched.filter((u) => u === EMBED).length, 1, "enc: the embed page is fetched once, not re-scanned")
+    eq(fetched.some((u) => u.indexOf("/lib/") !== -1), false, "enc: no player script is downloaded when a known key works")
+}
+
 console.log("animepahe")
 {
     const p = load("animepahe")
