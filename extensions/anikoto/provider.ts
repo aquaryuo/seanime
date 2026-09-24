@@ -564,6 +564,7 @@ class Provider implements AnimeProvider {
         if (firstResolved && !firstResolvedProbed) {
             const cl = this.cachedClearance(this.hostOf(firstResolved.videoSources[0].url))
             if (cl) firstResolved.headers = this.withClearance(firstResolved.headers, cl)
+            await this.alignSubtitleHost(firstResolved)
             return firstResolved
         }
         try {
@@ -845,7 +846,7 @@ class Provider implements AnimeProvider {
         const src = server.videoSources[0]
         if (!src || !src.url || !src.subtitles || src.subtitles.length === 0) return
         const videoHost = this.hostOf(src.url)
-        if (!videoHost || this.outOfTime()) return
+        if (!videoHost) return
         let pick = src.subtitles[0]
         for (const s of src.subtitles) {
             if (s.isDefault) {
