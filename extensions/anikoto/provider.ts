@@ -553,7 +553,10 @@ class Provider implements AnimeProvider {
             if (resolved === firstResolved) firstResolvedProbed = true
             if (playable) {
                 const vs = resolved.videoSources[0]
-                if (!wantSubs || (vs && vs.subtitles && vs.subtitles.length > 0)) return resolved
+                if (!wantSubs || (vs && vs.subtitles && vs.subtitles.length > 0)) {
+                    await this.alignSubtitleHost(resolved)
+                    return resolved
+                }
                 if (!playableNoSubs) playableNoSubs = resolved
             }
         }
@@ -836,6 +839,43 @@ class Provider implements AnimeProvider {
             if (h !== host && next.length < 6) next.push(h)
         }
         this.writeCache("anikoto:cdnhosts", next)
+    }
+
+    private async alignSubtitleHost(server: EpisodeServer): Promise<void> {
+        const src = server.videoSources[0]
+        if (!src || !src.url || !src.subtitles || src.subtitles.length === 0) return
+        const videoHost = this.hostOf(src.url)
+        if (!videoHost || this.outOfTime()) return
+        let pick = src.subtitles[0]
+        for (const s of src.subtitles) {
+            if (s.isDefault) {
+                pick = s
+                break
+            }
+        }
+        const subHost = this.hostOf(pick.url)
+        if (!subHost || subHost === videoHost) return
+        if (await this.subtitleReachable(pick.url, server.headers)) return
+        if (this.outOfTime()) return
+        const swapped = pick.url.replace(`://${subHost}/`, `://${videoHost}/`)
+        if (swapped === pick.url) return
+        if (!(await this.subtitleReachable(swapped, server.headers))) return
+        for (const s of src.subtitles) {
+            const h = this.hostOf(s.url)
+            if (h && h !== videoHost) s.url = s.url.replace(`://${h}/`, `://${videoHost}/`)
+        }
+        this.reportError("server", `the subtitle host ${subHost} could not be reached; serving subtitles from ${videoHost} instead`)
+    }
+
+    private async subtitleReachable(url: string, headers: { [k: string]: string }): Promise<boolean> {
+        if (!/^https?:\/\//i.test(url)) return false
+        try {
+            const res = await fetch(url, { headers: headers })
+            if (!res.ok) return false
+            return res.text().indexOf("WEBVTT") !== -1
+        } catch (_e) {
+            return false
+        }
     }
 
     private async playableOnKnownHost(url: string, headers: { [k: string]: string }): Promise<{ url: string; body: string } | undefined> {
