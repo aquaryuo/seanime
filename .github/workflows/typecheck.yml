@@ -66,6 +66,7 @@ jobs:
           [ -n "$changed" ] || exit 0
           rc=0
           for f in $(echo "$changed" | grep -E '^(extensions|plugins)/[^/]+/(provider|plugin)\.ts$' || true); do
+            git cat-file -e "$AFTER:$f" 2>/dev/null || continue
             dir=$(dirname "$f")
             old=$(git show "$BEFORE:$dir/manifest.json" 2>/dev/null | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{console.log(JSON.parse(d).version||"")}catch{console.log("")}})' || true)
             new=$(git show "$AFTER:$dir/manifest.json" 2>/dev/null | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{console.log(JSON.parse(d).version||"")}catch{console.log("")}})' || true)
