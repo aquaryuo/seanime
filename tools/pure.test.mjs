@@ -55,7 +55,7 @@ function bootPlugin(fakes = {}) {
         now: 1767225600000,
         storage: new Map(Object.entries(fakes.storage || {})),
         files: Object.assign({}, fakes.files),
-        handlers: {}, polls: {}, every: {}, writes: [], sets: 0, updates: 0, cmds: [], timers: [], notes: [], toasts: [], reported: [], downloads: [], watchers: {},
+        handlers: {}, polls: {}, every: {}, writes: [], sets: 0, updates: 0, cmds: [], hashes: [], timers: [], notes: [], toasts: [], reported: [], downloads: [], watchers: {},
     }
     const bytes = (s) => new Uint8Array(Buffer.from(s))
     const under = (p) => Object.keys(h.files).filter((f) => f === p || f.startsWith(p + "/"))
@@ -103,9 +103,14 @@ function bootPlugin(fakes = {}) {
         rename: (a, b) => under(a).forEach((f) => { h.files[b + f.slice(a.length)] = h.files[f]; delete h.files[f] }),
         mkdirAll() {},
         truncate: (p) => { h.files[p] = "" },
+        cmd: (...args) => {
+            const c = { args: args.join(" "), output: () => bytes((fakes.hash || (() => ""))(c)) }
+            h.hashes.push(c)
+            return c
+        },
     }
     const osExtra = {
-        unzip: (zip, dest) => (fakes.unzip || []).forEach((f) => { h.files[dest + "/" + f] = "x" }),
+        unzip: (zip, dest) => (fakes.unzip || []).forEach((f) => { h.files[dest + "/" + f] = "x".repeat(4096) }),
         asyncCmd: (...args) => {
             const c = { args: args.join(" ") }
             h.cmds.push(c)
@@ -132,7 +137,7 @@ function bootPlugin(fakes = {}) {
         $storage: { get: (k) => h.storage.get(k), set: (k, v) => { h.writes.push(k); h.storage.set(k, v) }, remove: (k) => h.storage.delete(k) },
         $os: os,
         $osExtra: osExtra,
-        $filepath: { join: (...p) => p.join("/") },
+        $filepath: { join: (...p) => p.join("/"), base: (p) => p.slice(p.lastIndexOf("/") + 1), dir: (p) => p.slice(0, p.lastIndexOf("/")) },
         $toString: (b) => (typeof b === "string" ? b : Buffer.from(b).toString("utf8")),
         Date: FakeDate,
         console: { log() {}, info() {}, warn() {}, error: (s) => { if (String(s).startsWith("SEHERRv1 ")) h.reported.push(JSON.parse(s.slice(9)).msg) } },
@@ -555,7 +560,11 @@ console.log("aquatils (source invariants)")
     eq(has("taskkill"), false, "kill: nothing is stopped by image name alone")
     eq(has("fuser -k"), false, "kill: the port is never cleared without identifying what holds it")
     eq(has("*aquatils/*) kill -9"), true, "kill: the port sweep checks the executable is ours")
-    eq(has("$p.CommandLine -like '*aquatils\\\\*'"), true, "kill: the windows sweep matches on the command line")
+    eq(has("$p.ExecutablePath -like '*aquatils\\\\*'"), true, "kill: the windows solver sweep matches on the executable path, which a solver started as .\\solver.exe still carries")
+    eq(has("pkill -f '[a]quatils/browser-profile'"), true, "kill: the browser sweep also covers a system browser running on the solver's profile")
+    eq(count("$osExtra.asyncCmd("), 3, "cmd: only the solver spawn streams raw output; everything else collects it line by line")
+    eq(has("continuing unverified"), false, "checksum: a download that can't be verified is never run")
+    eq(has('typeof raw === "string"'), false, "checksum: the hash output is read as bytes, not expected as a string")
 
     eq(has('const FS_KEEP = ["chromium", "state"]'), true, "state: the keep-list names the state directory")
     eq(has('e.name() !== "chromium"'), false, "state: no bare literal is left to drift from the keep-list")
@@ -777,6 +786,92 @@ console.log("aquatils (boot)")
         await h.settle()
         const env = h.spawns()[0].cmd.env.filter((e) => /^SOLVER_(HEADLESS|XVFB|BROWSER_MODE)=/.test(e))
         eq([kept, env], [[], ["SOLVER_BROWSER_MODE=auto", "SOLVER_XVFB=1"]], what)
+    })
+
+    const SUMS = "https://github.com/aquaryuo/seanime/releases/download/solver-v0.2.0/aquatils-solver_checksums.txt"
+    const LINUX_SUM = "5132575d736341a4f80aaba04d86357db46d5a2eb852f75eb956d1dbcc41153b"
+    const WIN_SUM = "c4f8270aebd421fe1af31dca7e0b400c816c356bd05608153eed401820d71a02"
+    const sums = (url) => (url === SUMS ? { text: LINUX_SUM + "  solver-browser_linux_x64.zip\n" + WIN_SUM + "  solver-browser_windows_x64.zip\n" } : null)
+    const install = async (fakes) => {
+        const h = bootPlugin({ storage: { "fs.consent": true, "fs.wantChromium": false }, unzip: ["solver/solver", "solver/solver.exe"], ...fakes })
+        await h.settle()
+        h.fire("fs-simple-start")
+        await h.settle()
+        h.watchers["1"]({ status: "completed" })
+        await h.settle()
+        return h
+    }
+    const lastErr = (h) => h.reported[h.reported.length - 1] || ""
+
+    await run("checksum: a download that doesn't match the published SHA-256 is discarded and the solver is never launched", async (what) => {
+        const h = await install({ fetch: sums, hash: () => "0".repeat(64) + "  /cache/aquatils/0.2.0/solver-browser_linux_x64.zip\n" })
+        eq([h.hashes.map((c) => c.args), h.spawns().length, h.status(), h.storage.get("fs.solverReady") || "", /did not match the checksum/.test(lastErr(h))],
+            [["sh -c sha256sum '/cache/aquatils/0.2.0/solver-browser_linux_x64.zip'"], 0, "down", "", true], what)
+    })
+
+    await run("checksum: a download that can't be verified is discarded with the reason and never launched", async (what) => {
+        const noTool = await install({ fetch: sums })
+        const noSums = await install({ hash: () => LINUX_SUM + "  x\n" })
+        eq([noTool, noSums].map((h) => [h.spawns().length, h.status(), (/^Couldn't verify the solver download \((.*?)\)/.exec(lastErr(h)) || [])[1]]),
+            [[0, "down", "this machine couldn't compute its SHA-256"], [0, "down", "the checksum published with the release couldn't be fetched"]], what)
+    })
+
+    await run("checksum: on Windows certutil hashes the file by name from its folder, and a verified solver starts as .\\solver.exe from its own folder", async (what) => {
+        const certutil = (c) => (c.args === "cmd /c certutil -hashfile solver-browser_windows_x64.zip SHA256" && c.dir === "/cache/aquatils/0.2.0"
+            ? "SHA256 hash of solver-browser_windows_x64.zip:\r\n" + WIN_SUM + "\r\nCertUtil: -hashfile command completed successfully.\r\n"
+            : "")
+        const h = await install({ os: { platform: "windows" }, fetch: sums, hash: certutil })
+        const s = h.spawns()[0] || { cmd: {} }
+        eq([h.spawns().length, s.args, s.cmd.dir, h.status()], [1, "cmd /c .\\solver.exe", "/cache/aquatils/0.2.0/solver", "starting"], what)
+    })
+
+    await run("deps: missing Chromium packages are read from line-by-line output and offered in the tray, never installed without a click, and not checked before the solver is installed", async (what) => {
+        const sh = (a) => (a.includes("echo BROKEN") ? { out: ["BROKEN", "libnss3", "xvfb"] } : a.includes("sudo -n true") ? { out: ["YES"] } : {})
+        const h = bootPlugin({ storage: INSTALLED, files: { [BIN]: "x", [CHR]: "x" }, sh })
+        const fresh = bootPlugin({ sh })
+        await h.settle()
+        eq([/Missing: libnss3, xvfb/.test(JSON.stringify(h.render())), h.notes.filter((n) => /xvfb/.test(n)).length, h.cmds.filter((c) => c.args.includes("apt-get")).length, fresh.notes.length],
+            [true, 1, 0, 0], what)
+    })
+
+    await run("chrome: a browser already installed on PATH is handed to the solver, and the plugin's own Chromium folder isn't touched", async (what) => {
+        const h = bootPlugin({ storage: INSTALLED, files: { [BIN]: "x" }, sh: (a) => (a.includes("command -v \"$c\"") ? { out: ["/usr/bin/chromium"] } : {}) })
+        await h.settle()
+        h.fire("fs-start")
+        await h.settle()
+        const s = h.spawns()[0]
+        eq([s.cmd.env.filter((e) => e.startsWith("SOLVER_CHROME=")), s.args.includes("/cache/aquatils/chromium")], [["SOLVER_CHROME=/usr/bin/chromium"], false], what)
+    })
+
+    await run("chromium on macOS: unpacked with ditto; a failed unpack is named, isn't downloaded again on the next Start, and Update Chromium retries it", async (what) => {
+        const MAC = "/cache/aquatils/chromium/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
+        const macFeed = (url) => (/chrome-for-testing/.test(url)
+            ? { json: { channels: { Stable: { version: "200.0.0.0", downloads: { chrome: [{ platform: "mac-arm64", url: "https://cft.example/chrome-mac-arm64.zip" }] } } } } }
+            : null)
+        let dittos = 0
+        const h = bootPlugin({ os: { platform: "darwin", arch: "arm64" }, storage: { "fs.solverReady": "0.2.0" }, files: { [BIN]: "x" }, fetch: macFeed, sh: (a) => {
+            if (!a.includes("ditto -x -k")) return {}
+            if (++dittos === 1) return { out: ["ditto: Couldn't read PKZip signature"], code: 1 }
+            h.files[MAC.replace("/chromium/", "/chromium.new/")] = "x"
+            return {}
+        } })
+        await h.settle()
+        h.fire("fs-start")
+        await h.settle()
+        h.watchers["1"]({ status: "completed" })
+        await h.settle()
+        const failed = [/PKZip signature/.test(lastErr(h)), /left in place/.test(lastErr(h)), h.storage.get("fs.chromiumFailVer"), h.spawns().length]
+        h.fire("fs-start")
+        await h.settle()
+        const skipped = [h.downloads.length, h.spawns().length]
+        h.fire("fs-update-chromium")
+        await h.settle()
+        h.watchers["2"]({ status: "completed" })
+        await h.settle()
+        const s = h.spawns()[h.spawns().length - 1]
+        const env = s.cmd.env.filter((e) => e.startsWith("SOLVER_CHROME="))
+        eq([failed, skipped, h.downloads.length, h.storage.has("fs.chromiumFailVer"), env, s.args.includes("xattr -dr com.apple.quarantine '/cache/aquatils/chromium'"), dittos],
+            [[true, false, "200.0.0.0", 1], [1, 2], 2, false, ["SOLVER_CHROME=" + MAC], true, 2], what)
     })
 }
 

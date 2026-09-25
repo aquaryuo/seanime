@@ -29,7 +29,7 @@
         "commandScopes": [
           {
             "command": "sh",
-            "description": "Launch the downloaded aquatils-solver binary on Linux/macOS (Binary mode); strips macOS quarantine and chmods before exec.",
+            "description": "Linux/macOS (Binary mode): start the downloaded aquatils-solver (chmod, and clear the macOS quarantine flag); hash the download before it runs (sha256sum/shasum); unpack Chromium on macOS (ditto); check Chromium's system libraries (Xvfb, ldd, dpkg-query) and look for an installed Chromium; install missing packages with apt-get as root or passwordless sudo, only when you press Install; stop this plugin's own solver and Chromium processes (pkill/kill, matched on the aquatils cache folder) and wait for the solver port to close (ss/lsof).",
             "args": [
               {
                 "value": "-c"
@@ -41,7 +41,7 @@
           },
           {
             "command": "cmd",
-            "description": "Launch the downloaded aquatils-solver binary on Windows (Binary mode); verify its checksum with certutil before running it; and stop leftover solver or browser processes of its own, identified by their command line, via PowerShell.",
+            "description": "Windows (Binary mode): start the downloaded aquatils-solver from its own folder; hash the download with certutil before it runs; stop this plugin's own leftover solver and Chromium processes via PowerShell, matched on the aquatils cache folder.",
             "args": [
               {
                 "value": "/c"
