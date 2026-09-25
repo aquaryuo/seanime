@@ -5,6 +5,10 @@ const ROOT = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "
 
 let failures = 0
 let checks = 0
+let skipped = 0
+
+const run = (what, fn) => fn(what)
+const pending = (what) => { skipped++; console.log(`  skip ${what}`) }
 
 function eq(actual, expected, what) {
     checks++
@@ -16,14 +20,17 @@ function eq(actual, expected, what) {
     }
 }
 
-function load(name, overrides) {
-    const src = `${ROOT}/extensions/${name}/provider.ts`
-    const js = execFileSync("npx", ["esbuild", "--loader=ts", "--target=es2018"], {
+function compile(src) {
+    return execFileSync("npx", ["esbuild", "--loader=ts", "--target=es2018"], {
         input: fs.readFileSync(src),
         encoding: "utf8",
         shell: true,
         stdio: ["pipe", "pipe", "ignore"],
     })
+}
+
+function load(name, overrides) {
+    const js = compile(`${ROOT}/extensions/${name}/provider.ts`)
     const boom = (who) => () => { throw new Error(`pure test touched ${who}`) }
     const g = {
         fetch: boom("fetch"),
@@ -39,6 +46,97 @@ function load(name, overrides) {
     const keys = Object.keys(g)
     const Provider = new Function(...keys, `${js}\nreturn Provider`)(...keys.map((k) => g[k]))
     return new Provider()
+}
+
+let aquatilsJs = ""
+function bootPlugin(fakes = {}) {
+    aquatilsJs = aquatilsJs || compile(`${ROOT}/plugins/aquatils/plugin.ts`)
+    const h = {
+        now: 1767225600000,
+        storage: new Map(Object.entries(fakes.storage || {})),
+        files: Object.assign({}, fakes.files),
+        handlers: {}, polls: {}, cmds: [], timers: [], notes: [], toasts: [], reported: [], downloads: [],
+    }
+    const bytes = (s) => new Uint8Array(Buffer.from(s))
+    const under = (p) => Object.keys(h.files).filter((f) => f === p || f.startsWith(p + "/"))
+    const running = {}
+    const tray = new Proxy({
+        update() {},
+        updateBadge() {},
+        render: (fn) => { h.render = fn },
+        onOpen() {},
+        onClose() {},
+    }, { get: (o, k) => o[k] || ((a, b) => ({ t: k, a, b })) })
+    const ctx = {
+        state: (v) => { const s = { value: v, get: () => s.value, set: (x) => { s.value = x } }; return s },
+        fieldRef: (v) => ({ current: v, onValueChange() {} }),
+        newTray: () => tray,
+        dom: { observe() {} },
+        downloader: { download: (url) => h.downloads.push(url), watch: () => () => {}, cancel() {} },
+        fetch: (url, o) => {
+            const r = (fakes.fetch || (() => null))(url, o && o.body ? JSON.parse(o.body) : {})
+            return r ? Promise.resolve({ ok: !r.status || r.status < 400, status: r.status || 200, json: () => r.json, text: () => r.text || "" }) : Promise.reject(new Error("connection refused"))
+        },
+        jobs: {
+            poll: (key, fn, ms, o) => { h.polls[key] = fn; if (o && o.immediate) fn() },
+            singleflight: (key, fn) => running[key] || (running[key] = Promise.resolve(fn()).finally(() => { delete running[key] })),
+        },
+        registerEventHandler: (id, fn) => { h.handlers[id] = fn },
+        setTimeout: (fn) => h.timers.push(fn),
+        notification: { send: (m) => h.notes.push(m) },
+        toast: new Proxy({}, { get: (_, k) => (m) => h.toasts.push(k + ": " + m) }),
+    }
+    const os = {
+        platform: "linux",
+        arch: "amd64",
+        ...fakes.os,
+        cacheDir: () => "/cache",
+        stat: (p) => { if (!under(p).length) throw new Error("not found"); return { size: () => (h.files[p] || "").length } },
+        readFile: (p) => { if (!(p in h.files)) throw new Error("not found"); return bytes(h.files[p]) },
+        readDir: () => [],
+        removeAll: (p) => under(p).forEach((f) => delete h.files[f]),
+        mkdirAll() {},
+        truncate: (p) => { h.files[p] = "" },
+    }
+    const osExtra = {
+        asyncCmd: (...args) => {
+            const c = { args: args.join(" ") }
+            h.cmds.push(c)
+            const cmd = { environ: () => [], process: { kill() {} } }
+            return {
+                getCommand: () => (c.cmd = cmd),
+                run: (cb) => {
+                    c.line = (s) => cb(bytes(s), undefined, undefined, undefined)
+                    c.fail = (s) => cb(undefined, bytes(s), undefined, undefined)
+                    c.exit = (code) => cb(undefined, undefined, code, "")
+                    if (c.cmd) return
+                    const r = (fakes.sh || (() => ({})))(c.args) || {}
+                    setImmediate(() => { (r.out || []).forEach(c.line); c.exit(r.code || 0) })
+                },
+            }
+        },
+    }
+    class FakeDate extends Date {
+        constructor(...a) { super(...(a.length ? a : [h.now])) }
+        static now() { return h.now }
+    }
+    const g = {
+        $ui: { register: (cb) => cb(ctx) },
+        $storage: { get: (k) => h.storage.get(k), set: (k, v) => h.storage.set(k, v), remove: (k) => h.storage.delete(k) },
+        $os: os,
+        $osExtra: osExtra,
+        $filepath: { join: (...p) => p.join("/") },
+        $toString: (b) => (typeof b === "string" ? b : Buffer.from(b).toString("utf8")),
+        Date: FakeDate,
+        console: { log() {}, info() {}, warn() {}, error: (s) => { if (String(s).startsWith("SEHERRv1 ")) h.reported.push(JSON.parse(s.slice(9)).msg) } },
+    }
+    new Function(...Object.keys(g), `${aquatilsJs}\ninit()`)(...Object.values(g))
+    h.fire = (id) => h.handlers[id]()
+    h.tick = (key) => h.polls[key]()
+    h.settle = async () => { for (let i = 0; i < 50; i++) await new Promise((r) => setImmediate(r)) }
+    h.spawns = () => h.cmds.filter((c) => c.cmd)
+    h.status = () => ({ Running: "up", Starting: "starting", Off: "down", Checking: "unknown" })[(/"a":"(Running|Starting|Off|Checking)"/.exec(JSON.stringify(h.render())) || [])[1]]
+    return h
 }
 
 console.log("anikoto")
@@ -469,6 +567,78 @@ console.log("aquatils (source invariants)")
     eq(has("execRefused && !avEvidence"), true, "windows: a refusal to execute is reported as itself")
 }
 
+console.log("aquatils (boot)")
+{
+    const BIN = "/cache/aquatils/0.2.0/solver/solver"
+    const LOG = "/cache/aquatils/0.2.0/solver.log"
+    const INSTALLED = { "fs.solverReady": "0.2.0", "fs.wantChromium": false }
+    const ours = (url) => (url === "http://127.0.0.1:8191/v1" ? { json: { solver: "aquatils", version: "0.2.0", sessions: ["seanime"] } } : null)
+
+    await run("boot: nothing installed and nothing listening - no launch, not Running", async (what) => {
+        const h = bootPlugin()
+        await h.settle()
+        eq([h.spawns().length, ["unknown", "down"].includes(h.status())], [0, true], what)
+    })
+
+    await run("boot: an installed solver that answers as ours shows Running without a launch", async (what) => {
+        const h = bootPlugin({ storage: INSTALLED, files: { [BIN]: "x" }, fetch: ours })
+        await h.settle()
+        eq([h.status(), h.spawns().length], ["up", 0], what)
+    })
+
+    await run("boot: the registered handler ids are unchanged", async (what) => {
+        const ids = Object.keys(bootPlugin().handlers)
+        eq([ids.filter((id) => /^seh-copy-\d+$/.test(id)).length, ids.filter((id) => !/^seh-copy-\d+$/.test(id)).sort()], [30, [
+            "fs-autostart-toggle", "fs-autoupdate-toggle", "fs-chromium-toggle", "fs-consent-toggle", "fs-copy-cache-path", "fs-copy-deps", "fs-copy-diag",
+            "fs-customtls-toggle", "fs-dns-custom-save", "fs-doctor", "fs-enable-chromium", "fs-engine-set-chrome", "fs-engine-set-webview2",
+            "fs-help-customtls", "fs-help-engine", "fs-help-pacing", "fs-help-verbose", "fs-help-wv2refresh", "fs-help-wv2utls", "fs-help-wv2warm",
+            "fs-install-deps", "fs-logs-clear", "fs-logs-copy", "fs-mode-binary", "fs-mode-remote", "fs-pacing-toggle", "fs-remove-chromium",
+            "fs-remove-solver", "fs-restart", "fs-restart-update", "fs-save", "fs-simple-start", "fs-start", "fs-stealth", "fs-stop", "fs-test",
+            "fs-update-chromium", "fs-verbose-toggle", "fs-wv2refresh-toggle", "fs-wv2utls-toggle", "fs-wv2warm-toggle",
+            "seh-clear", "seh-copy-all", "seh-notify-toggle", "seh-save", "ui-mode-toggle", "view-cf", "view-errors", "view-settings",
+        ]], what)
+    })
+
+    pending("remote: Start with the remote host down ends Off, not Starting", async (what) => {
+        const h = bootPlugin({ storage: { "fs.mode": "remote", "fs.host": "10.0.0.5" } })
+        await h.settle()
+        h.fire("fs-simple-start")
+        await h.settle()
+        for (let i = 0; i < 3; i++) { h.now += 5000; await h.tick("aquatils-fs-poll") }
+        await h.settle()
+        eq(h.status(), "down", what)
+    })
+
+    pending("exit: a stale bind line in solver.log does not mask this launch's library error", async (what) => {
+        const h = bootPlugin({ storage: INSTALLED, files: { [BIN]: "x", [LOG]: "listen tcp 127.0.0.1:8191: bind: address already in use\n" } })
+        await h.settle()
+        h.fire("fs-start")
+        await h.settle()
+        const s = h.spawns()[0]
+        s.fail("solver: error while loading shared libraries: libnss3.so: cannot open shared object file: No such file or directory")
+        s.exit(127)
+        await h.settle()
+        eq(/shared libraries/.test(h.reported[h.reported.length - 1]), true, what)
+    })
+
+    pending("boot: auto-start with the solver not answering launches it exactly once", async (what) => {
+        const h = bootPlugin({ storage: { ...INSTALLED, "fs.autoStart": true }, files: { [BIN]: "x" } })
+        await h.settle()
+        for (let i = 0; i < 2; i++) { h.now += 5000; await h.tick("aquatils-fs-poll") }
+        await h.settle()
+        const sweeps = h.cmds.filter((c) => c.args.includes("[a]quatils/.*/solver/solver")).length
+        eq([h.spawns().length, sweeps], [1, 1], what)
+    })
+
+    pending("launch: a stored headless flag gives no SOLVER_HEADLESS and is removed at load", async (what) => {
+        const h = bootPlugin({ storage: { ...INSTALLED, "fs.browserMode": "headless" }, files: { [BIN]: "x" } })
+        await h.settle()
+        h.fire("fs-start")
+        await h.settle()
+        eq([h.spawns()[0].cmd.env.includes("SOLVER_HEADLESS=1"), h.storage.has("fs.browserMode")], [false, false], what)
+    })
+}
+
 console.log("configuration")
 {
     const prefs = (map) => ({ $getUserPreference: (n) => map[n] })
@@ -537,4 +707,4 @@ if (failures > 0) {
     console.log(`${failures} of ${checks} checks failed`)
     process.exit(1)
 }
-console.log(`${checks} checks passed`)
+console.log(`${checks} checks passed` + (skipped ? `, ${skipped} pending` : ""))
