@@ -1,4 +1,4 @@
-type SehError = { id: string; t: number; ext: string; scope: string; msg: string }
+type SehError = { id: string; t: number; ext: string; scope: string; msg: string; lvl?: string }
 
 declare const console: { log(...args: any[]): void; info(...args: any[]): void; warn(...args: any[]): void; error(...args: any[]): void }
 
@@ -190,7 +190,7 @@ function init() {
         const fsVersion = ctx.state<string>("")
         const fsTest = ctx.state<string>("")
         const fsConsent = ctx.state<boolean>(sget<boolean>("fs.consent", false))
-        let sehGroups: { key: string; label: string; count: number; t: number }[] = []
+        let sehGroups: { key: string; label: string; count: number; t: number; lvl?: string }[] = []
 
         function scrubLog(s: string): string {
             if (!s) return s
@@ -430,7 +430,7 @@ function init() {
         }
 
         function unreadErrors(): number {
-            return errorGroups().filter((g) => g.t > sehReadAt).length
+            return errorGroups().filter((g) => !g.lvl && g.t > sehReadAt).length
         }
 
         function markErrorsRead(): void {
@@ -535,7 +535,7 @@ function init() {
                 const end = rest.lastIndexOf("}")
                 if (start < 0 || end <= start) continue
                 try {
-                    const p = JSON.parse(rest.slice(start, end + 1)) as { t?: number; ext?: string; scope?: string; msg?: string }
+                    const p = JSON.parse(rest.slice(start, end + 1)) as { t?: number; ext?: string; scope?: string; msg?: string; lvl?: string }
                     const msg = String(p.msg || "")
                     if (!msg) continue
                     const now = Date.now()
@@ -543,7 +543,9 @@ function init() {
                     const t = p.t
                     const ext = String(p.ext || "unknown")
                     const scope = String(p.scope || "")
-                    out.push({ id: t + "|" + ext + "|" + scope + "|" + msg, t: t, ext: ext, scope: scope, msg: msg })
+                    const e: SehError = { id: t + "|" + ext + "|" + scope + "|" + msg, t: t, ext: ext, scope: scope, msg: msg }
+                    if (p.lvl === "warn" || p.lvl === "info") e.lvl = p.lvl
+                    out.push(e)
                 } catch (_e) {
                     continue
                 }
@@ -570,6 +572,7 @@ function init() {
                 const counts: { [label: string]: number } = {}
                 const order: string[] = []
                 for (let i = 0; i < fresh.length; i++) {
+                    if (fresh[i].lvl) continue
                     const label = sehLabel(fresh[i])
                     if (counts[label] === undefined) { counts[label] = 0; order.push(label) }
                     counts[label]++
@@ -2146,17 +2149,17 @@ function init() {
             return Math.floor(min / 60) + "h " + (min % 60) + "m"
         }
 
-        function errorGroups(): { key: string; label: string; count: number; t: number }[] {
+        function errorGroups(): { key: string; label: string; count: number; t: number; lvl?: string }[] {
             const t = Date.now()
             const list = errors.get()
-            const map: { [k: string]: { key: string; label: string; count: number; t: number } } = {}
+            const map: { [k: string]: { key: string; label: string; count: number; t: number; lvl?: string } } = {}
             const order: string[] = []
             for (let i = 0; i < list.length; i++) {
                 const e = list[i]
                 if (e.t && t - e.t > SEH_TTL) continue
-                const key = e.ext + "|" + e.scope + "|" + e.msg
+                const key = e.ext + "|" + e.scope + "|" + e.msg + "|" + (e.lvl || "")
                 if (!map[key]) {
-                    map[key] = { key: key, label: sehLabel(e), count: 0, t: e.t }
+                    map[key] = { key: key, label: sehLabel(e), count: 0, t: e.t, lvl: e.lvl }
                     order.push(key)
                 }
                 map[key].count++
@@ -2167,8 +2170,8 @@ function init() {
             return groups.slice(0, 30)
         }
 
-        function groupLine(g: { label: string; count: number; t: number }): string {
-            return aqStamp(g.t).slice(0, 5) + " " + g.label + (g.count > 1 ? " ×" + g.count : "")
+        function groupLine(g: { label: string; count: number; t: number; lvl?: string }): string {
+            return aqStamp(g.t).slice(0, 5) + " " + (g.lvl ? g.lvl + " " : "") + g.label + (g.count > 1 ? " ×" + g.count : "")
         }
 
         function sehFailText(): string {
@@ -2200,7 +2203,7 @@ function init() {
             const lineStyle = { fontSize: "11px", fontFamily: "ui-monospace, monospace", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: "1.5", color: "rgba(255,255,255,0.8)", flexGrow: "1", minWidth: "0" }
             const items = sehGroups.map((g, i) => tray.flex({
                 items: [
-                    tray.text(groupLine(g), { style: lineStyle }),
+                    tray.text(groupLine(g), { style: g.lvl ? { ...lineStyle, color: "rgba(255,255,255,0.45)" } : lineStyle }),
                     copyBtn("seh-copy-" + i, "Copy this error", { marginLeft: "6px" }),
                 ],
                 gap: 1,
@@ -2539,7 +2542,7 @@ function init() {
 
         tray.render(() => {
             const rows: any[] = []
-            const errCount = errorGroups().length
+            const errCount = errorGroups().filter((g) => !g.lvl).length
             const unread = unreadErrors()
             rows.push(tray.flex({
                 items: [

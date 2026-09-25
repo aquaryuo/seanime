@@ -551,6 +551,25 @@ console.log("animelok")
     eq(p.trackScore("English", true, false, false) > p.trackScore("English (Signs & Songs)", true, true, true), true, "track: full dialogue beats a default signs track")
 }
 
+console.log("error channel")
+{
+    const out = []
+    const cap = { console: { log() {}, info() {}, warn() {}, error: (s) => out.push(String(s)) } }
+    load("anikoto", cap).reportError("server", "a")
+    load("anikoto", cap).reportError("server", "b", "warn")
+    for (const name of ["anizone", "animelok"]) {
+        load(name, cap).fail("server", "c")
+        load(name, cap).fail("server", "d", "info")
+    }
+    eq(out.map((s) => s.replace(/"t":\d+/, "")), [
+        'SEHERRv1 {,"ext":"aq-anikoto","scope":"server","msg":"a"}', 'SEHERRv1 {,"ext":"aq-anikoto","scope":"server","msg":"b","lvl":"warn"}',
+        'SEHERRv1 {,"ext":"aq-anizone","scope":"server","msg":"c"}', 'SEHERRv1 {,"ext":"aq-anizone","scope":"server","msg":"d","lvl":"info"}',
+        'SEHERRv1 {,"ext":"aq-animelok","scope":"server","msg":"c"}', 'SEHERRv1 {,"ext":"aq-animelok","scope":"server","msg":"d","lvl":"info"}',
+    ], "lvl: an error record carries no lvl field; a notice carries its level")
+    const sites = (name) => { const src = fs.readFileSync(`${ROOT}/extensions/${name}/provider.ts`, "utf8"); return [(src.match(/, "warn"\)/g) || []).length, (src.match(/, "info"\)/g) || []).length] }
+    eq(["anikoto", "anizone", "animelok", "animepahe"].map(sites), [[3, 1], [0, 1], [0, 1], [0, 0]], "lvl: only the listed recovered and expected reports are relabelled")
+}
+
 console.log("aquatils (source invariants)")
 {
     const src = fs.readFileSync(`${ROOT}/plugins/aquatils/plugin.ts`, "utf8")
@@ -1087,6 +1106,24 @@ console.log("aquatils (boot)")
         await h.settle()
         eq([unread, read, view.includes(want[1]), view.includes("Listening to Seanime's log · checked 0s ago"), view.includes('"b":{"text":"Copy this error"}'), row, all, [h.badge.number, tab()]],
             [[2, "Errors (2 new)"], [0, "Errors (2)", true], true, true, true, want[1], want.join("\n"), [1, "Errors (1 new)"]], what)
+    })
+
+    await run("errors: warn and info records show dimmed and labelled but stay out of the badge, the tab count and notifications; an unknown lvl is an error", async (what) => {
+        const at = 1767225600000
+        const line = (t, msg, lvl) => "x |ERR| extension > (console.error): SEHERRv1 " + JSON.stringify({ t, ext: "aq-anikoto", scope: "server", msg, lvl }) + "\n"
+        const log = line(at - 3000, "broke") + line(at - 2000, "fell back", "warn") + line(at - 1000, "no dub", "info") + line(at, "odd", "fatal")
+        const h = bootPlugin({ storage: { "seh.notify": true }, fetch: (url) => (/logs\/latest/.test(url) ? { json: { data: log } } : null) })
+        await h.settle()
+        const hm = (t) => new Date(t).toTimeString().slice(0, 5)
+        const tab = () => (/"label":"(Errors[^"]*)"/.exec(JSON.stringify(h.render())) || [])[1]
+        const color = (a) => { let hit = ""; JSON.stringify(h.render(), (k, v) => { if (v && v.t === "text" && v.a === a) hit = v.b.style.color; return v }); return hit }
+        const unread = [h.badge.number, tab(), h.notes.filter((n) => /aq-anikoto/.test(n)), h.toasts.filter((t) => /aq-anikoto/.test(t))]
+        h.fire("view-errors")
+        const rows = [hm(at - 3000) + " [aq-anikoto · server] broke", hm(at - 2000) + " warn [aq-anikoto · server] fell back", hm(at - 1000) + " info [aq-anikoto · server] no dub", hm(at) + " [aq-anikoto · server] odd"].map(color)
+        h.fire("seh-copy-all")
+        eq([unread, [h.badge.number, tab()], rows, h.clip.includes(hm(at - 2000) + " warn [aq-anikoto · server] fell back"), h.storage.get("seh.errors").map((e) => e.lvl || "")],
+            [[2, "Errors (2 new)", ["[aq-anikoto · server] broke", "[aq-anikoto · server] odd"], ["error: [aq-anikoto · server] broke", "error: [aq-anikoto · server] odd"]],
+                [0, "Errors (2)"], ["rgba(255,255,255,0.8)", "rgba(255,255,255,0.45)", "rgba(255,255,255,0.45)", "rgba(255,255,255,0.8)"], true, ["", "warn", "info", ""]], what)
     })
 
     await run("errors: a 401 replaces the empty list without advice to drop the password, Save reports what the probe found, and a read that stops answering goes stale", async (what) => {

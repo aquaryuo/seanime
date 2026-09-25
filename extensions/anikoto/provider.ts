@@ -629,7 +629,7 @@ class Provider implements AnimeProvider {
         })
         const known = this.sourcePaths(origin)
         const fresh = out.filter((p) => known.indexOf(p) === -1)
-        if (fresh.length > 0) this.reportError("server", "the source endpoint moved; found " + fresh.join(", "))
+        if (fresh.length > 0) this.reportError("server", "the source endpoint moved; found " + fresh.join(", "), "warn")
         return out
     }
 
@@ -777,7 +777,7 @@ class Provider implements AnimeProvider {
         })
         const known = this.knownKeys(origin)
         if (out.some((p) => !known.some((k) => k.key === p.key && k.iv === p.iv))) {
-            this.reportError("server", "the source cipher changed; trying recovered keys")
+            this.reportError("server", "the source cipher changed; trying recovered keys", "warn")
         }
         return out
     }
@@ -824,7 +824,7 @@ class Provider implements AnimeProvider {
                 const h = this.hostOf(s.url)
                 if (h && h !== host) s.url = s.url.replace(`://${h}/`, `://${host}/`)
             }
-            this.reportError("server", `the subtitle host ${subHost} could not be reached; serving subtitles from ${host} instead`)
+            this.reportError("server", `the subtitle host ${subHost} could not be reached; serving subtitles from ${host} instead`, "warn")
             return
         }
     }
@@ -1104,7 +1104,7 @@ class Provider implements AnimeProvider {
         for (const e of picked) e.number -= offset
         episodes.length = 0
         for (const e of picked) episodes.push(e)
-        this.reportError("episodes", `the site lists this season as one run of ${total} episodes; showing the ${part >= 2 ? "last" : "first"} ${epCount} so the numbering matches the tracker`)
+        this.reportError("episodes", `the site lists this season as one run of ${total} episodes; showing the ${part >= 2 ? "last" : "first"} ${epCount} so the numbering matches the tracker`, "info")
     }
 
     private withMeta(base: string, audio: string, anilistId: number, epCount: number, part: number): string {
@@ -1117,9 +1117,9 @@ class Provider implements AnimeProvider {
         return { base: m[1], audio: m[2] || "sub", anilistId: known && known > 0 ? known : 0, epCount: parseInt(m[3] || "0", 10), part: parseInt(m[4] || "0", 10) }
     }
 
-    private reportError(scope: string, message: string): void {
+    private reportError(scope: string, message: string, lvl?: "warn" | "info"): void {
         try {
-            console.error("SEHERRv1 " + JSON.stringify({ t: Date.now(), ext: "aq-anikoto", scope: scope, msg: this.plain(message) }))
+            console.error("SEHERRv1 " + JSON.stringify({ t: Date.now(), ext: "aq-anikoto", scope: scope, msg: this.plain(message), lvl: lvl }))
         } catch (_e) {}
     }
 

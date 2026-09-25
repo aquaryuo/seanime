@@ -73,7 +73,7 @@ class Provider implements AnimeProvider {
                 ],
             }
         }
-        if (v.status === "notfound") throw this.fail("server", `animelok: episode ${meta.num} is not available on this site`)
+        if (v.status === "notfound") throw this.fail("server", `animelok: episode ${meta.num} is not available on this site`, "info")
         if (v.status === "nosource") throw this.fail("server", `animelok: no source for episode ${meta.num} right now (the site returned an error; try again later)`)
         if (v.status === "badshape") throw this.fail("server", `animelok: the site answered for episode ${meta.num} in a shape this extension does not understand — the site changed its API; this extension needs an update.`)
         throw this.fail("server", `animelok: source temporarily unavailable (failed to extract episode ${meta.num}; try again)`)
@@ -299,9 +299,9 @@ class Provider implements AnimeProvider {
         return { anilistId, audio, num }
     }
 
-    private reportError(scope: string, message: string): void {
+    private reportError(scope: string, message: string, lvl?: "warn" | "info"): void {
         try {
-            console.error("SEHERRv1 " + JSON.stringify({ t: Date.now(), ext: "aq-animelok", scope: scope, msg: this.plain(message) }))
+            console.error("SEHERRv1 " + JSON.stringify({ t: Date.now(), ext: "aq-animelok", scope: scope, msg: this.plain(message), lvl: lvl }))
         } catch (_e) {}
     }
 
@@ -317,8 +317,8 @@ class Provider implements AnimeProvider {
             .replace(/^ +| +$/g, "")
     }
 
-    private fail(scope: string, message: string): string {
-        this.reportError(scope, message)
+    private fail(scope: string, message: string, lvl?: "warn" | "info"): string {
+        this.reportError(scope, message, lvl)
         return message
     }
 
