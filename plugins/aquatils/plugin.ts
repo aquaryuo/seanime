@@ -164,6 +164,7 @@ function init() {
         let fsAutoRestarts = 0
         let fsLastAutoRestart = 0
         let fsChromiumBusy = false
+        let fsChromiumSeq = 0
         let fsLeftoverKillAt = 0
         let fsTesting = false
         let fsTestUntil = 0
@@ -741,11 +742,14 @@ function init() {
                 const size = $os.stat(path).size()
                 if (size === fsLogSize) return
                 fsLogSize = size
-                const all = $toString($os.readFile(path))
-                const end = all.lastIndexOf("\n") + 1
-                if (fsLogOff < 0) fsLogOff = end
-                else if (all.length < fsLogOff) fsLogOff = 0
-                if (end > fsLogOff) { pushLog(all.slice(fsLogOff, end)); fsLogOff = end }
+                if (fsLogOff < 0) fsLogOff = size
+                else if (size < fsLogOff) fsLogOff = 0
+                if (size <= fsLogOff) return
+                const buf = new Uint8Array(size - fsLogOff)
+                const f = $os.openFile(path, 0, 0)
+                try { f.readAt(buf, fsLogOff) } finally { f.close() }
+                const end = buf.lastIndexOf(10) + 1
+                if (end) { pushLog($toString(buf.subarray(0, end))); fsLogOff += end }
             } catch (_e) {}
         }
 
@@ -753,7 +757,9 @@ function init() {
             if (fsTesting && Date.now() < fsTestUntil) return
             if (trayVisible) syncAdoptedLog()
             if (!fsDepsChecked) checkChromiumDeps()
+            const base = fsBase()
             const p = await fsProbe()
+            if (base !== fsBase()) return
             if (p.foreign) {
                 setStatus("down")
                 const msg = fsMode.get() === "remote"
@@ -861,7 +867,7 @@ function init() {
         }
 
         function fsTick(): Promise<void> {
-            return ctx.jobs.singleflight("aquatils-fs-poll-run", fsRefresh)
+            return ctx.jobs.singleflight("aquatils-fs-poll-run " + fsBase(), fsRefresh)
         }
 
         async function runTest(): Promise<void> {
@@ -983,7 +989,7 @@ function init() {
 
         function binaryDownloaded(): boolean {
             if (!solverBinExists()) return false
-            try { return $storage.get<string>("fs.solverReady") === FS_VERSION } catch (_e) { return false }
+            try { return $storage.get<string>("fs.solverReady") === FS_VERSION && $storage.get<string>("fs.solverVerified") === FS_VERSION } catch (_e) { return false }
         }
 
         function solverPrevInstalled(): boolean {
@@ -1103,7 +1109,7 @@ function init() {
                 let url = ""
                 const dls = stable && stable.downloads ? stable.downloads["chrome"] : null
                 if (Array.isArray(dls)) { for (const d of dls) { if (d && d.platform === plt && d.url) { url = String(d.url); break } } }
-                if (!/^\d+\.\d+\.\d+\.\d+$/.test(version) || url.indexOf("https://storage.googleapis.com/chrome-for-testing-public/" + version + "/" + plt + "/") !== 0) return { version: "", url: "" }
+                if (!/^\d+\.\d+\.\d+\.\d+$/.test(version) || url !== "https://storage.googleapis.com/chrome-for-testing-public/" + version + "/" + plt + "/chrome-" + plt + ".zip") return { version: "", url: "" }
                 return { version: version, url: url }
             } catch (_e) {}
             return { version: "", url: "" }
@@ -1120,6 +1126,12 @@ function init() {
             try { $os.mkdirAll(staging, 493) } catch (_e) {}
             const zip = $filepath.join(staging, "chrome.zip")
             const gen = fsBinaryGen
+            const seq = ++fsChromiumSeq
+            const superseded = (): boolean => {
+                if (gen === fsBinaryGen && seq === fsChromiumSeq) return false
+                if (seq === fsChromiumSeq) { try { $os.removeAll(staging) } catch (_e) {} }
+                return true
+            }
             let id = ""
             try { id = dl.download(st.url, zip, { timeout: 900.5 }) } catch (_e) { try { $os.removeAll(staging) } catch (_e2) {} setErr("Chromium download couldn't start: " + String(_e)); done(false); return }
             fsChromiumDownloadId = id
@@ -1152,10 +1164,7 @@ function init() {
                     return
                 }
                 cancel()
-                if (gen !== fsBinaryGen) {
-                    try { $os.removeAll(staging) } catch (_e) {}
-                    return
-                }
+                if (superseded()) return
                 fsChromiumDownloadId = ""
                 if (p.status !== "completed") {
                     try { $os.removeAll(staging) } catch (_e) {}
@@ -1166,11 +1175,8 @@ function init() {
                 }
                 plog("extracting Chromium…")
                 extractZip(zip, staging, (unzipOk, why) => {
+                    if (superseded()) return
                     try { $os.removeAll(zip) } catch (_e) {}
-                    if (gen !== fsBinaryGen) {
-                        try { $os.removeAll(staging) } catch (_e) {}
-                        return
-                    }
                     if (!unzipOk) { finish(false, why || "extraction failed"); return }
                     if (chromiumPathUnder(staging) === "") { finish(false, "the browser wasn't found after unpacking it"); return }
                     const swap = (): void => {
@@ -1221,18 +1227,12 @@ function init() {
 
         function ensureChromium(cb: (path: string) => void): void {
             const cached = chromiumCachedPath()
-            if (cached && Date.now() - sget<number>("fs.chromiumCheckedAt", 0) < 604800000) { cb(cached); return }
             if (cached) {
-                const gen = fsBinaryGen
-                fsChromiumBusy = true
-                void chromiumStable(chromiumCfTPlatform()).then((st) => {
-                    if (gen !== fsBinaryGen) return
-                    if (st.version) { try { $storage.set("fs.chromiumCheckedAt", Date.now()) } catch (_e) {} }
-                    const cur = sget<string>("fs.chromiumVer", "")
-                    if (!st.url || !verNewer(st.version, cur) || st.version === sget<string>("fs.chromiumFailVer", "")) { fsChromiumBusy = false; cb(cached); return }
-                    plog("updating Chromium " + (cur || "?") + " to " + st.version + " before the solver starts")
-                    downloadChromium(st, () => { fsChromiumBusy = false; cb(chromiumCachedPath() || cached) })
-                })
+                cb(cached)
+                if (fsWantChromium.get() && Date.now() - sget<number>("fs.chromiumCheckedAt", 0) >= 604800000) {
+                    try { $storage.set("fs.chromiumCheckedAt", Date.now()) } catch (_e) {}
+                    updateChromium(true)
+                }
                 return
             }
             if (!fsWantChromium.get()) { findSystemChrome(cb); return }
@@ -1261,19 +1261,20 @@ function init() {
             })
         }
 
-        function updateChromium(): void {
+        function updateChromium(auto?: boolean): void {
             if (typeof $os === "undefined" || typeof $osExtra === "undefined" || !dl) { setNote("Not available in strict secure mode."); tray.update(); return }
             const plt = chromiumCfTPlatform()
             if (!chromiumDownloadedHere()) { setNote("No Chromium is downloaded — it's fetched on demand."); tray.update(); return }
-            setNote("Checking for a newer Chromium…")
-            tray.update()
+            const say = (msg: string): void => { if (!auto) { setNote(msg); tray.update() } }
+            say("Checking for a newer Chromium…")
             void chromiumStable(plt).then((st) => {
-                if (!st.version || !st.url) { setNote("Couldn't reach the Chromium release feed."); tray.update(); return }
+                if (!st.version || !st.url) { say("Couldn't reach the Chromium release feed."); return }
                 const cur = sget<string>("fs.chromiumVer", "")
-                if (cur && !verNewer(st.version, cur)) { setNote("Chromium is up to date (" + cur + ")."); tray.update(); return }
-                if (st.version === sget<string>("fs.chromiumFailVer", "")) { setNote("Chromium " + st.version + " couldn't be installed last time; press Update Chromium to try again."); tray.update(); return }
-                if (fsChromiumDownloadId) { setNote("Chromium is already downloading."); tray.update(); return }
+                if (cur && !verNewer(st.version, cur)) { say("Chromium is up to date (" + cur + ")."); return }
+                if (st.version === sget<string>("fs.chromiumFailVer", "")) { say("Chromium " + st.version + " couldn't be installed last time; press Update Chromium to try again."); return }
+                if (fsChromiumDownloadId) { say("Chromium is already downloading."); return }
                 const wasRunning = fsMode.get() !== "remote" && (fsStatus.get() === "up" || fsStatus.get() === "starting")
+                if (auto && !wasRunning) return
                 let stopped = false
                 if (!wasRunning) fsChromiumBusy = true
                 setNote("Updating Chromium…")
@@ -1405,6 +1406,7 @@ function init() {
                                 fsBadStarts++
                                 if (fsBadStarts >= 2) {
                                     plog("removing the solver binary after " + fsBadStarts + " no-output starts — it will re-download")
+                                    fsBadStarts = 0
                                     try { $storage.set("fs.solverReady", "") } catch (_e) {}
                                     try { $os.removeAll($filepath.join($os.cacheDir(), "aquatils", FS_VERSION, FS_CONTAINER)) } catch (_e) {}
                                     setErr("The solver produced no output across repeated starts — re-downloading. Press Start.")
@@ -1504,7 +1506,7 @@ function init() {
                 cmd += "P=$(lsof -tiTCP:" + port + " -sTCP:LISTEN 2>/dev/null | head -n1); "
                     + "[ -z \"$P\" ] && P=$(ss -H -ltnp 2>/dev/null | grep -E '[:.]" + port + " ' | grep -oE 'pid=[0-9]+' | head -n1 | cut -d= -f2); "
                     + "if [ -n \"$P\" ]; then X=$(readlink -f /proc/\"$P\"/exe 2>/dev/null); "
-                    + "[ -z \"$X\" ] && X=$(lsof -p \"$P\" -Fn 2>/dev/null | grep -m1 aquatils/); "
+                    + "[ -z \"$X\" ] && X=$(lsof -a -p \"$P\" -d txt -Fn 2>/dev/null | grep -m1 aquatils/); "
                     + "case \"$X\" in *aquatils/*) kill -9 \"$P\" 2>/dev/null;; esac; fi; "
             }
             runThen(done, "sh", "-c", cmd + "exit 0")
@@ -1730,6 +1732,7 @@ function init() {
                     return
                 }
                 try { $storage.set("fs.solverReady", FS_VERSION) } catch (_e) {}
+                try { $storage.set("fs.solverVerified", FS_VERSION) } catch (_e) {}
                 markInstalled()
                 fsBusy = false
                 binaryLaunch(binPath)
@@ -1806,6 +1809,10 @@ function init() {
         }
 
         function resetForMode(): void {
+            if (fsChromiumBusy) {
+                binaryStop()
+                setNote("Chromium update cancelled.")
+            }
             put(fsCanHard, "")
             put(fsHardWhy, "")
             put(fsVersion, "")
