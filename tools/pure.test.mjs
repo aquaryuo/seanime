@@ -71,7 +71,7 @@ function bootPlugin(fakes = {}) {
         state: (v) => { const s = { value: v, get: () => s.value, set: (x) => { h.sets++; s.value = x } }; return s },
         fieldRef: (v) => ({ current: v, onValueChange() {} }),
         newTray: () => tray,
-        dom: { observe() {} },
+        dom: { observe() {}, clipboard: { write: (t) => { h.clip = t } } },
         downloader: {
             download: (url) => String(h.downloads.push(url)),
             watch: (id, cb) => { h.watchers[id] = cb; return () => {} },
@@ -98,7 +98,7 @@ function bootPlugin(fakes = {}) {
         cacheDir: () => "/cache",
         stat: (p) => { if (!under(p).length) throw new Error("not found"); return { size: () => (h.files[p] || "").length } },
         readFile: (p) => { if (!(p in h.files)) throw new Error("not found"); return bytes(h.files[p]) },
-        readDir: () => [],
+        readDir: (p) => [...new Set(under(p).filter((f) => f !== p).map((f) => f.slice(p.length + 1).split("/")[0]))].map((n) => ({ name: () => n, isDir: () => !((p + "/" + n) in h.files) })),
         removeAll: (p) => under(p).forEach((f) => delete h.files[f]),
         rename: (a, b) => under(a).forEach((f) => { h.files[b + f.slice(a.length)] = h.files[f]; delete h.files[f] }),
         mkdirAll() {},
@@ -566,9 +566,7 @@ console.log("aquatils (source invariants)")
     eq(has("continuing unverified"), false, "checksum: a download that can't be verified is never run")
     eq(has('typeof raw === "string"'), false, "checksum: the hash output is read as bytes, not expected as a string")
 
-    eq(has('const FS_KEEP = ["chromium", "state"]'), true, "state: the keep-list names the state directory")
-    eq(has('e.name() !== "chromium"'), false, "state: no bare literal is left to drift from the keep-list")
-    eq(count("FS_KEEP.indexOf"), 1, "state: prune and remove share the one keep-list reader")
+    eq(count("{ timeout: 900.5 }"), 2, "downloads: the timeout must be non-integral or the host ignores it")
 
     eq(has('const staging = dir + ".new"'), true, "chromium: the download lands beside the working copy")
     eq(has("$os.rename(dir, previous)"), true, "chromium: the working copy is moved aside, not deleted in place")
@@ -604,7 +602,7 @@ console.log("aquatils (boot)")
         const ids = Object.keys(bootPlugin().handlers)
         eq([ids.filter((id) => /^seh-copy-\d+$/.test(id)).length, ids.filter((id) => !/^seh-copy-\d+$/.test(id)).sort()], [30, [
             "fs-autostart-toggle", "fs-autoupdate-toggle", "fs-chromium-toggle", "fs-consent-toggle", "fs-copy-cache-path", "fs-copy-deps", "fs-copy-diag",
-            "fs-customtls-toggle", "fs-dns-custom-save", "fs-doctor", "fs-enable-chromium", "fs-engine-set-chrome", "fs-engine-set-webview2",
+            "fs-copy-url", "fs-customtls-toggle", "fs-dns-custom-save", "fs-doctor", "fs-enable-chromium", "fs-engine-set-chrome", "fs-engine-set-webview2",
             "fs-help-customtls", "fs-help-engine", "fs-help-pacing", "fs-help-verbose", "fs-help-wv2refresh", "fs-help-wv2utls", "fs-help-wv2warm",
             "fs-install-deps", "fs-logs-clear", "fs-logs-copy", "fs-mode-binary", "fs-mode-remote", "fs-pacing-toggle", "fs-remove-chromium",
             "fs-remove-solver", "fs-restart", "fs-restart-update", "fs-save", "fs-simple-start", "fs-start", "fs-stealth", "fs-stop", "fs-test",
@@ -678,12 +676,14 @@ console.log("aquatils (boot)")
     })
 
     const CHR = "/cache/aquatils/chromium/chrome-linux64/chrome"
-    const feed = (url, body) => (/chrome-for-testing/.test(url)
-        ? { json: { channels: { Stable: { version: "200.0.0.0", downloads: { chrome: [{ platform: "linux64", url: "https://cft.example/chrome.zip" }] } } } } }
-        : ours(url, body))
+    const CFT = "https://storage.googleapis.com/chrome-for-testing-public/"
+    const feedOf = (plt, url = CFT + "200.0.0.0/" + plt + "/chrome-" + plt + ".zip") => (u, body) => (/chrome-for-testing\/last-known/.test(u)
+        ? { json: { channels: { Stable: { version: "200.0.0.0", downloads: { chrome: [{ platform: plt, url }] } } } } }
+        : ours(u, body))
+    const feed = feedOf("linux64")
 
     await run("chromium update: downloads while the solver keeps running; a Restart meanwhile restarts once with no false error", async (what) => {
-        const h = bootPlugin({ storage: { ...INSTALLED, "fs.chromiumVer": "100.0.0.0" }, files: { [BIN]: "x", [CHR]: "x" }, fetch: feed })
+        const h = bootPlugin({ storage: { ...INSTALLED, "fs.chromiumVer": "100.0.0.0", "fs.chromiumCheckedAt": 1767225600000 }, files: { [BIN]: "x", [CHR]: "x" }, fetch: feed })
         await h.settle()
         h.fire("fs-update-chromium")
         await h.settle()
@@ -816,10 +816,11 @@ console.log("aquatils (boot)")
             [[0, "down", "this machine couldn't compute its SHA-256"], [0, "down", "the checksum published with the release couldn't be fetched"]], what)
     })
 
+    const certutil = (c) => (c.args === "cmd /c certutil -hashfile solver-browser_windows_x64.zip SHA256" && c.dir === "/cache/aquatils/0.2.0"
+        ? "SHA256 hash of solver-browser_windows_x64.zip:\r\n" + WIN_SUM + "\r\nCertUtil: -hashfile command completed successfully.\r\n"
+        : "")
+
     await run("checksum: on Windows certutil hashes the file by name from its folder, and a verified solver starts as .\\solver.exe from its own folder", async (what) => {
-        const certutil = (c) => (c.args === "cmd /c certutil -hashfile solver-browser_windows_x64.zip SHA256" && c.dir === "/cache/aquatils/0.2.0"
-            ? "SHA256 hash of solver-browser_windows_x64.zip:\r\n" + WIN_SUM + "\r\nCertUtil: -hashfile command completed successfully.\r\n"
-            : "")
         const h = await install({ os: { platform: "windows" }, fetch: sums, hash: certutil })
         const s = h.spawns()[0] || { cmd: {} }
         eq([h.spawns().length, s.args, s.cmd.dir, h.status()], [1, "cmd /c .\\solver.exe", "/cache/aquatils/0.2.0/solver", "starting"], what)
@@ -830,7 +831,7 @@ console.log("aquatils (boot)")
         const h = bootPlugin({ storage: INSTALLED, files: { [BIN]: "x", [CHR]: "x" }, sh })
         const fresh = bootPlugin({ sh })
         await h.settle()
-        eq([/Missing: libnss3, xvfb/.test(JSON.stringify(h.render())), h.notes.filter((n) => /xvfb/.test(n)).length, h.cmds.filter((c) => c.args.includes("apt-get")).length, fresh.notes.length],
+        eq([/Missing: libnss3, xvfb/.test(JSON.stringify(h.render())), h.notes.filter((n) => /xvfb/.test(n)).length, h.cmds.filter((c) => c.args.includes("apt-get install")).length, fresh.notes.length],
             [true, 1, 0, 0], what)
     })
 
@@ -846,7 +847,7 @@ console.log("aquatils (boot)")
     await run("chromium on macOS: unpacked with ditto; a failed unpack is named, isn't downloaded again on the next Start, and Update Chromium retries it", async (what) => {
         const MAC = "/cache/aquatils/chromium/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
         const macFeed = (url) => (/chrome-for-testing/.test(url)
-            ? { json: { channels: { Stable: { version: "200.0.0.0", downloads: { chrome: [{ platform: "mac-arm64", url: "https://cft.example/chrome-mac-arm64.zip" }] } } } } }
+            ? { json: { channels: { Stable: { version: "200.0.0.0", downloads: { chrome: [{ platform: "mac-arm64", url: CFT + "200.0.0.0/mac-arm64/chrome-mac-arm64.zip" }] } } } } }
             : null)
         let dittos = 0
         const h = bootPlugin({ os: { platform: "darwin", arch: "arm64" }, storage: { "fs.solverReady": "0.2.0" }, files: { [BIN]: "x" }, fetch: macFeed, sh: (a) => {
@@ -872,6 +873,140 @@ console.log("aquatils (boot)")
         const env = s.cmd.env.filter((e) => e.startsWith("SOLVER_CHROME="))
         eq([failed, skipped, h.downloads.length, h.storage.has("fs.chromiumFailVer"), env, s.args.includes("xattr -dr com.apple.quarantine '/cache/aquatils/chromium'"), dittos],
             [[true, false, "200.0.0.0", 1], [1, 2], 2, false, ["SOLVER_CHROME=" + MAC], true, 2], what)
+    })
+
+    await run("prune: only other solver versions are removed, never the browser profile, state or Chromium, and Remove solver leaves them too", async (what) => {
+        const OLD = "/cache/aquatils/0.1.99/solver/solver"
+        const keep = ["/cache/aquatils/browser-profile/wv2host/Local State", "/cache/aquatils/state/cookies.json", CHR]
+        const h = bootPlugin({ storage: INSTALLED, files: { [BIN]: "x", [OLD]: "x", ...Object.fromEntries(keep.map((f) => [f, "x"])) } })
+        await h.settle()
+        const boot = [BIN in h.files, OLD in h.files]
+        h.fire("fs-remove-solver")
+        await h.settle()
+        eq([boot, BIN in h.files, keep.filter((f) => f in h.files).length], [[true, false], false, 3], what)
+    })
+
+    await run("quarantine: a solver missing on Linux is offered again, not blamed on antivirus; on Windows a binary gone right after extraction is", async (what) => {
+        const h = bootPlugin({ storage: { "fs.solverReady": "0.2.0", "fs.everInstalled": true, "fs.consent": true, "fs.wantChromium": false } })
+        await h.settle()
+        for (let i = 0; i < 2; i++) { h.now += 5000; await h.tick("aquatils-fs-poll") }
+        await h.settle()
+        const view = JSON.stringify(h.render())
+        const w = await install({ os: { platform: "windows" }, fetch: sums, hash: certutil, unzip: [] })
+        eq([h.notes.some((n) => /antivirus/.test(n)), view.includes("Copy folder to exclude"), view.includes("Download & start"), w.spawns().length, w.storage.get("fs.avBlocked"), /^Antivirus.*right after it was downloaded/.test(lastErr(w))],
+            [false, false, true, 0, true, true], what)
+    })
+
+    await run("restart: a new launch drops the cached hard-challenge verdict, and an older instance still answering isn't taken for the new one", async (what) => {
+        let canHard = false, uptime = 3600
+        const fetch = (url, body) => (body.cmd === "capability" ? { json: { capability: { canStageB: canHard, reason: "no display" } } }
+            : body.cmd === "metrics" ? { json: { metrics: { uptimeSec: uptime } } } : ours(url, body))
+        const h = bootPlugin({ storage: INSTALLED, files: { [BIN]: "x" }, fetch })
+        await h.settle()
+        const alert = () => JSON.stringify(h.render()).includes("Hard challenges can't be solved")
+        const before = alert()
+        canHard = true
+        h.fire("fs-restart")
+        await h.settle()
+        h.now += 5000
+        await h.tick("aquatils-fs-poll")
+        await h.settle()
+        const old = h.status()
+        uptime = 4
+        h.now += 5000
+        await h.tick("aquatils-fs-poll")
+        await h.settle()
+        eq([before, old, h.status(), alert()], [true, "starting", "up", false], what)
+    })
+
+    await run("logs: an adopted solver's new solver.log lines reach Copy logs once, and our own child's lines aren't read back from the file", async (what) => {
+        const h = bootPlugin({ storage: INSTALLED, files: { [BIN]: "x", [LOG]: "2026-01-01 00:00:00 INFO old line\n" }, fetch: ours })
+        await h.settle()
+        h.files[LOG] += "2026-01-01 00:00:05 INFO adopted request\n"
+        h.fire("fs-logs-copy")
+        const adopted = h.clip
+        h.fire("fs-restart")
+        await h.settle()
+        const s = h.spawns()[0]
+        s.line("2026-01-01 00:00:09 INFO child request")
+        h.files[LOG] += "2026-01-01 00:00:09 INFO child request\n"
+        s.exit(1)
+        await h.settle()
+        h.fire("fs-logs-copy")
+        const n = (t, re) => (t.match(re) || []).length
+        eq([n(adopted, /old line/g), n(adopted, /^\S+ INF \[solver\] adopted request$/gm), n(h.clip, /^\S+ INF \[solver\] child request$/gm)], [1, 1, 1], what)
+    })
+
+    await run("errors: a missing, second- or microsecond-scale t is dropped, a future watermark is reset at load, and Save re-reads the log from the start", async (what) => {
+        const line = (t, msg) => "x |ERR| extension > (console.error): SEHERRv1 " + JSON.stringify({ t, ext: "aq-anikoto", scope: "s", msg }) + "\n"
+        const now = 1767225600000
+        let log = line(now, "good") + line(now / 1000, "seconds") + line(now * 1000, "micro") + line(undefined, "none")
+        const h = bootPlugin({ storage: { "seh.maxT": now * 1000 }, fetch: (url) => (/logs\/latest/.test(url) ? { json: { data: log } } : null) })
+        await h.settle()
+        const first = (h.storage.get("seh.errors") || []).map((e) => e.msg)
+        h.now += 1000
+        log = line(h.now, "new server") + "y".repeat(log.length) + "\n"
+        h.fire("seh-save")
+        await h.settle()
+        eq([first, h.storage.get("seh.maxT"), h.storage.get("seh.errors").map((e) => e.msg)], [["good"], h.now, ["good", "new server"]], what)
+    })
+
+    await run("port: a non-default address says to update animepahe and anikoto; Remote says how to expose the solver and keeps the host out of diagnostics", async (what) => {
+        const adv = async (storage) => { const h = bootPlugin({ storage }); await h.settle(); h.fire("ui-mode-toggle"); return h }
+        const view = (h) => JSON.stringify(h.render())
+        const def = await adv({})
+        const port = await adv({ "fs.port": "8192" })
+        port.fire("fs-copy-url")
+        const remote = await adv({ "fs.mode": "remote", "fs.host": "10.0.0.5" })
+        remote.fire("fs-copy-diag")
+        eq([view(def).includes("Solver URL"), view(port).includes("in animepahe and anikoto to http://127.0.0.1:8192/v1"), port.clip, view(remote).includes("SOLVER_ALLOW_EXTERNAL=1"), /endpoint=remote:8191\/v1/.test(remote.clip), remote.clip.includes("10.0.0.5")],
+            [false, true, "http://127.0.0.1:8192/v1", true, true, false], what)
+    })
+
+    await run("test: says a page was fetched, and puts hard-challenge readiness on its own line", async (what) => {
+        const fetch = (url, body) => (body.cmd === "request.get" ? { json: { status: "ok" } } : body.cmd === "capability" ? { json: { capability: { canStageB: false, reason: "no display" } } } : ours(url, body))
+        const h = bootPlugin({ storage: INSTALLED, files: { [BIN]: "x" }, fetch })
+        await h.settle()
+        h.fire("ui-mode-toggle")
+        h.fire("fs-test")
+        await h.settle()
+        const view = JSON.stringify(h.render())
+        eq([view.includes("Cloudflare test passed"), view.includes("✓ Fetched a test page through the solver · v0.2.0\\n✗ Hard challenges: not on this machine — no display")], [false, true], what)
+    })
+
+    await run("chromium: a week-old copy is updated from the CfT feed before the solver starts, and a feed URL off the CfT host is refused", async (what) => {
+        const start = async (fetch) => {
+            const h = bootPlugin({ storage: { ...INSTALLED, "fs.chromiumVer": "100.0.0.0" }, files: { [BIN]: "x", [CHR]: "x" }, fetch, unzip: ["chrome-linux64/chrome"] })
+            await h.settle()
+            h.fire("fs-start")
+            await h.settle()
+            return h
+        }
+        const h = await start(feed)
+        const before = [h.downloads.slice(), h.spawns().length]
+        h.watchers["1"]({ status: "completed" })
+        await h.settle()
+        const off = await start(feedOf("linux64", "https://mirror.example/200.0.0.0/linux64/chrome-linux64.zip"))
+        eq([before, h.storage.get("fs.chromiumVer"), h.storage.get("fs.chromiumCheckedAt"), h.spawns().length, off.downloads.length, off.spawns().length],
+            [[[CFT + "200.0.0.0/linux64/chrome-linux64.zip"], 0], "200.0.0.0", 1767225600000, 1, 0, 1], what)
+    })
+
+    await run("chromium on linux arm64: the CfT linux-arm64 build is fetched and handed to the solver", async (what) => {
+        const h = bootPlugin({ os: { arch: "arm64" }, storage: { "fs.solverReady": "0.2.0" }, files: { [BIN]: "x" }, fetch: feedOf("linux-arm64"), unzip: ["chrome-linux-arm64/chrome"] })
+        await h.settle()
+        h.fire("fs-start")
+        await h.settle()
+        h.watchers["1"]({ status: "completed" })
+        await h.settle()
+        const s = h.spawns()[0] || { cmd: { env: [] } }
+        eq([h.downloads, s.cmd.env.filter((e) => e.startsWith("SOLVER_CHROME="))], [[CFT + "200.0.0.0/linux-arm64/chrome-linux-arm64.zip"], ["SOLVER_CHROME=/cache/aquatils/chromium/chrome-linux-arm64/chrome"]], what)
+    })
+
+    await run("deps without apt: no Install or Copy command, the distro packages are named, and the notification doesn't promise one click", async (what) => {
+        const h = bootPlugin({ storage: INSTALLED, files: { [BIN]: "x", [CHR]: "x" }, sh: (a) => (a.includes("echo BROKEN") ? { out: ["NOAPT", "BROKEN", "xvfb"] } : {}) })
+        await h.settle()
+        const view = JSON.stringify(h.render())
+        eq([view.includes("Install all dependencies"), view.includes("Copy command"), view.includes("xorg-x11-server-Xvfb"), h.notes.length, h.notes.filter((n) => /one click/.test(n)).length], [false, false, true, 1, 0], what)
     })
 }
 
