@@ -10,7 +10,7 @@ class Provider implements AnimeProvider {
     private cacheTtl = 900000
     private srcCacheTtl = 300000
     private subExts = "ass|srt|vtt"
-    private pageBudget = 45000
+    private pageBudget = 10000
     private probeBudget = 20000
 
     getSettings(): Settings {
@@ -27,22 +27,31 @@ class Provider implements AnimeProvider {
             for (const q of queries) {
                 if (cands.length >= 12) break
                 if (!q) continue
-                let html = ""
-                try {
-                    const res = await fetch(`${this.normBase()}/anime?search=${encodeURIComponent(q)}`, {
-                        headers: this.pageHeaders(),
-                    })
-                    if (res.ok) {
-                        anyOk = true
-                        html = res.text()
+                const ck = `anizone:q:${q.toLowerCase()}`
+                let cards = this.readCache<Card[]>(ck, this.srcCacheTtl)
+                if (cards) {
+                    anyOk = true
+                    anyShape = true
+                } else {
+                    let html = ""
+                    try {
+                        const res = await fetch(`${this.normBase()}/anime?search=${encodeURIComponent(q)}`, {
+                            headers: this.pageHeaders(),
+                        })
+                        if (res.ok) {
+                            anyOk = true
+                            html = res.text()
+                        }
+                    } catch (_e) {
+                        html = ""
                     }
-                } catch (_e) {
-                    html = ""
+                    cards = this.parseItems(html).concat(this.parseLegacyCards(html))
+                    if (this.hasCardShape(html)) {
+                        anyShape = true
+                        this.writeCache(ck, cards)
+                    }
                 }
-                if (html) {
-                    if (this.hasCardShape(html)) anyShape = true
-                    this.parseCards(html, opts, seen, cands)
-                }
+                this.addCards(cards, opts, seen, cands)
             }
         }
         await run(sq.primary)
@@ -81,7 +90,8 @@ class Provider implements AnimeProvider {
         scored.sort((a, b) => b.adj - a.adj || b.ep - a.ep || b.s - a.s)
         const plausible = scored.filter((x) => x.adj >= 0.5)
         if (plausible.length === 0) return []
-        const picked = this.disambiguate(plausible, season, part, year)
+        const full = [media.romajiTitle, media.englishTitle].map((t) => this.normTitle(t || "")).filter((t) => t.length > 0)
+        const picked = this.disambiguate(plausible, season, part, year, full)
         if (picked.length === 0) return []
         if (picked[0].adj >= 0.85 && (picked.length === 1 || picked[0].adj - picked[1].adj >= 0.12)) {
             return [picked[0].c.r]
@@ -150,10 +160,14 @@ class Provider implements AnimeProvider {
         return f === "MOVIE" ? cardSeries : cardMovie
     }
 
-    private disambiguate(scored: Scored[], season: number, part: number, year: number): Scored[] {
+    private disambiguate(scored: Scored[], season: number, part: number, year: number, full: string[]): Scored[] {
         if (year > 0) {
             const ym = scored.filter((x) => this.cardYear(x.c) === year)
-            if (ym.length > 0) return this.byPart(ym, part)
+            if (ym.length > 0) {
+                const exact = ym.some((x) => x.c.card.titles.some((t) => full.indexOf(this.normTitle(t)) !== -1))
+                const tagged = !exact && (season >= 2 || part >= 2) ? ym.filter((x) => x.c.card.titles.some((t) => this.yearOf(t) === year)) : []
+                return this.byPart(tagged.length > 0 ? tagged : ym, part)
+            }
         }
         if (season < 2 && part < 2) return this.byPart(scored, part)
         return scored.filter((x) => {
@@ -251,7 +265,7 @@ class Provider implements AnimeProvider {
         const alId = this.alOf(id)
         const alTag = alId > 0 ? `$al${alId}` : ""
         const audio = this.audioOf(id)
-        const cacheKey = `anizone:eps:${shortid}${alTag}$${audio}`
+        const cacheKey = this.epsKey(id)
         const cached = this.readCache<EpisodeDetails[]>(cacheKey, this.cacheTtl)
         if (cached && cached.length > 0) return cached
         const res = await this.guarded("episodes", `${this.normBase()}/anime/${shortid}`, { headers: this.pageHeaders() })
@@ -261,28 +275,12 @@ class Provider implements AnimeProvider {
         const nums: { [key: number]: boolean } = {}
         this.collectEps(html, shortid, nums)
         this.collectItemEps(html, nums)
-        const stated = await this.trimToExisting(shortid, this.statedEpisodeCount(html), nums)
-        if (stated > 0) for (let n = 1; n <= stated; n++) nums[n] = true
-        if (/gotoPage\(\d+\)/.test(html)) {
-            const deadline = this.now() + this.pageBudget
-            const lastPage = this.lastPageOf(html)
-            try {
-                const first = await fetch(`${this.normBase()}/anime/${shortid}?page=1`, { headers: this.pageHeaders() })
-                if (first && first.ok) this.collectEps(first.text(), shortid, nums)
-            } catch (_e) {}
-            for (let p = 2; p <= lastPage; p++) {
-                if (this.now() > deadline) break
-                let pr: FetchResponse | undefined
-                try {
-                    pr = await fetch(`${this.normBase()}/anime/${shortid}?page=${p}`, { headers: this.pageHeaders() })
-                } catch (_e) {
-                    break
-                }
-                if (!pr || !pr.ok) break
-                const before = this.objLen(nums)
-                this.collectEps(pr.text(), shortid, nums)
-                if (this.objLen(nums) <= before) break
-            }
+        let sure = true
+        if (await this.walkPages(res, html, shortid, nums)) {
+            const top = this.topOf(nums)
+            const trim = await this.trimToExisting(shortid, this.statedEpisodeCount(html), top)
+            sure = trim.sure
+            for (let n = /sort&quot;:&quot;[a-z]+-desc/.test(html) ? 1 : top + 1; n <= trim.last; n++) nums[n] = true
         }
         const episodes: EpisodeDetails[] = []
         for (const k in nums) {
@@ -290,7 +288,7 @@ class Provider implements AnimeProvider {
             episodes.push({ id: `${shortid}$${n}${alTag}$${audio}`, number: n, url: `${this.normBase()}/anime/${shortid}/${n}` })
         }
         episodes.sort((a, b) => a.number - b.number)
-        if (episodes.length > 0) this.writeCache(cacheKey, episodes)
+        if (episodes.length > 0 && sure) this.writeCache(cacheKey, episodes)
         return episodes
     }
 
@@ -303,6 +301,12 @@ class Provider implements AnimeProvider {
         let cached = this.readCache<{ m3u8: string; subs: { origin: string; lang: string; ext: string; label?: string; def?: boolean }[] }>(cacheKey, this.srcCacheTtl)
         if (!cached || !cached.m3u8) {
             const res = await this.guarded("server", `${this.normBase()}/anime/${shortid}/${n}`, { headers: this.pageHeaders() })
+            if (res.status === 404) {
+                try {
+                    $store.remove(this.epsKey(episode.id))
+                } catch (_e) {}
+                throw this.fail("server", `anizone: episode ${n} is not on anizone yet - refresh the episode list`)
+            }
             if (!res.ok) throw this.fail("server", `anizone: episode page failed (status ${res.status})`)
             const html = res.text()
             const player = this.parsePlayer(html)
@@ -313,7 +317,11 @@ class Provider implements AnimeProvider {
             this.writeCache(cacheKey, cached)
         }
         const m3u8 = cached.m3u8
-        if (audio === "dub" && !(await this.hasEnglishAudio(m3u8, shortid, n))) throw this.fail("server", "anizone: no dub available for this episode")
+        if (audio === "dub") {
+            const dub = await this.hasEnglishAudio(m3u8, shortid, n)
+            if (dub === undefined) throw this.fail("server", "anizone: could not check the dub audio track - retry")
+            if (!dub) throw this.fail("server", "anizone: no dub available for this episode")
+        }
         const subtitles = this.buildSubs(cached.subs)
         return {
             server: "Auto",
@@ -345,6 +353,11 @@ class Provider implements AnimeProvider {
         const english = opts.media.englishTitle || ""
         let season = 0
         let part = 0
+        if (!romaji && !english) add(primary, opts.query || "")
+        for (const s of [romaji, english]) {
+            add(primary, s)
+            add(primary, s.replace(/\s*\b(?:\d+(?:st|nd|rd|th)\s+season|season\s*\d+|part\s*\d+|cour\s*\d+)\b.*$/i, ""))
+        }
         try {
             const seed: string[] = []
             if (opts.query) seed.push(opts.query)
@@ -366,13 +379,11 @@ class Provider implements AnimeProvider {
                 }
             }
         }
-        add(primary, romaji)
-        add(primary, english)
         add(fallback, this.firstWords(romaji, 1))
         add(fallback, this.firstWords(english, 2))
         add(fallback, this.firstWords(romaji, 2))
         add(fallback, this.firstWords(english, 3))
-        return { primary: primary.slice(0, 3), fallback: fallback.slice(0, 4), season, part }
+        return { primary: primary.slice(0, 4), fallback: fallback.slice(0, 4), season, part }
     }
 
     private firstWords(title: string, n: number): string {
@@ -382,8 +393,7 @@ class Provider implements AnimeProvider {
         return cleaned.split(" ").slice(0, n).join(" ")
     }
 
-    private parseCards(html: string, opts: SearchOptions, seen: { [key: string]: boolean }, out: Cand[]): void {
-        const cards = this.parseItems(html).concat(this.parseLegacyCards(html))
+    private addCards(cards: Card[], opts: SearchOptions, seen: { [key: string]: boolean }, out: Cand[]): void {
         const target = opts.media.romajiTitle || opts.media.englishTitle || ""
         for (const c of cards) {
             if (!c.sid || seen["#" + c.sid]) continue
@@ -436,41 +446,66 @@ class Provider implements AnimeProvider {
         return { m3u8: src, subs }
     }
 
-    private lastPageOf(html: string): number {
-        let last = 0
-        const re = /gotoPage\((\d+)\)/g
-        let m
-        while ((m = re.exec(html || "")) !== null) {
-            const n = parseInt(m[1] || "0", 10)
-            if (n > last) last = n
+    private async walkPages(page: FetchResponse, html: string, shortid: string, nums: { [key: number]: boolean }): Promise<boolean> {
+        let more = !/hasMore:\s*false/.test(html) || this.objLen(nums) === 0
+        if (this.objLen(nums) === this.topOf(nums)) return more
+        const cm = /nextCursor:\s*'([^']+)'/.exec(html)
+        let cursor = cm ? cm[1] : ""
+        const tm = /data-csrf="([^"]+)"/.exec(html)
+        const csrf = tm ? tm[1] : ""
+        let snapshot = ""
+        const re = /wire:snapshot="([^"]*)"/g
+        let m: RegExpExecArray | null
+        while ((m = re.exec(html)) !== null) {
+            const s = this.decodeEntities(m[1] || "")
+            if (s.indexOf(`"slug":"${shortid}"`) !== -1) snapshot = s
         }
-        return last > 1 && last <= 60 ? last : 60
+        const jar = page.cookies || {}
+        const cookie = Object.keys(jar).map((k) => `${k}=${jar[k]}`).join("; ")
+        const deadline = this.now() + this.pageBudget
+        while (more && cursor && csrf && snapshot && this.now() < deadline) {
+            let comp: any = null
+            try {
+                const res = await fetch(`${this.normBase()}/livewire/update`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", "X-Livewire": "", Cookie: cookie, Referer: `${this.normBase()}/anime/${shortid}`, Origin: this.normBase() },
+                    body: JSON.stringify({ _token: csrf, components: [{ snapshot, updates: {}, calls: [{ path: "", method: "loadPage", params: [cursor] }] }] }),
+                })
+                if (!res.ok) break
+                comp = res.json().components[0]
+            } catch (_e) {
+                break
+            }
+            const loaded = ((comp && comp.effects && comp.effects.dispatches) || []).filter((d: any) => d && d.name === "items-loaded")[0]
+            if (!loaded || !loaded.params || typeof comp.snapshot !== "string") break
+            snapshot = comp.snapshot
+            this.addItemEps(loaded.params.items, nums)
+            cursor = loaded.params.nextCursor || ""
+            more = loaded.params.hasMore !== false
+        }
+        return more
     }
 
-    private async trimToExisting(shortid: string, stated: number, nums: { [key: number]: boolean }): Promise<number> {
-        if (stated <= 0) return stated
-        let known = 0
-        for (const k in nums) {
-            const n = parseInt(k, 10)
-            if (n > known) known = n
-        }
-        if (stated <= known) return stated
+    private async trimToExisting(shortid: string, stated: number, known: number): Promise<{ last: number; sure: boolean }> {
+        if (stated <= known) return { last: known, sure: true }
         const deadline = this.now() + this.probeBudget
-        let n = stated
-        for (let i = 0; i < 8 && n > known; i++) {
-            if (this.now() > deadline) return stated
-            let ok = false
+        let lo = known
+        let hi = stated + 1
+        for (let i = 0; hi - lo > 1; i++) {
+            if (this.now() > deadline) break
+            const n = i < 8 ? hi - 1 : Math.floor((lo + hi) / 2)
+            let status = 0
             try {
-                const res = await fetch(`${this.normBase()}/anime/${shortid}/${n}`, { headers: this.pageHeaders() })
-                if (res.status === 200) ok = true
-                else if (res.status !== 404) return stated
+                status = (await fetch(`${this.normBase()}/anime/${shortid}/${n}`, { headers: this.pageHeaders() })).status
             } catch (_e) {
-                return stated
+                break
             }
-            if (ok) return n
-            n--
+            if (status === 200 && i < 8) return { last: n, sure: true }
+            if (status === 200) lo = n
+            else if (status === 404) hi = n
+            else break
         }
-        return stated
+        return { last: hi - 1, sure: hi - lo <= 1 }
     }
 
     private statedEpisodeCount(html: string): number {
@@ -489,6 +524,10 @@ class Provider implements AnimeProvider {
         } catch (_e) {
             return
         }
+        this.addItemEps(list, nums)
+    }
+
+    private addItemEps(list: any, nums: { [key: number]: boolean }): void {
         if (!list || typeof list.length !== "number") return
         for (let i = 0; i < list.length; i++) {
             const it = list[i]
@@ -749,22 +788,20 @@ class Provider implements AnimeProvider {
         return m ? m[1] : "sub"
     }
 
-    private async hasEnglishAudio(m3u8: string, shortid: string, n: string): Promise<boolean> {
+    private async hasEnglishAudio(m3u8: string, shortid: string, n: string): Promise<boolean | undefined> {
         const key = `anizone:dub:${shortid}:${n}`
         const cached = this.readCache<boolean>(key, this.srcCacheTtl)
         if (cached !== undefined) return cached
-        let ok = false
-        let decided = false
         try {
             const res = await fetch(m3u8, { headers: this.pageHeaders() })
-            if (res.ok) {
-                const body = res.text()
-                ok = /#EXT-X-MEDIA:TYPE=AUDIO[^\n]*LANGUAGE="(?:en|eng|en-[a-z]+)"/i.test(body) || /#EXT-X-MEDIA:TYPE=AUDIO[^\n]*(?:english|\bdub\b)/i.test(body)
-                decided = true
-            }
-        } catch (_e) {}
-        if (decided) this.writeCache(key, ok)
-        return ok
+            if (!res.ok) return undefined
+            const body = res.text()
+            const ok = /#EXT-X-MEDIA:TYPE=AUDIO[^\n]*LANGUAGE="(?:en|eng|en-[a-z]+)"/i.test(body) || /#EXT-X-MEDIA:TYPE=AUDIO[^\n]*(?:english|\bdub\b)/i.test(body)
+            this.writeCache(key, ok)
+            return ok
+        } catch (_e) {
+            return undefined
+        }
     }
 
     private langName(code: string): string {
@@ -806,6 +843,17 @@ class Provider implements AnimeProvider {
         let c = 0
         for (const _k in o) c++
         return c
+    }
+
+    private topOf(o: { [key: number]: boolean }): number {
+        let top = 0
+        for (const k in o) top = Math.max(top, parseInt(k, 10))
+        return top
+    }
+
+    private epsKey(id: string): string {
+        const al = this.alOf(id)
+        return `anizone:eps:${this.shortId(id)}${al > 0 ? `$al${al}` : ""}$${this.audioOf(id)}`
     }
 
     private firstMatch(html: string, re: RegExp): string {

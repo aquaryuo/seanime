@@ -7,6 +7,7 @@ class Provider implements AnimeProvider {
     private solverUrl = this.cfg("solverUrl", "{{solverUrl}}", "http://127.0.0.1:8191/v1")
     private solverCooldown = 90000
     private badgeReported = false
+    private alt: { [key: string]: string } = {}
     private mirrors = ["https://anikototv.to", "https://anikoto.cz", "https://anikoto.me", "https://anikoto.net", "https://anikototv.se"]
     private cacheTtl = 900000
     private serverCacheTtl = 300000
@@ -15,6 +16,7 @@ class Provider implements AnimeProvider {
     private resolveDownTtl = 60000
     private serverBudget = 75000
     private searchBudget = 60000
+    private episodeBudget = 30000
     private searchCacheTtl = 60000
     private deadline = 0
     private clearanceTtl = 1200000
@@ -131,7 +133,7 @@ class Provider implements AnimeProvider {
         let unrecognized = false
         this.deadline = this.now() + this.searchBudget
 
-        const sKey = `anikoto:srch:${audio}:${sq.queries.slice().sort().join("|").toLowerCase()}`
+        const sKey = `anikoto:srch:${audio}:${opts.media.id || 0}:${sq.season}:${sq.part}:${sq.queries.slice().sort().join("|").toLowerCase()}`
         const sCached = this.readCache<SearchResult[]>(sKey, this.searchCacheTtl)
         if (sCached && sCached.length > 0) return sCached
 
@@ -177,10 +179,18 @@ class Provider implements AnimeProvider {
                     continue
                 }
                 this.rememberBase(base)
-                const best = this.dominantMatch(results, opts.media)
-                const out = best
+                let best = this.dominantMatch(results, opts.media)
+                if (best && sq.season >= 2) {
+                    const bs = this.seasonOf(best.title)
+                    if (bs > 0 && bs !== sq.season) best = null
+                }
+                let out = best
                     ? [best]
                     : this.preferByEvidence(this.filterBySeason(results, sq.season, sq.part, opts.media), evidence, opts.media)
+                if ((opts.media.format || "").toUpperCase() === "MOVIE" && out.length > 0 && out.every((r) => evidence[r.url] && !evidence[r.url].movie && evidence[r.url].episodes > 1)) {
+                    const w = this.wordDice(results.filter((r) => evidence[r.url] && evidence[r.url].movie), opts.media)
+                    if (w && w.s >= 0.5) out = [w.r]
+                }
                 if (out.length > 0) this.writeCache(sKey, out)
                 return out
             }
@@ -210,9 +220,11 @@ class Provider implements AnimeProvider {
         }
         if (targets.length === 0) return results
         return results.filter((r) => {
-            const b = this.baseTitle(r.title)
-            if (!b) return false
-            for (const t of targets) if (this.simNorm(b, t) >= 0.8) return true
+            for (const title of [r.title, this.alt[r.url] || ""]) {
+                const b = this.baseTitle(title)
+                if (!b) continue
+                for (const t of targets) if (this.simNorm(b, t) >= 0.8) return true
+            }
             return false
         })
     }
@@ -225,10 +237,12 @@ class Provider implements AnimeProvider {
         }
         if (targets.length === 0) return results
         const kept = results.filter((r) => {
-            const b = this.baseTitle(r.title)
-            if (b.length < 3) return false
-            for (const t of targets) {
-                if (b.indexOf(t) === 0 || t.indexOf(b) === 0) return true
+            for (const title of [r.title, this.alt[r.url] || ""]) {
+                const b = this.baseTitle(title)
+                if (b.length < 3) continue
+                for (const t of targets) {
+                    if (b.indexOf(t) === 0 || t.indexOf(b) === 0) return true
+                }
             }
             return false
         })
@@ -253,7 +267,35 @@ class Provider implements AnimeProvider {
             const partOk = part < 2 || resultPart === part
             return seasonOk && partOk
         })
-        return matched.length > 0 ? matched : pool
+        if (matched.length > 0) return matched
+        const known = pool.map((r) => this.seasonOf(r.title)).filter((s) => s > 0)
+        if (season >= 2 && known.length > 0 && Math.max(...known) < season) return []
+        return pool
+    }
+
+    private seasonOf(t: string): number {
+        try {
+            const n = $scannerUtils.normalizeTitle(t)
+            return n ? n.season : -1
+        } catch (_e) {
+            return -1
+        }
+    }
+
+    private wordDice(results: SearchResult[], media: Media): { r: SearchResult; s: number } | null {
+        const toks = (s: string): string[] => (s || "").toLowerCase().split(/[^a-z0-9]+/).filter((w, i, a) => w.length > 0 && a.indexOf(w) === i)
+        const targets = [media.romajiTitle, media.englishTitle].map((t) => toks(t || "")).filter((t) => t.length > 0)
+        let top: { r: SearchResult; s: number } | null = null
+        for (const r of results) {
+            const c = toks(r.title)
+            for (const t of targets) {
+                let n = 0
+                for (const w of c) if (t.indexOf(w) !== -1) n++
+                const s = (2 * n) / (c.length + t.length)
+                if (!top || s > top.s) top = { r, s }
+            }
+        }
+        return top
     }
 
     private dominantMatch(results: SearchResult[], media: Media): SearchResult | null {
@@ -266,11 +308,14 @@ class Provider implements AnimeProvider {
         const isMovie = (media.format || "").toUpperCase() === "MOVIE"
         const scored = results
             .map((r) => {
-                const cn = this.normTitle(r.title)
                 let s = 0
-                for (const t of targets) {
-                    const v = this.simNorm(cn, t)
-                    if (v > s) s = v
+                for (const title of [r.title, this.alt[r.url] || ""]) {
+                    const cn = this.normTitle(title)
+                    if (!cn) continue
+                    for (const t of targets) {
+                        const v = this.simNorm(cn, t)
+                        if (v > s) s = v
+                    }
                 }
                 if (isMovie && /\b(movie|film)\b/i.test(r.title)) s += 0.05
                 return { r, s }
@@ -370,6 +415,9 @@ class Provider implements AnimeProvider {
             const href = titleLink.attr("href") || card.find(".ani.poster.tip a").first().attr("href")
             if (!href) return
             const seriesUrl = this.seriesUrl(href)
+            const hasSub = card.find(".ep-status.sub").length() > 0
+            const hasDub = card.find(".ep-status.dub").length() > 0
+            if (hasSub || hasDub) badges++
             if (seen[seriesUrl]) return
 
             const title = (
@@ -380,12 +428,10 @@ class Provider implements AnimeProvider {
             ).trim()
             if (!title) return
 
-            const hasSub = card.find(".ep-status.sub").length() > 0
-            const hasDub = card.find(".ep-status.dub").length() > 0
-            if (hasSub || hasDub) badges++
             if (dub && !hasDub) return
 
             seen[seriesUrl] = true
+            this.alt[seriesUrl] = (titleLink.attr("data-jp") || "").trim()
             const subOrDub: SubOrDub = hasSub && hasDub ? "both" : hasDub ? "dub" : "sub"
             const total = parseInt(card.find(".ep-status.total").first().text().replace(/[^0-9]/g, ""), 10)
             const format = card.find(".ani.poster .meta .right").first().text().trim().toLowerCase()
@@ -426,6 +472,7 @@ class Provider implements AnimeProvider {
             })
             if (byCount.length > 0) return byCount
         }
+        if (!media.format) return pool
         const isMovie = (media.format || "").toUpperCase() === "MOVIE"
         const byFormat = pool.filter((r) => {
             const e = evidence[r.url]
@@ -435,18 +482,43 @@ class Provider implements AnimeProvider {
     }
 
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {
+        this.deadline = this.now() + this.episodeBudget
         this.baseUrl = this.currentBase()
         const parsed = this.splitMeta(id)
         const audio = parsed.audio
 
-        const seriesUrl = this.seriesUrl(this.absoluteUrl(parsed.base))
+        const idUrl = this.seriesUrl(this.absoluteUrl(parsed.base))
+        const path = idUrl.replace(/^https?:\/\/[^/]+/i, "")
 
-        const cacheKey = `anikoto:eps2:${seriesUrl}:${audio}:${parsed.anilistId}`
+        const cacheKey = `anikoto:eps2:${path}:${audio}:${parsed.anilistId}:${parsed.epCount}:${parsed.part}`
         const cached = this.readCache<EpisodeDetails[]>(cacheKey)
         if (cached && cached.length > 0) return cached
 
-        const page = await this.guarded("episodes", seriesUrl, { headers: this.pageHeaders() })
-        const pageHtml = page.text()
+        const bases = this.candidateBases()
+        const idOrigin = this.normBase(this.originOf(idUrl))
+        if (bases.indexOf(idOrigin) === -1) bases.push(idOrigin)
+        let page: FetchResponse | undefined = undefined
+        let pageHtml = ""
+        let lastErr: unknown = undefined
+        let fails = 0
+        for (const base of bases) {
+            if (this.outOfTime() && (page || fails >= 2)) break
+            try {
+                page = await this.guarded("episodes", `${base}${path}`, { headers: { Referer: `${base}/` } })
+            } catch (e) {
+                lastErr = e
+                fails++
+                continue
+            }
+            this.baseUrl = base
+            pageHtml = page.text()
+            if (page.status === 429 || this.bodyIsSitePage(pageHtml)) {
+                if (page.ok) this.rememberBase(base)
+                break
+            }
+        }
+        if (!page) throw lastErr
+        const seriesUrl = `${this.baseUrl}${path}`
         if (this.isChallengeResponse(page, pageHtml)) throw this.fail("episodes", "the site is showing an anti-bot challenge on this mirror — retry later or switch mirrors")
         if (!page.ok) throw this.fail("episodes", `episode page failed (status ${page.status})`)
         let seriesId = this.firstAttr(LoadDoc(pageHtml), ["#watch-main", "[id*='watch'][data-id]", "main [data-id]"], "data-id")
@@ -470,6 +542,7 @@ class Provider implements AnimeProvider {
         const $ = LoadDoc(listJson.result)
         const episodes: EpisodeDetails[] = []
         const seen: { [key: string]: boolean } = {}
+        let maxNum = 0
 
         let epNodes = $("ul.ep-range li > a")
         if (epNodes.length() === 0) epNodes = $(".ep-range a")
@@ -478,16 +551,17 @@ class Provider implements AnimeProvider {
             const epId = a.attr("data-id") || ""
             const dataIds = a.attr("data-ids")
             if (!dataIds) return
+            const rawNum = a.attr("data-num") || ""
+            const num = parseInt(rawNum, 10)
+            if (Number.isInteger(num) && num > maxNum && num <= 10000) maxNum = num
             if ((audio === "dub" ? a.attr("data-dub") : a.attr("data-sub")) === "0") return
 
-            const rawNum = a.attr("data-num") || ""
             if (/^\d+\.\d+$/.test(rawNum)) return
 
             const dedupeKey = epId || dataIds
             if (seen[dedupeKey]) return
             seen[dedupeKey] = true
 
-            const num = parseInt(rawNum, 10)
             const number = !Number.isInteger(num) || num < 1 || num > 10000 ? episodes.length + 1 : num
             const slug = a.attr("data-slug") || String(number)
 
@@ -505,7 +579,9 @@ class Provider implements AnimeProvider {
         if (episodes.length === 0) throw this.fail("episodes", "no episodes found")
 
         episodes.sort((x, y) => x.number - y.number)
-        this.applySeasonWindow(episodes, parsed.epCount, parsed.part)
+        const planned = parseInt((pageHtml.match(/Episodes:\s*<span>\s*(\d+)/) || [])[1] || "", 10) || 0
+        this.applySeasonWindow(episodes, parsed.epCount, parsed.part, Math.max(planned, maxNum))
+        if (episodes.length === 0) throw this.fail("episodes", `none of this part's episodes are out yet in ${audio}`)
         this.writeCache(cacheKey, episodes)
         return episodes
     }
@@ -519,7 +595,7 @@ class Provider implements AnimeProvider {
 
         const $ = await this.serverListDoc(dataIds)
         const groups = audio === "dub" ? ["dub"] : ["sub", "hsub"]
-        const KNOWN_SERVERS = ["HD-1", "HD-2", "Vidstream-2"]
+        const KNOWN_SERVERS = ["HD-2", "HD-1", "Vidstream-2"]
         const candidates = this.collectServers($, groups)
             .filter((c) => KNOWN_SERVERS.indexOf(c.name) !== -1)
             .sort((a, b) => KNOWN_SERVERS.indexOf(a.name) - KNOWN_SERVERS.indexOf(b.name))
@@ -527,8 +603,6 @@ class Provider implements AnimeProvider {
 
         const label = "Auto"
         const wantSubs = this.loadSubtitles !== "disabled"
-        let firstResolved: EpisodeServer | undefined
-        let firstResolvedProbed = false
         let playableNoSubs: EpisodeServer | undefined
         let lastReason = ""
         const seenUrl: { [key: string]: boolean } = {}
@@ -548,9 +622,7 @@ class Provider implements AnimeProvider {
             if (seenUrl[`#${sourceUrl}`]) continue
             seenUrl[`#${sourceUrl}`] = true
             if (label) resolved.server = label
-            if (!firstResolved) firstResolved = resolved
             const playable = await this.isPlayable(resolved, !playableNoSubs)
-            if (resolved === firstResolved) firstResolvedProbed = true
             if (playable) {
                 const vs = resolved.videoSources[0]
                 if (!wantSubs || (vs && vs.subtitles && vs.subtitles.length > 0)) {
@@ -561,12 +633,6 @@ class Provider implements AnimeProvider {
             }
         }
         if (playableNoSubs) return playableNoSubs
-        if (firstResolved && !firstResolvedProbed) {
-            const cl = this.cachedClearance(this.hostOf(firstResolved.videoSources[0].url))
-            if (cl) firstResolved.headers = this.withClearance(firstResolved.headers, cl)
-            await this.alignSubtitleHost(firstResolved)
-            return firstResolved
-        }
         try {
             for (const id of tried) $store.remove(`anikoto:src:${id}`)
             $store.remove(`anikoto:slist:${dataIds}`)
@@ -593,10 +659,11 @@ class Provider implements AnimeProvider {
         origin: string,
         path: string,
         dataId: string,
-        embedUrl: string
+        embedUrl: string,
+        cdn: string
     ): Promise<{ sources?: { file: string } | { file: string }[]; tracks?: { file: string; label?: string; kind?: string; default?: boolean }[] } | undefined> {
         try {
-            const res = await this.fetchRetry(`${origin}/${path}?id=${encodeURIComponent(dataId)}`, {
+            const res = await this.fetchRetry(`${origin}/${path}?id=${encodeURIComponent(dataId)}${cdn ? `&s=${encodeURIComponent(cdn)}` : ""}`, {
                 headers: { Referer: embedUrl, "X-Requested-With": "XMLHttpRequest" },
             })
             if (!res.ok) return undefined
@@ -727,11 +794,11 @@ class Provider implements AnimeProvider {
                 }
             }
             if (body === undefined) return false
-            this.rememberCdnHost(this.hostOf(src.url))
+            if (/^https?:\/\/[^/]+\/anime\//.test(src.url)) this.rememberCdnHost(this.hostOf(src.url))
             const variants = this.variantLevelUrls(body, src.url)
             if (variants.length === 0) return true
             for (const v of variants) {
-                if (this.outOfTime()) break
+                if (this.outOfTime()) return v === variants[0]
                 try {
                     const r = await fetch(v, { headers: server.headers })
                     if (r.ok) return true
@@ -812,6 +879,10 @@ class Provider implements AnimeProvider {
                     out.push({ key: m[1], iv: m[2] })
                     if (out.length >= 24) break
                 }
+                const lits: string[] = []
+                const er = /\.encode\(\s*"([^"\\]{16,32})"\s*\)/g
+                while ((m = er.exec(body)) !== null) lits.push(m[1])
+                for (let i = 0; i + 1 < lits.length; i += 2) out.push({ key: lits[i], iv: lits[i + 1] })
             }
         } catch (_e) {}
         const known = this.knownKeys(origin)
@@ -857,15 +928,21 @@ class Provider implements AnimeProvider {
         const subHost = this.hostOf(pick.url)
         if (!subHost || subHost === videoHost) return
         if (await this.subtitleReachable(pick.url, server.headers)) return
-        if (this.outOfTime()) return
-        const swapped = pick.url.replace(`://${subHost}/`, `://${videoHost}/`)
-        if (swapped === pick.url) return
-        if (!(await this.subtitleReachable(swapped, server.headers))) return
-        for (const s of src.subtitles) {
-            const h = this.hostOf(s.url)
-            if (h && h !== videoHost) s.url = s.url.replace(`://${h}/`, `://${videoHost}/`)
+        const hosts = [videoHost]
+        for (const h of ["ncdn.imgnex.top"].concat(this.cdnHosts())) if (hosts.indexOf(h) === -1) hosts.push(h)
+        for (const host of hosts) {
+            if (host === subHost) continue
+            if (host !== videoHost && host !== "ncdn.imgnex.top" && this.outOfTime()) return
+            const swapped = pick.url.replace(`://${subHost}/`, `://${host}/`)
+            if (swapped === pick.url) return
+            if (!(await this.subtitleReachable(swapped, server.headers))) continue
+            for (const s of src.subtitles) {
+                const h = this.hostOf(s.url)
+                if (h && h !== host) s.url = s.url.replace(`://${h}/`, `://${host}/`)
+            }
+            this.reportError("server", `the subtitle host ${subHost} could not be reached; serving subtitles from ${host} instead`)
+            return
         }
-        this.reportError("server", `the subtitle host ${subHost} could not be reached; serving subtitles from ${videoHost} instead`)
     }
 
     private async subtitleReachable(url: string, headers: { [k: string]: string }): Promise<boolean> {
@@ -1014,6 +1091,7 @@ class Provider implements AnimeProvider {
         const ps = psRes.json<{ status: number; result: { url: string } }>()
         let embedUrl = ps && ps.result ? ps.result.url : undefined
         if (!embedUrl) return undefined
+        const cdn = (embedUrl.match(/[?&]s=([\w-]+)/) || [])[1] || ""
 
         const origin = this.originOf(embedUrl)
         const embedRes = await this.fetchRetry(embedUrl, { headers: { Referer: `${this.baseUrl}/` } })
@@ -1050,21 +1128,20 @@ class Provider implements AnimeProvider {
         }
         let data: SourcePayload | undefined = undefined
         for (const path of this.sourcePaths(origin)) {
-            const body = await this.trySourcePath(origin, path, dataId, embedUrl)
+            const body: SourcePayload | undefined = await this.trySourcePath(origin, path, dataId, embedUrl, cdn)
+            if (body && !body.sources && body.enc) {
+                const plain = await this.decodeEnc(origin, embedUrl, String(body.enc))
+                if (plain && plain.file) body.sources = { file: plain.file }
+            }
             if (body && body.sources) {
                 this.rememberSourcePath(origin, path)
                 data = body
                 break
             }
-            if (body && !data) data = body
-        }
-        if (data && !data.sources && data.enc) {
-            const plain = await this.decodeEnc(origin, embedUrl, String(data.enc))
-            if (plain && plain.file) data.sources = { file: plain.file }
         }
         if (!data || !data.sources) {
             for (const path of await this.discoverSourcePaths(origin, embedUrl)) {
-                const body = await this.trySourcePath(origin, path, dataId, embedUrl)
+                const body = await this.trySourcePath(origin, path, dataId, embedUrl, cdn)
                 if (body && body.sources) {
                     this.rememberSourcePath(origin, path)
                     data = body
@@ -1233,14 +1310,11 @@ class Provider implements AnimeProvider {
         return { base: id, audio: "sub" }
     }
 
-    private applySeasonWindow(episodes: EpisodeDetails[], epCount: number, part: number): void {
-        if (epCount <= 0 || episodes.length <= epCount) return
-        const offset = part >= 2 ? episodes.length - epCount : 0
-        if (offset < 0 || offset + epCount > episodes.length) return
-        const picked = episodes.slice(offset, offset + epCount)
-        if (picked.length !== epCount) return
-        const total = episodes.length
-        for (let i = 0; i < picked.length; i++) picked[i].number = i + 1
+    private applySeasonWindow(episodes: EpisodeDetails[], epCount: number, part: number, total: number): void {
+        if (epCount <= 0 || total <= epCount) return
+        const offset = part >= 2 ? total - epCount : 0
+        const picked = episodes.filter((e) => e.number > offset && e.number <= offset + epCount)
+        for (const e of picked) e.number -= offset
         episodes.length = 0
         for (const e of picked) episodes.push(e)
         this.reportError("episodes", `the site lists this season as one run of ${total} episodes; showing the ${part >= 2 ? "last" : "first"} ${epCount} so the numbering matches the tracker`)
