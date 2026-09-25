@@ -111,6 +111,10 @@ console.log("anikoto")
     eq(p.fallbackCode("Danish"), "da", "lang: danish maps to da")
     eq(p.fallbackCode("Klingon"), "", "lang: an unknown language is not English")
 
+    eq(p.buildSubtitles([{ file: "https://c/ara.vtt", label: "Arabic" }, { file: "https://c/eng.vtt", label: "Eng_sub" }]).map((s) => s.url), ["https://c/eng.vtt", "https://c/ara.vtt"], "subs: the English track leads even when the site lists it second")
+    eq(p.buildSubtitles([{ file: "https://c/es.vtt", label: "Spanish (English signs)" }, { file: "https://c/pt.vtt", label: "Portuguese" }])[0].url, "https://c/pt.vtt", "subs: a label naming another language before English is not English")
+    eq(p.buildSubtitles([{ file: "https://c/a.vtt", label: "  " }])[0].language, "English", "subs: a blank label is named English")
+
     eq(p.plain("a — b…"), "a - b...", "plain: dashes and ellipsis become ASCII")
     eq(p.plain("one\ntwo\tthree"), "one two three", "plain: newlines collapse to spaces")
     eq(/^[\x20-\x7e]*$/.test(p.plain("日本語")), true, "plain: output is ASCII only")
@@ -341,15 +345,6 @@ console.log("anizone")
     eq(p.trackScore("English", true, false, false) > p.trackScore("English (Signs)", true, false, true), true, "track: dialogue outranks signs")
     eq(p.trackScore("English", true, true, false) > p.trackScore("English", true, false, false), true, "track: the site default breaks ties upward")
 
-    eq(p.tagAttrs('<track src="a.vtt" srclang="en">').src, "a.vtt", "attrs: a quoted value is read")
-    eq(p.tagAttrs("<track src=a.vtt/>").src, "a.vtt", "attrs: the self-closing slash is not part of the value")
-    eq(p.tagAttrs('<track label="x src=&quot;wrong&quot;" src=right.vtt>').src, "right.vtt", "attrs: a src inside another value cannot win")
-    eq(p.tagAttrs('<track src="a.vtt" default>').default, "", "attrs: a valueless attribute is present and empty")
-    eq(Object.prototype.hasOwnProperty.call(p.tagAttrs('<track src="a.vtt">'), "default"), false, "attrs: an absent attribute stays absent")
-    eq(p.tagAttrs('<track src="a.vtt" label="Signs &amp; Songs">').label, "Signs & Songs", "attrs: every value is entity-decoded, not just the label")
-    eq(p.tagAttrs('<track SRC="a.vtt">').src, "a.vtt", "attrs: names are case-insensitive")
-    eq(p.tagAttrs('<track data-type="ass" src="a">')["data-type"], "ass", "attrs: hyphenated names survive")
-
     eq(p.langName("he"), "Hebrew", "lang: a code the site serves is named")
     eq(p.langName("pt-br"), "Portuguese (Brazil)", "lang: a regional code keeps its region")
     eq(p.langName("zz"), "ZZ", "lang: an unknown code falls back to the code")
@@ -459,7 +454,7 @@ console.log("aquatils (source invariants)")
 
     eq(has('const FS_KEEP = ["chromium", "state"]'), true, "state: the keep-list names the state directory")
     eq(has('e.name() !== "chromium"'), false, "state: no bare literal is left to drift from the keep-list")
-    eq(count("FS_KEEP.indexOf"), 2, "state: both prune and remove read the keep-list")
+    eq(count("FS_KEEP.indexOf"), 1, "state: prune and remove share the one keep-list reader")
 
     eq(has('const staging = dir + ".new"'), true, "chromium: the download lands beside the working copy")
     eq(has("$os.rename(dir, previous)"), true, "chromium: the working copy is moved aside, not deleted in place")
@@ -516,17 +511,7 @@ console.log("versions")
     eq(v.isValid("1.3.103"), false, "version: a three-digit patch is not")
     eq(v.isValid("0.10.28"), false, "version: a two-digit minor is not")
     eq(v.isValid("1.4"), false, "version: two fields are not a version")
-
-    const bad = []
-    for (const kind of ["extensions", "plugins"]) {
-        for (const name of fs.readdirSync(`${ROOT}/${kind}`)) {
-            const p = `${ROOT}/${kind}/${name}/manifest.json`
-            if (!fs.existsSync(p)) continue
-            const m = JSON.parse(fs.readFileSync(p, "utf8"))
-            if (!v.isValid(m.version)) bad.push(`${kind}/${name}=${m.version}`)
-        }
-    }
-    eq(bad, [], "version: every shipped manifest is inside 9.9.99")
+    eq(v.manifests().filter((f) => !v.isValid(JSON.parse(fs.readFileSync(f, "utf8")).version)), [], "version: every shipped manifest is inside 9.9.99")
 }
 
 console.log("payload bytes")
