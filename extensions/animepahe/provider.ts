@@ -1,14 +1,11 @@
 declare const console: { log(...args: any[]): void; info(...args: any[]): void; warn(...args: any[]): void; error(...args: any[]): void }
 
 class Provider implements AnimeProvider {
-    private baseUrl = this.cfg("baseUrl", "{{baseUrl}}", "https://animepahe.pw")
-    private mirrors = ["https://animepahe.pw", "https://animepahe.com", "https://animepahe.org"]
-    private solverUrl = this.cfg("solverUrl", "{{solverUrl}}", "http://127.0.0.1:8191/v1")
-    private solverSession = this.cfg("solverSession", "{{solverSession}}", "seanime")
-    private lastFailKind = ""
-    private lastResp: { url: string; status: number; statusText: string; ct: string; len: number; redirected: boolean; finalUrl: string; snippet: string; hit: string } | undefined = undefined
-    private lastSolver: { ran: boolean; http: number; snippet: string; reason: string } | undefined = undefined
-    private lastThrow = ""
+    private baseUrl = this.cfg("baseUrl", "https://animepahe.pw")
+    private solverUrl = this.cfg("solverUrl", "http://127.0.0.1:8191/v1")
+    private solverSession = this.cfg("solverSession", "seanime")
+    private lastSolverReason = ""
+    private challenged = false
     private cookieTtl = 10800000
     private baseTtl = 21600000
     private epCacheTtl = 900000
@@ -34,7 +31,7 @@ class Provider implements AnimeProvider {
         for (const q of queries) {
             let data: AnimeData[] | undefined
             let shapeErr = ""
-            this.clearLastFailure()
+            this.challenged = false
             const ckey = `apahe:srch:${q.toLowerCase()}`
             const cachedData = this.readCache<AnimeData[]>(ckey, 300000)
             if (cachedData && cachedData.length > 0) {
@@ -47,10 +44,9 @@ class Provider implements AnimeProvider {
                     if (data.length > 0) this.writeCache(ckey, data)
                 } catch (e) {
                     data = undefined
-                    const msg = typeof e === "string" ? e : e && (e as any).message ? (e as any).message : "request failed"
-                    lastErr = msg
-                    if ((this.lastResp && this.lastResp.hit) || this.lastFailKind === "blocked") blocked = true
-                    if (blocked || this.lastFailKind === "solver" || this.lastFailKind === "parse") break
+                    lastErr = typeof e === "string" ? e : e && (e as any).message ? (e as any).message : "request failed"
+                    blocked = this.challenged
+                    if (blocked || typeof e === "string") break
                 }
             }
             if (shapeErr) throw this.fail("parse", shapeErr)
@@ -67,15 +63,11 @@ class Provider implements AnimeProvider {
             }
         }
 
-        if (results.length === 0 && lastErr) {
-            if (blocked) throw `${this.blockedMessage()} (${lastErr})`
-            throw lastErr
-        }
+        if (results.length === 0 && lastErr) throw blocked ? `${this.blockedMessage()} (${lastErr})` : lastErr
         return this.filterBySeason(results, opts)
     }
 
-    private cfg(name: string, raw: string, fallback: string): string {
-        if (raw && raw.indexOf("{{") === -1) return raw
+    private cfg(name: string, fallback: string): string {
         try {
             const v = $getUserPreference(name)
             if (typeof v === "string" && v && v.indexOf("{{") === -1) return v
@@ -199,33 +191,28 @@ class Provider implements AnimeProvider {
         if (first.data) for (const d of first.data) all.push(d)
 
         const lastPage = first.last_page && first.last_page > 1 ? first.last_page : 1
-        let failedPage = 0
         for (let page = 2; page <= lastPage; page++) {
             try {
                 const next = await this.getJson<ReleaseResponse>(`${this.baseUrl}/api?m=release&id=${animeSession}&sort=episode_asc&page=${page}`)
                 if (next && next.data) for (const d of next.data) all.push(d)
-            } catch (_e) { failedPage = page; break }
-        }
-        if (failedPage > 0) {
-            throw this.fail("episodes", `only got ${failedPage - 1} of ${lastPage} pages of the episode list — the site is refusing this connection right now, so the list would have been incomplete. Try again.`)
+            } catch (_e) {
+                throw this.fail("episodes", `only got ${page - 1} of ${lastPage} pages of the episode list — the site is refusing this connection right now, so the list would have been incomplete. Try again.`)
+            }
         }
 
         const collected: { session: string; num: number; title?: string }[] = []
         const seen: { [key: string]: boolean } = {}
-        let minNum = 0
-        let haveMin = false
         for (const d of all) {
             if (!d || !d.session) continue
             const num = typeof d.episode === "number" ? d.episode : parseFloat(String(d.episode))
-            if (isNaN(num) || !this.isWhole(num)) continue
+            if (isNaN(num) || Math.floor(num) !== num) continue
             if (seen[d.session]) continue
             seen[d.session] = true
             collected.push({ session: d.session, num: num, title: d.title })
-            if (!haveMin || num < minNum) { minNum = num; haveMin = true }
         }
 
         if (collected.length === 0) throw this.fail("episodes", "no episodes found")
-        const offset = haveMin && minNum > 1 ? minNum - 1 : 0
+        const offset = Math.max(0, collected.reduce((m, c) => Math.min(m, c.num), Infinity) - 1)
 
         const episodes: EpisodeDetails[] = collected.map((c) => {
             const number = c.num - offset
@@ -348,22 +335,11 @@ class Provider implements AnimeProvider {
         if (!html) return undefined
 
         let found = this.matchM3u8(html)
-        if (!found) {
-            for (const block of this.extractPacked(html)) {
-                const unpacked = this.unpack(block)
-                if (!unpacked) continue
-                const clean = unpacked.replace(/\\/g, "")
-                const fromSource = clean.match(/source\s*[:=]\s*['"]?([^'"\s]+\.m3u8[^'"\s]*)/i)
-                if (fromSource && fromSource[1]) {
-                    found = fromSource[1]
-                    break
-                }
-                const generic = this.matchM3u8(clean)
-                if (generic) {
-                    found = generic
-                    break
-                }
-            }
+        if (!found) for (const block of (html.match(/eval\(function\(p,a,c,k,e,[dr](?:,\s*[dr])?\)[\s\S]*?\.split\('\|'\)[\s\S]*?\)\)/g) || []).slice(0, 12)) {
+            const clean = (this.unpack(block) || "").replace(/\\/g, "")
+            const src = clean.match(/source\s*[:=]\s*['"]?([^'"\s]+\.m3u8[^'"\s]*)/i)
+            found = (src && src[1]) || this.matchM3u8(clean)
+            if (found) break
         }
         if (found) this.writeCache(ck, found)
         return found
@@ -388,17 +364,6 @@ class Provider implements AnimeProvider {
         if (/^\d+\.\d+\.\d+\.\d+$/.test(name)) return false
         if (name.indexOf("[") === 0) return false
         return name.indexOf(".") !== -1
-    }
-
-    private extractPacked(html: string): string[] {
-        const out: string[] = []
-        const re = /eval\(function\(p,a,c,k,e,[dr](?:,\s*[dr])?\)[\s\S]*?\.split\('\|'\)[\s\S]*?\)\)/g
-        let m: RegExpExecArray | null
-        while ((m = re.exec(html)) !== null) {
-            out.push(m[0])
-            if (out.length >= 12) break
-        }
-        return out
     }
 
     private unpack(src: string): string | undefined {
@@ -440,67 +405,39 @@ class Provider implements AnimeProvider {
         await this.harvestCookies(false)
     }
 
-    private canonicalOrigin(u: string, fallback: string): string {
-        if (!u) return fallback
-        const m = u.match(/^(https?:\/\/[^\/?#]+)/i)
-        if (!m) return fallback
-        return /animepahe/i.test(m[1]) ? m[1].replace(/\/+$/, "") : fallback
-    }
-
-    private preferredBase(u: string): string {
-        if (!u) return u
-        return u.replace(/^https?:\/\/animepahe\.(com|org)\b/i, "https://animepahe.pw")
-    }
-
-    private invalidateBase(): void {
-        try { $store.set("apahe:base2", { at: 0, host: "" }) } catch (_e) {}
-    }
-
     private async resolveBase(): Promise<string> {
-        const all = [this.baseUrl].concat(this.mirrors).map((u) => this.preferredBase(u.replace(/\/+$/, "")))
-        const candidates = all.filter((u, i) => all.indexOf(u) === i)
         const cached = $store.get<{ at: number; host: string }>("apahe:base2")
-        const t = this.now()
-        if (cached && cached.host && /animepahe/i.test(cached.host) && t > 0 && cached.at > 0 && t - cached.at < this.baseTtl) {
-            return cached.host
-        }
-        let fallback = ""
-        for (const c of candidates) {
+        if (cached && cached.host && /animepahe/i.test(cached.host) && Date.now() - cached.at < this.baseTtl) return cached.host
+        const pref = this.baseUrl.replace(/\/+$/, "").replace(/^https?:\/\/animepahe\.(com|org)\b/i, "https://animepahe.pw")
+        let found = ""
+        for (const c of pref === "https://animepahe.pw" ? [pref] : [pref, "https://animepahe.pw"]) {
             try {
                 const res = await fetch(`${c}/`, { headers: this.browserHeaders() })
-                if (res && res.ok) {
-                    const canon = this.canonicalOrigin(res.url, c)
-                    this.absorbCookies(res)
-                    $store.set("apahe:base2", { at: this.now(), host: canon })
-                    return canon
-                }
-                if (res && !fallback && (res.status === 403 || res.status === 503)) {
-                    fallback = this.canonicalOrigin(res.url, c)
-                    this.absorbCookies(res)
+                if (res.ok || (!found && (res.status === 403 || res.status === 503))) {
+                    const m = (res.url || "").match(/^(https?:\/\/[^\/?#]+)/i)
+                    found = m && /animepahe/i.test(m[1]) ? m[1] : c
+                    this.absorbCookies(this.cookiesFrom(res))
+                    if (res.ok) break
                 }
             } catch (_e) {}
         }
-        if (fallback) {
-            $store.set("apahe:base2", { at: this.now(), host: fallback })
-            return fallback
-        }
-        return candidates[0]
+        if (found) $store.set("apahe:base2", { at: Date.now(), host: found })
+        return found || pref
     }
 
     private async harvestCookies(force: boolean): Promise<string> {
         const cached = $store.get<{ at: number; map: { [k: string]: string } }>("apahe:ck")
-        const t = this.now()
-        if (!force && cached && cached.map && this.mapSize(cached.map) > 0 && t > 0 && t - cached.at < this.cookieTtl) {
+        if (!force && cached && cached.map && Object.keys(cached.map).length > 0 && Date.now() - cached.at < this.cookieTtl) {
             return this.cookieHeader(cached.map)
         }
         let map = cached && cached.map ? cached.map : {}
         const before = this.cookieHeader(map)
         try {
             const res = await fetch(`${this.baseUrl}/`, { headers: this.browserHeaders() })
-            map = this.mergeCookieMap(map, this.cookiesFrom(res))
+            map = Object.assign({}, map, this.cookiesFrom(res))
         } catch (_e) {}
         const after = this.cookieHeader(map)
-        const at = (after === before && cached && cached.at && cached.at > 0) ? cached.at : this.now()
+        const at = (after === before && cached && cached.at && cached.at > 0) ? cached.at : Date.now()
         $store.set("apahe:ck", { at: at, map })
         return after
     }
@@ -511,56 +448,41 @@ class Provider implements AnimeProvider {
         for (let i = 0; i < 2; i++) {
             try {
                 res = await fetch(url, { headers: this.apiHeaders(cookie, extra) })
-                this.absorbCookies(res)
-                this.snapResp(res, url)
+                this.absorbCookies(this.cookiesFrom(res))
+                this.challenged = this.bodyIsChallenge(res.text().slice(0, 8192))
                 if (!this.isBlocked(res)) {
                     const body = res.text()
                     if (!valid || valid(body)) return body
                 }
-            } catch (e) {
-                this.lastThrow = this.snip(String((e && (e as any).message) || e || ""))
-            }
+            } catch (_e) {}
             cookie = await this.harvestCookies(true)
         }
         const solved = await this.solveGet(url)
         if (solved && (!valid || valid(solved))) return solved
-        if (!this.solverEndpoint()) throw this.fail("server", "The solver endpoint in this extension's settings is not a full http:// or https:// address — fix it there and run the solver via Aqua's Utils.", "solver")
+        if (!this.solverEndpoint()) throw this.fail("server", "The solver endpoint in this extension's settings is not a full http:// or https:// address — fix it there and run the solver via Aqua's Utils.")
         const ping = await this.solverPing()
-        if (!ping.up) throw this.fail("server", "Aqua's Utils solver isn't reachable at " + this.solverEndpoint() + " — open Aqua's Utils and start it.", "solver")
-        let why = this.lastSolver && this.lastSolver.reason ? this.lastSolver.reason : ""
-        why = why.replace(/^needs-stronger-solver:\s*/i, "")
-        this.invalidateBase()
-        throw this.fail("fetch", "Connected to the solver (v" + (ping.version || "?") + ") but it couldn't clear the site's protection" + (why ? " — " + why : "") + ".", "blocked")
+        if (!ping.up) throw this.fail("server", "Aqua's Utils solver isn't reachable at " + this.solverEndpoint() + " — open Aqua's Utils and start it.")
+        const why = this.lastSolverReason.replace(/^needs-stronger-solver:\s*/i, "")
+        $store.remove("apahe:base2")
+        this.challenged = true
+        throw this.fail("fetch", "Connected to the solver (v" + (ping.version || "?") + ") but it couldn't clear the site's protection" + (why ? " — " + why : "") + ".")
     }
 
     private async solverPing(): Promise<{ up: boolean; version?: string }> {
         const ep = this.solverEndpoint()
         if (!ep) return { up: false }
         const cached = $store.get<{ at: number; up: boolean; version?: string }>("apahe:ping")
-        const t = this.now()
         const ttl = cached && cached.up ? 30000 : 4000
-        if (cached && t > 0 && cached.at > 0 && t - cached.at < ttl) return { up: cached.up, version: cached.version }
-        try {
-            const res = await fetch(ep, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cmd: "sessions.list" }), noCloudflareBypass: true })
-            const up = !!res && res.ok
-            let version: string | undefined
-            if (up) { try { const d = res.json<any>(); version = d && d.version ? String(d.version) : undefined } catch (_e) {} }
-            $store.set("apahe:ping", { at: this.now(), up: up, version: version })
-            return { up: up, version: version }
-        } catch (_e) {
-            $store.set("apahe:ping", { at: this.now(), up: false })
-            return { up: false }
-        }
+        if (cached && cached.at > 0 && Date.now() - cached.at < ttl) return { up: cached.up, version: cached.version }
+        const d = await this.solverPost(ep, { cmd: "sessions.list" })
+        const r = { up: d !== undefined, version: d && d.version ? String(d.version) : undefined }
+        $store.set("apahe:ping", { at: Date.now(), up: r.up, version: r.version })
+        return r
     }
 
     private async getJson<T>(url: string): Promise<T> {
         const text = await this.getText(url, { Referer: `${this.baseUrl}/`, "X-Requested-With": "XMLHttpRequest", Accept: "application/json, text/javascript, */*; q=0.01" }, (body) => this.parseJson<T>(body) !== undefined)
-        const parsed = this.parseJson<T>(text)
-        if (parsed !== undefined) return parsed
-        this.reportError("parse", this.parseDiag(url))
-        this.invalidateBase()
-        this.lastFailKind = "parse"
-        throw "AnimePahe answered with something other than JSON, which usually means this connection is being challenged. The full diagnostic is in Aqua's Utils."
+        return this.parseJson<T>(text) as T
     }
 
     private parseJson<T>(text: string): T | undefined {
@@ -577,18 +499,12 @@ class Provider implements AnimeProvider {
         return undefined
     }
 
-    private async fetchRetry(url: string, opts?: FetchOptions, tries = 2): Promise<FetchResponse> {
-        let lastErr: any
-        for (let i = 0; i < tries; i++) {
-            try {
-                const res = await fetch(url, opts)
-                if (res.ok || res.status < 500 || i === tries - 1) return res
-            } catch (e) {
-                lastErr = e
-                if (i === tries - 1) throw e
-            }
-        }
-        throw lastErr
+    private async fetchRetry(url: string, opts?: FetchOptions): Promise<FetchResponse> {
+        try {
+            const res = await fetch(url, opts)
+            if (res.status < 500) return res
+        } catch (_e) {}
+        return fetch(url, opts)
     }
 
     private solverEndpoint(): string {
@@ -596,12 +512,6 @@ class Provider implements AnimeProvider {
         if (!/^https?:\/\/[^\s/]+/i.test(u)) return ""
         const base = u.replace(/\/+$/, "")
         return /\/v1$/.test(base) ? base : `${base}/v1`
-    }
-
-    private sessionName(): string {
-        const s = (this.solverSession || "").trim()
-        if (!s || s.indexOf("{{") !== -1) return "seanime"
-        return s
     }
 
     private proxyM3u8(m3u8: string, referer: string): string {
@@ -628,21 +538,19 @@ class Provider implements AnimeProvider {
 
     private async solveGet(url: string): Promise<string | undefined> {
         const ep = this.solverEndpoint()
-        if (!ep) { this.lastSolver = { ran: false, http: 0, snippet: "", reason: "" }; return undefined }
-        const data = await this.solverPost(ep, { cmd: "request.get", url, maxTimeout: 30000, session: this.sessionName() })
+        if (!ep) return undefined
+        const data = await this.solverPost(ep, { cmd: "request.get", url, maxTimeout: 30000, session: this.solverSession.trim() || "seanime" })
         const sol = data && data.solution ? data.solution : undefined
         if (sol) this.absorbSolution(sol, /animepahe/i.test(url))
         const body = sol ? sol.response : undefined
-        const http = sol && typeof sol.status === "number" ? sol.status : 0
-        const reason = data && data.message ? String(data.message) : ""
-        this.lastSolver = { ran: true, http: http, snippet: this.snip(body || ""), reason: reason }
+        this.lastSolverReason = data && data.message ? String(data.message) : ""
         if (body && !this.bodyIsChallenge(body)) return body
         return undefined
     }
 
     private reportError(scope: string, message: string): void {
         try {
-            console.error("SEHERRv1 " + JSON.stringify({ t: this.now(), ext: "aq-animepahe", scope: scope, msg: this.plain(message) }))
+            console.error("SEHERRv1 " + JSON.stringify({ t: Date.now(), ext: "aq-animepahe", scope: scope, msg: this.plain(message) }))
         } catch (_e) {}
     }
 
@@ -658,14 +566,7 @@ class Provider implements AnimeProvider {
             .replace(/^ +| +$/g, "")
     }
 
-    private clearLastFailure(): void {
-        this.lastFailKind = ""
-        this.lastResp = undefined
-        this.lastThrow = ""
-    }
-
-    private fail(scope: string, message: string, kind?: string): string {
-        this.lastFailKind = kind || ""
+    private fail(scope: string, message: string): string {
         this.reportError(scope, message)
         return message
     }
@@ -686,74 +587,8 @@ class Provider implements AnimeProvider {
     }
 
     private bodyIsChallenge(body: string): boolean {
-        return this.challengeToken(body) !== ""
-    }
-
-    private challengeToken(body: string): string {
-        if (!body) return ""
-        const b = body.toLowerCase()
-        const toks = [
-            "ddos-guard", "ddg-cookie", "checking your browser", "just a moment",
-            "cf-mitigated", "enable javascript and cookies",
-            "cf-browser-verification", "oncheqresponse", "onrtbfailure",
-        ]
-        for (let i = 0; i < toks.length; i++) {
-            if (b.indexOf(toks[i]) !== -1) return toks[i]
-        }
-        return ""
-    }
-
-    private snip(s: string): string {
-        if (!s) return ""
-        return s.replace(/\s+/g, " ").trim().slice(0, 160)
-    }
-
-    private snapResp(res: FetchResponse, url: string): void {
-        if (!res) return
-        let body = ""
-        try { body = res.text() } catch (_e) {}
-        const head = body.length > 8192 ? body.slice(0, 8192) : body
-        this.lastResp = {
-            url: url,
-            status: res.status,
-            statusText: res.statusText || "",
-            ct: res.contentType || "",
-            len: res.contentLength,
-            redirected: res.redirected,
-            finalUrl: res.url || "",
-            snippet: this.snip(head),
-            hit: this.challengeToken(head),
-        }
-    }
-
-    private parseDiag(url: string): string {
-        const cb = ($store.get<{ at: number; host: string }>("apahe:base2") || { host: "-" }).host || "-"
-        const ck = $store.get<{ at: number; map: { [k: string]: string } }>("apahe:ck")
-        const ckSize = ck && ck.map ? this.mapSize(ck.map) : 0
-        let ddg = 0
-        if (ck && ck.map) {
-            for (const k in ck.map) {
-                if (/^__ddg/i.test(k)) ddg++
-            }
-        }
-        const r = this.lastResp
-        const s = this.lastSolver
-        return (
-            "expected JSON, got non-JSON from " + url +
-            " [base=" + this.baseUrl + " cache=" + cb + "]" +
-            " http=" + (r ? r.status + "/" + r.statusText : "?") +
-            " ct=" + (r ? r.ct : "?") +
-            " len=" + (r ? r.len : "?") +
-            " redirected=" + (r ? r.redirected + "->" + r.finalUrl : "?") +
-            " ddg=" + ddg + "/" + ckSize +
-            " challengeHit=" + (r && r.hit ? r.hit : "none") +
-            " throw=" + (this.lastThrow || "-") +
-            " solver=" + (s ? (s.ran ? "ran" : "skip") : "skip") +
-            " solverHttp=" + (s ? s.http : "-") +
-            " solverReason=" + (s && s.reason ? s.reason : "-") +
-            " body[" + (r ? r.snippet : "") + "]" +
-            " solverBody[" + (s ? s.snippet : "") + "]"
-        )
+        const b = (body || "").toLowerCase()
+        return ["ddos-guard", "ddg-cookie", "checking your browser", "just a moment", "cf-mitigated", "enable javascript and cookies", "cf-browser-verification", "oncheqresponse", "onrtbfailure"].some((t) => b.indexOf(t) !== -1)
     }
 
     private solvedUa(): string {
@@ -761,14 +596,7 @@ class Provider implements AnimeProvider {
     }
 
     private browserHeaders(): { [key: string]: string } {
-        const h: { [key: string]: string } = {
-            Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-            Referer: `${this.baseUrl}/`,
-        }
-        const ua = this.solvedUa()
-        if (ua) h["User-Agent"] = ua
-        return h
+        return this.apiHeaders("", { Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8", Referer: `${this.baseUrl}/` })
     }
 
     private apiHeaders(cookie: string, extra?: { [k: string]: string }): { [key: string]: string } {
@@ -784,75 +612,27 @@ class Provider implements AnimeProvider {
 
     private cookiesFrom(res: FetchResponse): { [k: string]: string } {
         const out: { [k: string]: string } = {}
-        if (res && res.cookies) {
-            for (const k in res.cookies) {
-                if (res.cookies[k]) out[k] = res.cookies[k]
-            }
-        }
-        const rh = res ? res.rawHeaders : undefined
-        if (rh) {
-            for (const key in rh) {
-                if (key.toLowerCase() !== "set-cookie") continue
-                const lines = rh[key]
-                if (!lines) continue
-                for (const line of lines) {
-                    const seg = line.split(";")[0]
-                    const eq = seg.indexOf("=")
-                    if (eq > 0) {
-                        const name = seg.slice(0, eq).trim()
-                        const value = seg.slice(eq + 1).trim()
-                        if (name && value) out[name] = value
-                    }
-                }
-            }
-        }
+        for (const k in res.cookies || {}) if (res.cookies[k]) out[k] = res.cookies[k]
         return out
     }
 
-    private absorbCookies(res: FetchResponse): void {
-        const fresh = this.cookiesFrom(res)
-        if (this.mapSize(fresh) === 0) return
+    private absorbCookies(fresh: { [k: string]: string }): void {
+        if (!Object.keys(fresh).length) return
         const cached = $store.get<{ at: number; map: { [k: string]: string } }>("apahe:ck")
-        const base = cached && cached.map ? cached.map : {}
-        const map = this.mergeCookieMap(base, fresh)
-        $store.set("apahe:ck", { at: this.now(), map })
+        $store.set("apahe:ck", { at: Date.now(), map: Object.assign({}, cached && cached.map, fresh) })
     }
 
     private absorbSolution(sol: { userAgent?: string; cookies?: { name: string; value: string }[] }, mergeCookies: boolean): void {
-        if (!sol) return
         if (mergeCookies && Array.isArray(sol.cookies) && sol.cookies.length) {
             const fresh: { [k: string]: string } = {}
             for (const c of sol.cookies) { if (c && c.name && c.value) fresh[c.name] = c.value }
-            if (this.mapSize(fresh) > 0) {
-                const cached = $store.get<{ at: number; map: { [k: string]: string } }>("apahe:ck")
-                const base = cached && cached.map ? cached.map : {}
-                $store.set("apahe:ck", { at: this.now(), map: this.mergeCookieMap(base, fresh) })
-            }
+            this.absorbCookies(fresh)
         }
         if (sol.userAgent) { try { $store.set("apahe:ua", sol.userAgent) } catch (_e) {} }
     }
 
-    private mergeCookieMap(base: { [k: string]: string }, add: { [k: string]: string }): { [k: string]: string } {
-        const out: { [k: string]: string } = {}
-        for (const k in base) out[k] = base[k]
-        for (const k in add) if (add[k]) out[k] = add[k]
-        return out
-    }
-
     private cookieHeader(map: { [k: string]: string }): string {
-        const parts: string[] = []
-        for (const k in map) parts.push(`${k}=${map[k]}`)
-        return parts.join("; ")
-    }
-
-    private mapSize(map: { [k: string]: string }): number {
-        let n = 0
-        for (const _k in map) n++
-        return n
-    }
-
-    private isWhole(n: number): boolean {
-        return Math.floor(n) === n
+        return Object.keys(map).map((k) => `${k}=${map[k]}`).join("; ")
     }
 
     private unescapeHtml(s: string): string {
@@ -866,19 +646,9 @@ class Provider implements AnimeProvider {
             .replace(/&amp;/g, "&")
     }
 
-    private now(): number {
-        try {
-            return Date.now()
-        } catch (_e) {
-            return 0
-        }
-    }
-
-    private readCache<T>(key: string, ttl?: number): T | undefined {
+    private readCache<T>(key: string, ttl: number): T | undefined {
         const entry = $store.get<{ at: number; data: T }>(key)
-        const t = this.now()
-        const max = ttl === undefined ? this.epCacheTtl : ttl
-        if (entry && t > 0 && entry.at > 0 && t - entry.at < max) return entry.data
+        if (entry && Date.now() - entry.at < ttl) return entry.data
         if (entry !== undefined && entry !== null) {
             try {
                 $store.remove(key)
@@ -888,8 +658,7 @@ class Provider implements AnimeProvider {
     }
 
     private writeCache<T>(key: string, data: T): void {
-        const t = this.now()
-        if (t > 0) $store.set(key, { at: t, data })
+        $store.set(key, { at: Date.now(), data })
     }
 
     private originOf(u: string): string {

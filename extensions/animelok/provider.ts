@@ -7,7 +7,7 @@ type VibeResult = { status: "ok" | "notfound" | "nosource" | "fail" | "badshape"
 
 class Provider implements AnimeProvider {
     private baseUrl = this.cfg("baseUrl", "{{baseUrl}}", "https://animelok.live")
-    private base = this.normBase()
+    private base = this.baseUrl.replace(/animelok\.(online|net|to)/i, "animelok.live").replace(/\/+$/, "")
     private cacheTtl = 900000
     private srcCacheTtl = 300000
     private availFailTtl = 45000
@@ -62,7 +62,7 @@ class Provider implements AnimeProvider {
         if (v.status === "ok") {
             return {
                 server: "Auto",
-                headers: this.streamHeaders(v.headers),
+                headers: Object.assign({ Referer: `${this.base}/` }, v.headers),
                 videoSources: [
                     {
                         url: v.url,
@@ -91,7 +91,6 @@ class Provider implements AnimeProvider {
     private safeHeaders(apiHeaders: { [key: string]: string }): { [key: string]: string } {
         const allow: { [key: string]: string } = { referer: "Referer", origin: "Origin", "user-agent": "User-Agent" }
         const out: { [key: string]: string } = {}
-        if (!apiHeaders) return out
         for (const k in apiHeaders) {
             const name = allow[String(k).toLowerCase()]
             const v = apiHeaders[k]
@@ -102,21 +101,8 @@ class Provider implements AnimeProvider {
         return out
     }
 
-    private streamHeaders(apiHeaders: { [key: string]: string }): { [key: string]: string } {
-        const out: { [key: string]: string } = {}
-        if (apiHeaders) {
-            for (const k in apiHeaders) {
-                const v = apiHeaders[k]
-                if (typeof v === "string" && v) out[k] = v
-            }
-        }
-        if (!out.Referer && !out.referer) out.Referer = `${this.base}/`
-        return out
-    }
-
     private buildSubs(tracks: VibeTrack[]): VideoSubtitle[] {
         const out: VideoSubtitle[] = []
-        if (!tracks || tracks.length === 0) return out
         const seen: { [key: string]: boolean } = {}
         const nonDialogue: boolean[] = []
         let pick = 0
@@ -140,14 +126,7 @@ class Provider implements AnimeProvider {
         }
         if (out.length === 0) return out
         out[pick].isDefault = true
-        const head: VideoSubtitle[] = []
-        const tail: VideoSubtitle[] = []
-        for (let i = 0; i < out.length; i++) {
-            if (i === pick) continue
-            if (nonDialogue[i]) tail.push(out[i])
-            else head.push(out[i])
-        }
-        return [out[pick]].concat(head).concat(tail)
+        return [out[pick]].concat(out.filter((_, i) => i !== pick && !nonDialogue[i]), out.filter((_, i) => i !== pick && nonDialogue[i]))
     }
 
     private subCode(lang: string, label: string): string {
@@ -196,17 +175,8 @@ class Provider implements AnimeProvider {
         return /\b(?:forced|forc[eé]s|signs?|songs?|karaoke|kfx|typeset(?:ting)?|commentary)\b/i.test(l) || /\bs\s*[&+\/]\s*s\b/i.test(l) || /\bop\s*[\/&+]\s*ed\b/i.test(l)
     }
 
-    private isMachine(label: string): boolean {
-        return /\b(?:ai|mtl)\b/i.test(label || "")
-    }
-
-    private isAltDialogue(label: string): boolean {
-        return /\b(?:sdh|cc|closed[\s-]?captions?|hearing[\s-]?impaired|dub[\s-]?titles?)\b/i.test(label || "")
-    }
-
-    private trackScore(label: string, isEnglish: boolean, def: boolean, nonDialogue?: boolean): number {
-        const nd = nonDialogue === undefined ? this.isNonDialogue(label) : nonDialogue
-        const base = nd ? (isEnglish ? 3 : 0) : this.isMachine(label) ? (isEnglish ? 4 : 1) : this.isAltDialogue(label) ? (isEnglish ? 5 : 1) : isEnglish ? 6 : 2
+    private trackScore(label: string, isEnglish: boolean, def: boolean, nd: boolean): number {
+        const base = nd ? (isEnglish ? 3 : 0) : /\b(?:ai|mtl)\b/i.test(label) ? (isEnglish ? 4 : 1) : /\b(?:sdh|cc|closed[\s-]?captions?|hearing[\s-]?impaired|dub[\s-]?titles?)\b/i.test(label) ? (isEnglish ? 5 : 1) : isEnglish ? 6 : 2
         return def ? base * 10 + 1 : base * 10
     }
 
@@ -222,15 +192,8 @@ class Provider implements AnimeProvider {
         const subOk = sub.status === "ok"
         const dubOk = dub.status === "ok"
         const exists = subOk || dubOk
-        let audio: string
-        let subOrDub: SubOrDub
-        if (exists) {
-            audio = wantDub && dubOk ? "dub" : subOk ? "sub" : "dub"
-            subOrDub = subOk && dubOk ? "both" : dubOk ? "dub" : "sub"
-        } else {
-            audio = wantDub ? "dub" : "sub"
-            subOrDub = "both"
-        }
+        const audio = wantDub && dubOk ? "dub" : subOk ? "sub" : "dub"
+        const subOrDub: SubOrDub = subOk && dubOk ? "both" : dubOk ? "dub" : "sub"
         const broken = !exists && (sub.status === "badshape" || dub.status === "badshape")
         const result = { exists, audio, subOrDub, broken }
         const definitelyAbsent = sub.status === "notfound" && dub.status === "notfound"
@@ -245,7 +208,7 @@ class Provider implements AnimeProvider {
     private async getVibe(anilistId: number, ep: number, audio: string): Promise<VibeResult> {
         const cacheKey = `animelok:src:${anilistId}:${ep}:${audio}`
         const cached = this.readCache<VibeResult>(cacheKey, this.srcCacheTtl)
-        if (cached && cached.status === "ok" && cached.url) return { status: "ok", url: cached.url, tracks: cached.tracks || [], headers: cached.headers || {} }
+        if (cached) return cached
         for (let i = 0; i < 2; i++) {
             let res: FetchResponse
             try {
@@ -267,21 +230,11 @@ class Provider implements AnimeProvider {
                     this.reportError("parse", `animelok: API returned ${res.status} with no sources list for ${anilistId} ep ${ep} (${audio}) — the site changed its API`)
                     return { status: "badshape", url: "", tracks: [], headers: {} }
                 }
-                let url = ""
-                let tracks: VibeTrack[] = []
-                let headers: { [key: string]: string } = {}
-                if (data.sources.length > 0 && data.sources[0]) {
-                    const raw = data.sources[0].url || ""
-                    if (/^https?:\/\//i.test(raw)) url = raw
-                }
-                if (data.tracks && data.tracks.length > 0) tracks = data.tracks
-                if (data.headers) headers = this.safeHeaders(data.headers)
-                if (url) {
-                    const ok: VibeResult = { status: "ok", url, tracks, headers }
-                    this.writeCache(cacheKey, ok)
-                    return ok
-                }
-                return { status: "fail", url: "", tracks: [], headers: {} }
+                const raw = (data.sources[0] && data.sources[0].url) || ""
+                if (!/^https?:\/\//i.test(raw)) return { status: "fail", url: "", tracks: [], headers: {} }
+                const ok: VibeResult = { status: "ok", url: raw, tracks: data.tracks && data.tracks.length > 0 ? data.tracks : [], headers: this.safeHeaders(data.headers || {}) }
+                this.writeCache(cacheKey, ok)
+                return ok
             }
             break
         }
@@ -311,21 +264,13 @@ class Provider implements AnimeProvider {
         if (first.status !== "ok") return 0
         let lo = 1
         let hi = 2
-        let bounded = false
-        while (hi <= 2048) {
+        for (; hi <= 2048; hi *= 2) {
             const v = await this.probeVibe(anilistId, hi, audio)
-            if (v.status === "ok") {
-                lo = hi
-                hi = hi * 2
-                continue
-            }
-            if (v.status === "notfound" || v.status === "nosource") {
-                bounded = true
-                break
-            }
-            return lo
+            if (v.status === "notfound" || v.status === "nosource") break
+            if (v.status !== "ok") return lo
+            lo = hi
         }
-        if (!bounded) return lo
+        if (hi > 2048) return lo
         while (hi - lo > 1) {
             const mid = Math.floor((lo + hi) / 2)
             const v = await this.probeVibe(anilistId, mid, audio)
@@ -338,12 +283,8 @@ class Provider implements AnimeProvider {
     }
 
     private parseAnilistId(query: string): number {
-        if (!query) return 0
-        const urlMatch = query.match(/anilist\.co\/anime\/(\d+)/i)
-        if (urlMatch && urlMatch[1]) return parseInt(urlMatch[1], 10) || 0
-        const trimmed = query.trim()
-        if (/^\d+$/.test(trimmed)) return parseInt(trimmed, 10) || 0
-        return 0
+        const m = (query || "").match(/anilist\.co\/anime\/(\d+)/i) || (query || "").trim().match(/^(\d+)$/)
+        return m ? parseInt(m[1], 10) : 0
     }
 
     private encode(anilistId: number, audio: string, num: number): string {
@@ -358,13 +299,9 @@ class Provider implements AnimeProvider {
         return { anilistId, audio, num }
     }
 
-    private normBase(): string {
-        return this.baseUrl.replace(/animelok\.(online|net|to)/i, "animelok.live").replace(/\/+$/, "")
-    }
-
     private reportError(scope: string, message: string): void {
         try {
-            console.error("SEHERRv1 " + JSON.stringify({ t: this.now(), ext: "aq-animelok", scope: scope, msg: this.plain(message) }))
+            console.error("SEHERRv1 " + JSON.stringify({ t: Date.now(), ext: "aq-animelok", scope: scope, msg: this.plain(message) }))
         } catch (_e) {}
     }
 
@@ -385,19 +322,9 @@ class Provider implements AnimeProvider {
         return message
     }
 
-    private now(): number {
-        try {
-            return Date.now()
-        } catch (_e) {
-            return 0
-        }
-    }
-
-    private readCache<T>(key: string, ttl?: number): T | undefined {
+    private readCache<T>(key: string, ttl: number): T | undefined {
         const entry = $store.get<{ at: number; data: T }>(key)
-        const t = this.now()
-        const max = ttl === undefined ? this.cacheTtl : ttl
-        if (entry && t > 0 && entry.at > 0 && t - entry.at < max) return entry.data
+        if (entry && Date.now() - entry.at < ttl) return entry.data
         if (entry !== undefined && entry !== null) {
             try {
                 $store.remove(key)
@@ -407,7 +334,6 @@ class Provider implements AnimeProvider {
     }
 
     private writeCache<T>(key: string, data: T): void {
-        const t = this.now()
-        if (t > 0) $store.set(key, { at: t, data })
+        $store.set(key, { at: Date.now(), data })
     }
 }

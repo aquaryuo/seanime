@@ -3,26 +3,6 @@ declare const console: { log(...args: any[]): void; info(...args: any[]): void; 
 function init() {
     $ui.register((ctx) => {
 
-        const AQ_SEH_MARKER = "SEHERRv1"
-        function aqText(msg: string): string {
-            if (msg === undefined || msg === null) return ""
-            return String(msg)
-                .replace(/…/g, "...")
-                .replace(/[—–]/g, "-")
-                .replace(/[\r\n\t]+/g, " ")
-                .replace(/ {2,}/g, " ")
-                .replace(/^ +/, "")
-                .replace(/\s+$/, "")
-        }
-
-        function aqReport(ext: string, scope: string, msg: string): void {
-            try {
-                const body = aqText(msg)
-                if (!body) return
-                console.error(AQ_SEH_MARKER + " " + JSON.stringify({ t: Date.now(), ext: ext, scope: scope, msg: body }))
-            } catch (_e) {}
-        }
-
         const SRC = "https://raw.githubusercontent.com/Bas1874/Seanime-Marketplace/main/Marketplace/Main.json"
         const OWN_SRC = "https://raw.githubusercontent.com/aquaryuo/seanime/main/marketplace.json"
         const EXT_ID = "aq-seatags"
@@ -39,38 +19,20 @@ function init() {
             id?: string
             name?: string
             author?: string
-            version?: string
-            description?: string
-            type?: string
-            language?: string
-            lang?: string
-            icon?: string
-            manifestURI?: string
-            payloadURI?: string
-            website?: string
-            permalink?: string
-            flags?: string
             stars?: number
-            official?: boolean
             workingTag?: boolean
             brokenTag?: boolean
             deprecatedTag?: boolean
         }
 
-        function now(): number {
-            try { return Date.now() } catch (_e) { return 0 }
-        }
-        function sget<T>(k: string, d: T): T {
-            try { const v = $storage.get<T>(k); return v === undefined || v === null ? d : v } catch (_e) { return d }
-        }
+        let boot: any = null
+        try { boot = $storage.get(CACHE_KEY) } catch (_e) {}
+        let entries: Entry[] = (boot && boot.data) || []
+        let filter = "all"
+        let authorQ = ""
+        let lastAt = (boot && boot.at) || 0
 
-        const boot = sget<{ at: number; data: Entry[] }>(CACHE_KEY, { at: 0, data: [] })
-        const entriesState = ctx.state<Entry[]>(boot.data && boot.data.length > 0 ? boot.data : [])
-        const filterState = ctx.state<string>("all")
-        const authorState = ctx.state<string>("")
-        let lastAt = boot.at || 0
-
-        const STATUS_OPTS: string[][] = [["all", "All statuses"], ["working", "Working"], ["broken", "Broken"], ["deprecated", "Deprecated"], ["untagged", "Untagged"]]
+        const STATUS_HTML = '<option value="all">All statuses</option><option value="working">Working</option><option value="broken">Broken</option><option value="deprecated">Deprecated</option><option value="untagged">Untagged</option>'
 
         let byId: { [k: string]: Entry } = {}
         let byName: { [k: string]: Entry } = {}
@@ -81,28 +43,21 @@ function init() {
             byNameAuthor = {}
             const nameCount: { [k: string]: number } = {}
             const pairCount: { [k: string]: number } = {}
-            const es = entriesState.get()
-            for (let i = 0; i < es.length; i++) {
-                const e = es[i]
+            for (let i = 0; i < entries.length; i++) {
+                const e = entries[i]
                 if (!e || typeof e !== "object") continue
                 if (e.id) byId[e.id] = e
-                if (e.name) {
-                    const k = String(e.name).toLowerCase()
-                    nameCount[k] = (nameCount[k] || 0) + 1
-                    byName[k] = e
-                    if (e.author) {
-                        const p = k + " " + String(e.author).toLowerCase()
-                        pairCount[p] = (pairCount[p] || 0) + 1
-                        byNameAuthor[p] = e
-                    }
-                }
+                if (!e.name) continue
+                const k = String(e.name).toLowerCase()
+                nameCount[k] = (nameCount[k] || 0) + 1
+                byName[k] = e
+                if (!e.author) continue
+                const p = k + " " + String(e.author).toLowerCase()
+                pairCount[p] = (pairCount[p] || 0) + 1
+                byNameAuthor[p] = e
             }
-            for (const k in nameCount) {
-                if (nameCount[k] > 1) delete byName[k]
-            }
-            for (const p in pairCount) {
-                if (pairCount[p] > 1) delete byNameAuthor[p]
-            }
+            for (const k in nameCount) if (nameCount[k] > 1) delete byName[k]
+            for (const p in pairCount) if (pairCount[p] > 1) delete byNameAuthor[p]
         }
         rebuildMaps()
 
@@ -124,18 +79,14 @@ function init() {
         function dsetErr(code: string): void {
             if (dErrSeen[code]) return
             dErrSeen[code] = true
-            aqReport(EXT_ID, "decorate", D_REASON[code] || code)
+            try { console.error("SEHERRv1 " + JSON.stringify({ t: Date.now(), ext: EXT_ID, scope: "decorate", msg: D_REASON[code] || code })) } catch (_e) {}
         }
         let domReady = false
         let controlsCancel: any = null
         let cardsCancel: any = null
         let filterStyle: any = null
-        let genById: { [k: string]: number } = {}
-        let genSeq = 0
-        function live(eid: string, gen: number): boolean { return genById[eid] === gen }
+        let epoch = 0
 
-        const CTL_INPUT_CSS = "height:40px;border-radius:12px;border:1px solid rgba(255,255,255,0.12);background:#0b0b0b;color:#d1d1d1;font-size:14px;outline:none;font-family:inherit;box-sizing:border-box;padding:0 12px;min-width:180px"
-        const CTL_TRIGGER_CSS = "height:40px;border-radius:12px;border:1px solid rgba(255,255,255,0.12);background-color:#0b0b0b;color:#d1d1d1;font-size:14px;font-family:inherit"
         const SELECT_OVERRIDE_CSS = "flex:none;width:200px;padding-left:0.75rem;padding-right:0.75rem;box-sizing:border-box;cursor:pointer;appearance:auto"
         const PERSON_SVG = "<svg width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2'></path><circle cx='12' cy='7' r='4'></circle></svg>"
         const ICON_CLASS = "UI-Input__addons--icon pointer-events-none absolute inset-y-0 left-0 w-12 grid place-content-center text-gray-500 dark:text-gray-300"
@@ -163,21 +114,13 @@ function init() {
             return '<span style="' + chipCss(kind) + '">' + esc(text) + "</span>"
         }
         function blockHtml(info: Entry, tags: string[]): string {
-            const rcss = "display:flex;flex-wrap:wrap;gap:6px;align-items:center"
             let r1 = ""
             for (let i = 0; i < tags.length; i++) r1 += chipHtml(PILL_LABEL[tags[i]] || tags[i], tags[i])
             if (typeof info.stars === "number" && info.stars > 0) r1 += chipHtml("★ " + info.stars, "stars")
-            return '<div style="' + rcss + '">' + r1 + "</div>"
+            return r1
         }
-        function hasChips(info: Entry, tags: string[]): boolean {
-            return tags.length > 0 || (typeof info.stars === "number" && info.stars > 0)
-        }
-        function extractId(html: string): string {
-            const m = html.match(/opacity-30[^>]*>([^<]+)</)
-            return m ? m[1].trim() : ""
-        }
-        function extractName(html: string): string {
-            const m = html.match(/font-semibold[^>]*>([^<]+)</)
+        function grab(html: string, re: RegExp): string {
+            const m = html.match(re)
             return m ? m[1].trim() : ""
         }
         function extractAuthor(html: string): string {
@@ -206,12 +149,13 @@ function init() {
             } catch (e) { dsetErr("findrow") }
             for (let i = 0; i < existing.length; i++) { try { existing[i].remove() } catch (_e) {} }
             if (!block) return
-            if (!hasChips(info, tags)) return
+            const html = blockHtml(info, tags)
+            if (!html) return
             let row: any = null
             if (badges.length) { try { row = await badges[0].getParent() } catch (_e) {} }
             try { block.setAttribute("class", C_BLOCK) } catch (_e) {}
             try { block.setCssText("display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px") } catch (_e) {}
-            try { block.setInnerHTML(blockHtml(info, tags)) } catch (e) { dsetErr("html") }
+            try { block.setInnerHTML(html) } catch (e) { dsetErr("html") }
             if (row) {
                 try { row.after(block) } catch (e) { dsetErr("insert") }
             } else {
@@ -226,11 +170,11 @@ function init() {
             if (cid) { if (decorating[cid]) return; decorating[cid] = true }
             try {
                 const html = (card && card.innerHTML) ? String(card.innerHTML) : ""
-                const id = extractId(html)
+                const id = grab(html, /opacity-30[^>]*>([^<]+)</)
                 const cardAuthor = extractAuthor(html)
                 let info: Entry | null = (id && !/\s/.test(id) && byId[id]) ? byId[id] : null
                 if (!info) {
-                    const nm = extractName(html).toLowerCase()
+                    const nm = grab(html, /font-semibold[^>]*>([^<]+)</).toLowerCase()
                     if (nm && cardAuthor && byNameAuthor[nm + " " + cardAuthor.toLowerCase()]) info = byNameAuthor[nm + " " + cardAuthor.toLowerCase()]
                     if (!info && nm && byName[nm]) info = byName[nm]
                 }
@@ -285,10 +229,10 @@ function init() {
         async function applyFilter(): Promise<void> {
             await ensureFilterStyle()
             if (!filterStyle) return
-            const f = filterState.get()
-            const a = authorState.get().toLowerCase().replace(/["\\]/g, "")
+            const f = filter
+            const a = authorQ.toLowerCase().replace(/["\\]/g, "")
             let css = ""
-            if (f && f !== "all" && entriesState.get().length > 0) css += '[class*="extension-card"]:not([' + A_TAGS + '~="' + f + '"]){display:none !important}'
+            if (f && f !== "all" && entries.length > 0) css += '[class*="extension-card"]:not([' + A_TAGS + '~="' + f + '"]){display:none !important}'
             if (a && decorated) css += '[class*="extension-card"]:not([' + A_AUTHOR + '*="' + a + '"]){display:none !important}'
             try { filterStyle.setText(css) } catch (e) { dsetErr("filter") }
         }
@@ -299,38 +243,30 @@ function init() {
             try {
                 el.getProperty("value").then((v: any) => {
                     if (t !== authorToken) return
-                    authorState.set(v == null ? "" : String(v))
+                    authorQ = v == null ? "" : String(v)
                     applyFilter().catch(() => {})
                 }).catch(() => {})
             } catch (_e) {}
         }
-        async function buildStatusDropdown(boxClass: string, gen: number, eid: string): Promise<any> {
+        async function buildStatusDropdown(boxClass: string, gen: number): Promise<any> {
             let sel: any = null
             try { sel = await ctx.dom.createElement("select") } catch (_e) {}
             if (!sel) return null
 
-            if (boxClass) {
-                try { sel.setAttribute("class", boxClass) } catch (_e) {}
-                try { sel.setCssText(SELECT_OVERRIDE_CSS) } catch (_e) {}
-            } else {
-                try { sel.setCssText(CTL_TRIGGER_CSS + ";" + SELECT_OVERRIDE_CSS) } catch (_e) {}
-            }
+            try { sel.setAttribute("class", boxClass) } catch (_e) {}
+            try { sel.setCssText(SELECT_OVERRIDE_CSS) } catch (_e) {}
             try { sel.setAttribute("aria-label", "Filter extensions by status") } catch (_e) {}
             try { sel.setAttribute("title", "Filter extensions by status") } catch (_e) {}
 
-            let optsHtml = ""
-            for (let i = 0; i < STATUS_OPTS.length; i++) {
-                optsHtml += '<option value="' + esc(STATUS_OPTS[i][0]) + '">' + esc(STATUS_OPTS[i][1]) + "</option>"
-            }
-            try { sel.setInnerHTML(optsHtml) } catch (_e) {}
-            try { sel.setProperty("value", filterState.get()) } catch (_e) {}
+            try { sel.setInnerHTML(STATUS_HTML) } catch (_e) {}
+            try { sel.setProperty("value", filter) } catch (_e) {}
 
             const onPick = (): void => {
-                if (!live(eid, gen)) return
+                if (gen !== epoch) return
                 try {
                     sel.getProperty("value").then((v: any) => {
-                        if (!live(eid, gen)) return
-                        filterState.set(v == null ? STATUS_OPTS[0][0] : String(v))
+                        if (gen !== epoch) return
+                        filter = v == null ? "all" : String(v)
                         applyFilter().catch(() => {})
                     }).catch(() => {})
                 } catch (_e) {}
@@ -339,33 +275,20 @@ function init() {
             return sel
         }
 
-        async function buildAuthorInput(inputClass: string, gen: number, eid: string): Promise<any> {
-            if (inputClass) {
-                let author: any = null
-                try { author = await ctx.dom.createElement("div") } catch (_e) {}
-                if (!author) return null
-                try { author.setCssText("position:relative;display:flex;align-items:center;flex:none;width:220px;max-width:220px;box-sizing:border-box") } catch (_e) {}
-                try { author.setInnerHTML('<span class="' + ICON_CLASS + '" style="z-index:1" aria-hidden="true">' + PERSON_SVG + '</span><input type="text" placeholder="Search by author..." aria-label="Search extensions by author" class="' + esc(inputClass) + '" />') } catch (_e) {}
-                let ains: any[] = []
-                try { ains = await author.query("input") } catch (_e) {}
-                if (ains && ains.length) {
-                    const ainput = ains[0]
-                    try { ainput.setProperty("value", authorState.get()) } catch (_e) {}
-                    try { ainput.addEventListener("input", () => { if (!live(eid, gen)) return; onAuthorInput(ainput) }) } catch (_e) {}
-                    try { ainput.addEventListener("keyup", () => { if (!live(eid, gen)) return; onAuthorInput(ainput) }) } catch (_e) {}
-                }
-                return author
-            }
+        async function buildAuthorInput(inputClass: string, gen: number): Promise<any> {
             let author: any = null
-            try { author = await ctx.dom.createElement("input") } catch (_e) {}
+            try { author = await ctx.dom.createElement("div") } catch (_e) {}
             if (!author) return null
-            try { author.setAttribute("type", "text") } catch (_e) {}
-            try { author.setAttribute("placeholder", "Search by author...") } catch (_e) {}
-            try { author.setAttribute("aria-label", "Search extensions by author") } catch (_e) {}
-            try { author.setCssText(CTL_INPUT_CSS) } catch (_e) {}
-            try { author.setProperty("value", authorState.get()) } catch (_e) {}
-            try { author.addEventListener("input", () => { if (!live(eid, gen)) return; onAuthorInput(author) }) } catch (_e) {}
-            try { author.addEventListener("keyup", () => { if (!live(eid, gen)) return; onAuthorInput(author) }) } catch (_e) {}
+            try { author.setCssText("position:relative;display:flex;align-items:center;flex:none;width:220px;max-width:220px;box-sizing:border-box") } catch (_e) {}
+            try { author.setInnerHTML('<span class="' + ICON_CLASS + '" style="z-index:1" aria-hidden="true">' + PERSON_SVG + '</span><input type="text" placeholder="Search by author..." aria-label="Search extensions by author" class="' + esc(inputClass) + '" />') } catch (_e) {}
+            let ains: any[] = []
+            try { ains = await author.query("input") } catch (_e) {}
+            if (ains && ains.length) {
+                const ainput = ains[0]
+                try { ainput.setProperty("value", authorQ) } catch (_e) {}
+                try { ainput.addEventListener("input", () => { if (gen !== epoch) return; onAuthorInput(ainput) }) } catch (_e) {}
+                try { ainput.addEventListener("keyup", () => { if (gen !== epoch) return; onAuthorInput(ainput) }) } catch (_e) {}
+            }
             return author
         }
 
@@ -378,7 +301,7 @@ function init() {
             if (rowEl) { try { toolbar = await rowEl.getParent() } catch (_e) {} }
             let langRoot: any[] = []
             if (toolbar) { try { langRoot = await toolbar.query(".UI-Select__root") } catch (_e) {} }
-            return { ic: ic, rowEl: rowEl, toolbar: toolbar, langRoot: langRoot || [], hasLang: !!(langRoot && langRoot.length) }
+            return { ic: ic, rowEl: rowEl, toolbar: toolbar, hasLang: !!(langRoot && langRoot.length) }
         }
 
         let injectedIds: { [k: string]: boolean } = {}
@@ -391,26 +314,22 @@ function init() {
                 if (eid && injectedIds[eid]) continue
                 if (eid) injectedIds[eid] = true
                 try { input.setAttribute(A_TB, "1") } catch (_e) {}
-                const gen = ++genSeq
-                genById[eid] = gen
+                const gen = epoch
 
                 if (!cachedInputClass) { try { const c = await input.getAttribute("class"); cachedInputClass = c ? String(c) : "" } catch (_e) {} }
                 const cls = cachedInputClass
 
-                let anchors: any = { ic: null, langRoot: [], hasLang: false }
+                let anchors: any = {}
                 let statusEl: any = null, author: any = null
                 try {
                     const r = await Promise.all([
                         resolveAnchors(input),
-                        buildStatusDropdown(cls, gen, eid).catch(() => null),
-                        buildAuthorInput(cls, gen, eid).catch(() => null),
+                        buildStatusDropdown(cls, gen).catch(() => null),
+                        buildAuthorInput(cls, gen).catch(() => null),
                     ])
                     anchors = r[0]; statusEl = r[1]; author = r[2]
                 } catch (_e) {}
-                const ic = anchors.ic
-                const rowEl = anchors.rowEl
-                const toolbar = anchors.toolbar
-                const hasLang = anchors.hasLang
+                const { ic, rowEl, toolbar, hasLang } = anchors
 
                 if (hasLang) {
                     if (toolbar) {
@@ -438,27 +357,23 @@ function init() {
             }
         }
 
+        function reobserve(prev: any, sel: string, cb: any, code: string, opts?: any): any {
+            if (prev) { try { prev() } catch (_e) {} }
+            try { return ctx.dom.observe(sel, cb, opts)[0] } catch (_e) { dsetErr(code); return null }
+        }
         function startControls(): void {
             if (!domReady) return
-            if (controlsCancel) { try { controlsCancel() } catch (_e) {} controlsCancel = null }
-            try {
-                const r: any = ctx.dom.observe('input[placeholder^="Search"][placeholder*="extensions"]:not([' + A_TB + '])', injectControls)
-                controlsCancel = (r && r.length) ? r[0] : null
-            } catch (e) { dsetErr("obs-ctl") }
+            controlsCancel = reobserve(controlsCancel, 'input[placeholder^="Search"][placeholder*="extensions"]:not([' + A_TB + '])', injectControls, "obs-ctl")
         }
         function startCards(): void {
             if (!domReady) return
-            if (cardsCancel) { try { cardsCancel() } catch (_e) {} cardsCancel = null }
-            try {
-                const r: any = ctx.dom.observe('[class*="extension-card"]:not([' + A_TAGS + '])', decorateCards, { withInnerHTML: true })
-                cardsCancel = (r && r.length) ? r[0] : null
-            } catch (e) { dsetErr("obs-cards") }
+            cardsCancel = reobserve(cardsCancel, '[class*="extension-card"]:not([' + A_TAGS + '])', decorateCards, "obs-cards", { withInnerHTML: true })
             applyFilter().catch(() => {})
         }
-        async function resetForReady(): Promise<void> {
+        function resetForReady(): void {
             filterStyle = null
             injectedIds = {}
-            genById = {}
+            epoch++
             try {
                 ctx.dom.query("[" + A_STYLE + "]").then((olds: any[]) => {
                     if (olds) for (let i = 0; i < olds.length; i++) { try { olds[i].remove() } catch (_e) {} }
@@ -476,8 +391,8 @@ function init() {
             startCards()
             load(false).catch(() => {})
         }
-        try { ctx.dom.onReady(() => { resetForReady().then(() => onDomReady(), () => onDomReady()) }) } catch (_e) {}
-        try { ctx.dom.onMainTabReady(() => { resetForReady().then(() => onDomReady(), () => onDomReady()) }) } catch (_e) {}
+        try { ctx.dom.onReady(() => { resetForReady(); onDomReady() }) } catch (_e) {}
+        try { ctx.dom.onMainTabReady(() => { resetForReady(); onDomReady() }) } catch (_e) {}
         try { ctx.screen.onNavigate(() => { startControls(); startCards(); load(false).catch(() => {}) }) } catch (_e) {}
 
         async function fetchOwn(): Promise<Entry[]> {
@@ -515,17 +430,15 @@ function init() {
         }
         async function load(force: boolean): Promise<void> {
             if (inflight) return
-            if (!force && entriesState.get().length > 0 && now() - lastAt < CACHE_TTL) return
+            if (!force && entries.length > 0 && Date.now() - lastAt < CACHE_TTL) return
             inflight = true
             let dataChanged = false
             let ok = false
             try {
-                const res = await fetch(SRC, { timeout: 15 })
+                const res = await fetch(SRC)
                 if (res.ok) {
                     let data: any = undefined
-                    let parsed = true
-                    try { data = res.json<any>() } catch (_e) { parsed = false; dsetErr("parse") }
-                    if (!parsed) data = undefined
+                    try { data = res.json<any>() } catch (_e) { dsetErr("parse") }
                     if (Array.isArray(data)) {
                         ok = true
                         const clean = (data as any[]).filter((e) => e && typeof e === "object")
@@ -537,14 +450,14 @@ function init() {
                             haveId[k] = true
                             clean.push(e)
                         }
-                        try { dataChanged = JSON.stringify(entriesState.get()) !== JSON.stringify(clean) } catch (_e) { dataChanged = true }
-                        entriesState.set(clean as Entry[])
+                        try { dataChanged = JSON.stringify(entries) !== JSON.stringify(clean) } catch (_e) { dataChanged = true }
+                        entries = clean as Entry[]
                         rebuildMaps()
-                        try { $storage.set(CACHE_KEY, { at: now(), data: clean }) } catch (_e) {}
-                    } else if (parsed) {
+                        try { $storage.set(CACHE_KEY, { at: Date.now(), data: clean }) } catch (_e) {}
+                    } else if (data !== undefined) {
                         dsetErr("shape")
                     }
-                    lastAt = now()
+                    lastAt = Date.now()
                 } else {
                     dsetErr("http")
                 }

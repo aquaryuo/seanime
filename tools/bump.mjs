@@ -39,7 +39,7 @@ export function normalise(v) {
     return `${major}.${minor}.${patch}`
 }
 
-function manifests() {
+export function manifests() {
     const out = []
     for (const kind of ["extensions", "plugins"]) {
         const dir = path.join(ROOT, kind)
