@@ -16,7 +16,7 @@ Launch modes (persisted):
 - **Binary** *(default)* — fetches the OS/arch build (Linux/macOS x64+arm64, Windows x64) into `$CACHE/aquatils/<ver>/solver/`, runs it via `sh -c` / `cmd /c` bound to `127.0.0.1`. First run: one **consent** click + Seanime's **Allow** download prompt.
 - **Remote** — point Host/Port at a FlareSolverr `/v1` endpoint you run (box / NAS / container). The plugin only manages sessions + status. Mandatory under Seanime **strict** secure mode (no `$os` / `$osExtra` / `ctx.downloader`).
 
-Advanced/Settings: **Test** (real `request.get` + timing), **Doctor** (cache/port/binary), **Stealth** (validates the live TLS fingerprint against `tls.peet.ws`), browser engine + window mode, encrypted DNS (DoH), adaptive rate-limit pacing, own-spec TLS fingerprint, Auto-start + crash-restart.
+Advanced/Settings: **Test** (real `request.get` + timing), **Doctor** (cache/port/binary), **Stealth** (validates the live TLS fingerprint against `tls.peet.ws`), browser engine (Windows), encrypted DNS (DoH), adaptive rate-limit pacing, own-spec TLS fingerprint, Auto-start + crash-restart.
 
 **Ceiling: IP reputation.** A datacenter / VPS / flagged IP fails regardless of engine. Use a residential connection.
 

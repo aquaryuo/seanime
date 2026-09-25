@@ -123,7 +123,6 @@ function init() {
         const fsAutoStart = ctx.state<boolean>(sget<boolean>("fs.autoStart", false))
         const fsWantChromium = ctx.state<boolean>(sget<boolean>("fs.wantChromium", typeof $os !== "undefined" && $os.platform !== "windows"))
         const fsAutoUpdate = ctx.state<boolean>(sget<boolean>("fs.autoUpdate", false))
-        const fsHeadless = sget<string>("fs.browserMode", "") === "headless"
         const fsEngine = ctx.state<string>(((): string => { const e = sget<string>("fs.engine", "webview2"); return e === "edge" ? "chrome" : e })())
         const fsWv2Warm = ctx.state<boolean>(sget<boolean>("fs.wv2warm", true))
         const fsWv2Refresh = ctx.state<boolean>(sget<boolean>("fs.wv2refresh", false))
@@ -151,6 +150,7 @@ function init() {
         let fsDownloadId = ""
         let fsChromiumDownloadId = ""
         let fsLastOut = ""
+        let fsRunOut = ""
         let fsRestarting = false
         let fsUpSince = 0
         let fsDownStreak = 0
@@ -338,8 +338,8 @@ function init() {
             promptDeps()
         }
 
-        function pushLog(chunk: string): void {
-            if (!chunk) return
+        function pushLog(chunk: string): string {
+            if (!chunk) return ""
             scanChromeDeps(chunk)
             const lines = scrubLog(chunk).split("\n")
             let all = ""
@@ -349,6 +349,7 @@ function init() {
                 all += l + "\n"
             }
             if (all) fsLastOut = (fsLastOut + all).slice(-12000)
+            return all
         }
 
         function plog(msg: string, lvl?: AqLevel): void {
@@ -440,7 +441,7 @@ function init() {
             if (!plt || !dl) return
             void chromiumStable(plt).then((st) => {
                 if (!st.version) return
-                const cur = $storage.get<string>("fs.chromiumVer") || ""
+                const cur = sget<string>("fs.chromiumVer", "")
                 if (cur && verNewer(st.version, cur)) updateChromium()
             })
         }
@@ -809,7 +810,7 @@ function init() {
                         fsStartTicks++
                         if (fsStartTicks >= 18) {
                             setStatus("down")
-                            const why = cleanTail(fsLastOut) || readLogTail(fsLogPath())
+                            const why = cleanTail(fsRunOut)
                             setErr(why || "The solver didn't come up in time.")
                             setNote("The solver didn't come up" + (why ? ": " + why : "") + ".")
                         }
@@ -1011,15 +1012,6 @@ function init() {
             return scrubLog(out.join(" | ")).slice(-220)
         }
 
-        function readLogTail(p: string): string {
-            if (!p) return ""
-            try {
-                return cleanTail($toString($os.readFile(p)))
-            } catch (_e) {
-                return ""
-            }
-        }
-
         function readLogFull(p: string): string {
             if (!p) return ""
             try {
@@ -1087,7 +1079,7 @@ function init() {
         }
 
         function chromiumCachedVersion(): string {
-            return $storage.get<string>("fs.chromiumVer") || "?"
+            return sget<string>("fs.chromiumVer", "") || "?"
         }
 
         function downloadChromium(st: { version: string; url: string }, done: (ok: boolean) => void): void {
@@ -1205,7 +1197,7 @@ function init() {
             tray.update()
             void chromiumStable(plt).then((st) => {
                 if (!st.version || !st.url) { setNote("Couldn't reach the Chromium release feed."); tray.update(); return }
-                const cur = $storage.get<string>("fs.chromiumVer") || ""
+                const cur = sget<string>("fs.chromiumVer", "")
                 if (cur && !verNewer(st.version, cur)) { setNote("Chromium is up to date (" + cur + ")."); tray.update(); return }
                 const wasRunning = fsMode.get() !== "remote" && (fsStatus.get() === "up" || fsStatus.get() === "starting")
                 const apply = (): void => {
@@ -1272,9 +1264,8 @@ function init() {
                 if (logPath) env.push("LOG_FILE=" + logPath)
                 env.push("SOLVER_STATE_DIR=" + $filepath.join(aquatilsDir(), "state"))
                 if (chromePath) env.push("SOLVER_CHROME=" + chromePath)
-                env.push("SOLVER_BROWSER_MODE=" + (fsHeadless ? "headless" : $os.platform === "windows" ? "offscreen" : "auto"))
-                if (fsHeadless) env.push("SOLVER_HEADLESS=1")
-                else if ($os.platform === "linux") env.push("SOLVER_XVFB=1")
+                env.push("SOLVER_BROWSER_MODE=" + ($os.platform === "windows" ? "offscreen" : "auto"))
+                if ($os.platform === "linux") env.push("SOLVER_XVFB=1")
                 if ($os.platform === "windows" && fsEngine.get() && fsEngine.get() !== "chrome") env.push("SOLVER_BROWSER_ENGINE=" + fsEngine.get())
                 if (!fsWv2Warm.get()) env.push("SOLVER_WV2_WARM=0")
                 if (fsWv2Refresh.get()) env.push("SOLVER_WV2_REFRESH=1")
@@ -1286,14 +1277,14 @@ function init() {
                 c.env = env
             } catch (_e) {}
             fsBinary = c
+            fsRunOut = ""
             plog("starting solver " + SOLVER_VERSION + "…")
             try {
                 ac.run((data, err, code, _s) => {
                     if (gen !== fsBinaryGen) return
-                    if (err) {
-                        try { pushLog($toString(err)) } catch (_e) {}
-                    } else if (data) {
-                        try { pushLog($toString(data)) } catch (_e) {}
+                    const raw = err || data
+                    if (raw) {
+                        try { fsRunOut = (fsRunOut + pushLog($toString(raw))).slice(-8000) } catch (_e) {}
                     }
                     if (code === undefined) {
                         const t = Date.now()
@@ -1318,11 +1309,11 @@ function init() {
                         setNote("Solver stopped (code " + code + ").")
                         if (!fsManualStop) notifyOnce("down", "Aqua's Utils: the solver stopped (code " + code + ").")
                     } else {
-                        const why = cleanTail(fsLastOut) || readLogTail(logPath)
-                        const bindRace = /address already in use|bind:\s|EADDRINUSE/i.test(fsLastOut)
+                        const why = cleanTail(fsRunOut)
+                        const bindRace = /address already in use|bind:\s|EADDRINUSE/i.test(fsRunOut)
                         const binGone = !solverBinExists()
-                        const avEvidence = /contains a virus|operation did not complete successfully/i.test(fsLastOut) || (binGone && solverQuarantined())
-                        const execRefused = /cannot execute the specified program|not a valid win32 application|is not recognized as an internal|exec format error|access is denied/i.test(fsLastOut)
+                        const avEvidence = /contains a virus|operation did not complete successfully/i.test(fsRunOut) || (binGone && solverQuarantined())
+                        const execRefused = /cannot execute the specified program|not a valid win32 application|is not recognized as an internal|exec format error|access is denied/i.test(fsRunOut)
                         if (bindRace) {
                             plog("solver couldn't bind port " + port + " yet (a previous instance is still releasing it) - it will retry")
                             setErr("The previous solver is still shutting down (port " + port + " busy) - retrying shortly.")
@@ -2407,6 +2398,7 @@ function init() {
         } catch (_e) {}
 
         if (typeof $os !== "undefined") removeSolverDirs(FS_VERSION)
+        ;["fs.browserMode", "fs.logFilter"].forEach((k) => { try { if (sget<any>(k, null) !== null) $storage.remove(k) } catch (_e) {} })
 
         if (fsMode.get() !== "remote") {
             try {
