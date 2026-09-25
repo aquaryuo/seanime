@@ -2,6 +2,7 @@
   {
     "id": "aq-anikoto",
     "name": "Anikoto",
+    "version": "1.4.4",
     "description": "Only anikoto compatibility layer you'll ever need",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
@@ -12,8 +13,35 @@
     "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/anikoto/manifest.json"
   },
   {
+    "id": "aq-animelok",
+    "name": "Animelok",
+    "version": "0.1.20",
+    "description": "Only animelok compatibility layer you'll ever need",
+    "author": "aquaryuo",
+    "type": "onlinestream-provider",
+    "language": "typescript",
+    "lang": "en",
+    "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/animelok/icon.png",
+    "website": "https://animelok.live",
+    "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/animelok/manifest.json"
+  },
+  {
+    "id": "aq-animepahe",
+    "name": "AnimePahe",
+    "version": "0.2.43",
+    "description": "Only animepahe compatibility layer you'll ever need",
+    "author": "aquaryuo",
+    "type": "onlinestream-provider",
+    "language": "typescript",
+    "lang": "en",
+    "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/animepahe/icon.png",
+    "website": "https://animepahe.pw",
+    "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/animepahe/manifest.json"
+  },
+  {
     "id": "aq-anizone",
     "name": "AniZone",
+    "version": "1.1.37",
     "description": "Only anizone compatibility layer you'll ever need. Dub streams carry both audio tracks — pick English in the player's audio menu once and Seanime remembers it for that series.",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
@@ -26,6 +54,7 @@
   {
     "id": "aq-aquaprefs",
     "name": "Aqua's Prefs",
+    "version": "1.1.66",
     "description": "Remembers one set of player options and reapplies it on local playback. Online streams keep Seanime's own per-series choice.",
     "author": "aquaryuo",
     "type": "plugin",
@@ -38,6 +67,7 @@
   {
     "id": "aq-aquatils",
     "name": "Aqua's Utils",
+    "version": "1.0.28",
     "description": "Toolbox plugin: surfaces compatible extension errors, launches a self-contained solver (or connects to a remote one you run) to reach guarded sites, and more.",
     "author": "aquaryuo",
     "type": "plugin",
@@ -50,6 +80,7 @@
   {
     "id": "aq-seatags",
     "name": "SeaTags",
+    "version": "1.7.24",
     "description": "Plugin dedicated to displaying status of plugins/extensions within installed/marketplace pages; as well as filter based on author & show score",
     "author": "aquaryuo",
     "type": "plugin",
