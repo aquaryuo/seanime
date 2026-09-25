@@ -45,5 +45,5 @@ console.error("SEHERRv1 " + JSON.stringify({ t: Date.now(), ext, scope, msg: Str
 
 - Scopes: `system`, `storage`, `notification`.
 - `networkAccess: ["*"]` — loopback (log API + solver), a user-set Remote host (anywhere), GitHub release download. Broad because Remote is arbitrary and Seanime has no runtime per-host grant.
-- `commandScopes` `sh` / `cmd` — launch/stop the binary. Decline if Remote-only.
+- `commandScopes` `sh` / `cmd` — start the downloaded solver (`chmod` and the macOS quarantine strip; on Windows `.\solver.exe` from its own folder); hash the download before it runs (`sha256sum` / `shasum` / `certutil`); unpack Chromium on macOS (`ditto`); check Chromium's system libraries (`Xvfb`, `ldd`, `dpkg-query`) and look for an installed Chromium; `apt-get install` the missing packages as root or passwordless sudo, only when you press Install; stop the plugin's own solver and Chromium processes (`pkill` / `kill`, PowerShell), matched on the aquatils cache folder, and wait for the port to close (`ss` / `lsof`). Decline if Remote-only.
 - `readPaths` / `writePaths`: `$CACHE/aquatils` — solver download/extract dir.

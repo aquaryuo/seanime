@@ -175,7 +175,6 @@ function init() {
         const fsDepsInstalling = ctx.state<boolean>(false)
         const fsDepsInstallMsg = ctx.state<string>("")
         let fsDepsChecked = false
-        let fsDepsAutoTried = false
         const fsVersion = ctx.state<string>("")
         const fsTest = ctx.state<string>("")
         const fsConsent = ctx.state<boolean>(sget<boolean>("fs.consent", false))
@@ -223,7 +222,7 @@ function init() {
             if (typeof $os === "undefined" || typeof $osExtra === "undefined" || $os.platform !== "linux") return
             if (fsDepsChecked && !force) return
             const chrome = chromiumCachedPath()
-            if (!chrome && !fsWantChromium.get()) return
+            if (!chrome && (!fsWantChromium.get() || !binaryDownloaded())) return
             fsDepsChecked = true
             const script = "c=" + shq(chrome) + "; miss=; "
                 + "for t in Xvfb; do command -v \"$t\" >/dev/null 2>&1 || miss=\"$miss $t\"; done; "
@@ -233,25 +232,21 @@ function init() {
                 + "for p in " + CHROME_DEPS + "; do dpkg-query -W -f='${Status}' \"$p\" 2>/dev/null | grep -q 'install ok installed' || echo \"$p\"; done; "
                 + "else for t in $miss; do [ \"$t\" = Xvfb ] && echo xvfb || echo \"$t\"; done; fi; "
                 + "else echo OK; fi"
-            try {
-                $osExtra.asyncCmd("sh", "-c", script).run((data, _e, code) => {
-                    if (code === undefined) return
-                    const out = data ? $toString(data) : ""
-                    if (out.indexOf("BROKEN") < 0) {
-                        if (out.indexOf("OK") >= 0) fsDepsPkgs.set([])
-                        return
-                    }
-                    const pkgs = out.split("\n").map((l) => l.replace(/\s+/g, "")).filter((t) => /^[a-z0-9][a-z0-9+.-]*$/.test(t)).sort()
-                    if (!pkgs.length) {
-                        plog("browser solver: Chromium is missing a system library (no dpkg here to name it)")
-                        notifyOnce("chromedeps", "Aqua's Utils: the browser solver's Chromium is missing a system library, so hard challenges can't be solved until it's installed.")
-                        return
-                    }
-                    fsDepsPkgs.set(pkgs)
-                    tray.update()
-                    if (chrome) maybeAutoInstallDeps(); else promptDeps()
-                })
-            } catch (_e) {}
+            runCollect((out) => {
+                if (out.indexOf("BROKEN") < 0) {
+                    if (out.indexOf("OK") >= 0) fsDepsPkgs.set([])
+                    return
+                }
+                const pkgs = out.split("\n").map((l) => l.replace(/\s+/g, "")).filter((t) => /^[a-z0-9][a-z0-9+.-]*$/.test(t)).sort()
+                if (!pkgs.length) {
+                    plog("browser solver: Chromium is missing a system library (no dpkg here to name it)")
+                    notifyOnce("chromedeps", "Aqua's Utils: the browser solver's Chromium is missing a system library, so hard challenges can't be solved until it's installed.")
+                    return
+                }
+                fsDepsPkgs.set(pkgs)
+                tray.update()
+                promptDeps()
+            }, "sh", "-c", script)
         }
 
         function installChromiumDeps(): void {
@@ -265,57 +260,25 @@ function init() {
             const root = "DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y " + CHROME_DEPS
             const nonRoot = "sudo -n env DEBIAN_FRONTEND=noninteractive apt-get update && sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y " + CHROME_DEPS
             const cmd = "if [ \"$(id -u)\" = 0 ]; then " + root + "; else " + nonRoot + "; fi"
-            let tail = ""
-            try {
-                $osExtra.asyncCmd("sh", "-c", cmd + " 2>&1").run((data, _e, code) => {
-                    if (data) { try { tail = (tail + $toString(data)).slice(-1200) } catch (_e) {} }
-                    if (code === undefined) return
-                    fsDepsInstalling.set(false)
-                    if (code === 0) {
-                        plog("Chromium system packages installed - restarting the solver")
-                        fsDepsPkgs.set([])
-                        fsDepsInstallMsg.set("")
-                        fsDepsChecked = false
-                        fsNotified["chromedeps"] = false
-                        try { ctx.toast.success("System packages installed" + (fsManualStop ? "." : " - restarting the solver.")) } catch (_e) {}
-                        if (!fsManualStop) fsStart()
-                    } else {
-                        const why = cleanTail(tail)
-                        fsDepsInstallMsg.set("Automatic install failed (exit " + code + ")" + (why ? ": " + why : "") + ". You likely need root or passwordless sudo - use Copy command to run it yourself.")
-                        plog("Chromium deps install failed (exit " + code + ")")
-                        try { ctx.toast.error("Automatic install failed - see the tray for the command to run yourself.") } catch (_e) {}
-                        promptDeps()
-                    }
-                    tray.update()
-                })
-            } catch (e) {
+            runCollect((out, code) => {
                 fsDepsInstalling.set(false)
-                fsDepsInstallMsg.set("Couldn't launch the installer: " + String(e))
+                if (code === 0) {
+                    plog("Chromium system packages installed - restarting the solver")
+                    fsDepsPkgs.set([])
+                    fsDepsInstallMsg.set("")
+                    fsDepsChecked = false
+                    fsNotified["chromedeps"] = false
+                    try { ctx.toast.success("System packages installed" + (fsManualStop ? "." : " - restarting the solver.")) } catch (_e) {}
+                    if (!fsManualStop) fsStart()
+                } else {
+                    const why = cleanTail(out)
+                    fsDepsInstallMsg.set("Automatic install failed (exit " + code + ")" + (why ? ": " + why : "") + ". You likely need root or passwordless sudo - use Copy command to run it yourself.")
+                    plog("Chromium deps install failed (exit " + code + ")")
+                    try { ctx.toast.error("Automatic install failed - see the tray for the command to run yourself.") } catch (_e) {}
+                    promptDeps()
+                }
                 tray.update()
-            }
-        }
-
-        function maybeAutoInstallDeps(): void {
-            if (typeof $osExtra === "undefined") return
-            const pkgs = fsDepsPkgs.get() || []
-            if (!pkgs.length || fsDepsInstalling.get()) return
-            if (fsDepsAutoTried) { promptDeps(); return }
-            try {
-                $osExtra.asyncCmd("sh", "-c", "if command -v apt-get >/dev/null 2>&1 && { [ \"$(id -u)\" = 0 ] || sudo -n true 2>/dev/null; }; then echo YES; else echo NO; fi").run((data, _e, code) => {
-                    if (code === undefined) return
-                    const canInstall = !!data && $toString(data).indexOf("YES") >= 0
-                    if (canInstall) {
-                        fsDepsAutoTried = true
-                        plog("installing missing system package(s) automatically: " + pkgs.join(", "))
-                        try { ctx.toast.info("Installing system packages the browser solver needs (" + pkgs.join(", ") + ")…") } catch (_e) {}
-                        installChromiumDeps()
-                    } else {
-                        promptDeps()
-                    }
-                })
-            } catch (_e) {
-                promptDeps()
-            }
+            }, "sh", "-c", cmd + " 2>&1")
         }
 
         function promptDeps(): void {
@@ -324,7 +287,7 @@ function init() {
             const needsClick = pkgs.indexOf("xvfb") >= 0
             plog("browser solver: missing " + pkgs.length + " system package(s)" + (needsClick ? " incl. xvfb (interactive challenges will fail without it)" : "") + " - see the tray")
             notifyOnce("chromedeps", needsClick
-                ? "Aqua's Utils: the browser solver needs xvfb to clear interactive Cloudflare challenges on this box, and couldn't install it for you (needs root or passwordless sudo). Open the tray to install it in one click."
+                ? "Aqua's Utils: the browser solver needs xvfb to clear interactive Cloudflare challenges on this box. Open the tray to install it in one click (needs root or passwordless sudo)."
                 : "Aqua's Utils: the browser solver's Chromium needs system packages that aren't installed. Open the tray to install them in one click.")
             tray.update()
         }
@@ -1096,14 +1059,20 @@ function init() {
             plog("downloading Chromium" + (st.version ? " " + st.version : "") + " (browser solver)")
             dlLogAt = 0
 
-            const finish = (ok: boolean): void => {
+            const kept = (): string => (chromiumCachedPath() ? " — the copy already installed was left in place" : "")
+            const finish = (ok: boolean, why?: string): void => {
                 if (ok) {
                     if (st.version) {
                         try { $storage.set("fs.chromiumVer", st.version) } catch (_e) {}
                     }
                 } else {
                     try { $os.removeAll(staging) } catch (_e) {}
-                    setErr("Chromium download/extract failed — the copy already installed was left in place.")
+                    let msg = "Chromium" + (st.version ? " " + st.version : "") + " couldn't be installed" + (why ? ": " + why : "") + kept() + "."
+                    if (st.version) {
+                        try { $storage.set("fs.chromiumFailVer", st.version) } catch (_e) {}
+                        msg += " It won't be downloaded again until you press Update Chromium (Advanced)."
+                    }
+                    setErr(msg)
                     tray.update()
                 }
                 done(ok)
@@ -1124,34 +1093,48 @@ function init() {
                 if (p.status !== "completed") {
                     try { $os.removeAll(staging) } catch (_e) {}
                     if (p.status === "error") setErr("Chromium download failed: " + (p.error || "unknown error"))
-                    else if (!fsManualStop) setErr("Chromium download timed out — the copy already installed was left in place. Press Start to try again.")
+                    else if (!fsManualStop) setErr("Chromium download timed out" + kept() + ". Press Start to try again.")
                     done(false)
                     return
                 }
                 plog("extracting Chromium…")
-                let unzipOk = true
-                try { $osExtra.unzip(zip, staging) } catch (_e) { unzipOk = false }
-                try { $os.removeAll(zip) } catch (_e) {}
-                if (!unzipOk || chromiumPathUnder(staging) === "") { finish(false); return }
-                const swap = (): void => {
-                    const previous = dir + ".old"
-                    let movedAside = false
-                    try { $os.removeAll(previous) } catch (_e) {}
-                    try { if ($os.stat(dir)) { $os.rename(dir, previous); movedAside = true } } catch (_e) {}
-                    let installed = false
-                    try { $os.rename(staging, dir); installed = true } catch (_e) {}
-                    const ok = installed && chromiumCachedPath() !== ""
-                    if (ok) {
-                        try { $os.removeAll(previous) } catch (_e) {}
-                    } else {
-                        if (installed) { try { $os.removeAll(dir) } catch (_e) {} }
-                        if (movedAside) { try { $os.rename(previous, dir) } catch (_e) {} }
+                extractZip(zip, staging, (unzipOk, why) => {
+                    try { $os.removeAll(zip) } catch (_e) {}
+                    if (gen !== fsBinaryGen) {
+                        try { $os.removeAll(staging) } catch (_e) {}
+                        return
                     }
-                    finish(ok)
-                }
-                if (beforeSwap) beforeSwap(swap)
-                else swap()
+                    if (!unzipOk) { finish(false, why || "extraction failed"); return }
+                    if (chromiumPathUnder(staging) === "") { finish(false, "the browser wasn't found after unpacking it"); return }
+                    const swap = (): void => {
+                        const previous = dir + ".old"
+                        let movedAside = false
+                        try { $os.removeAll(previous) } catch (_e) {}
+                        try { if ($os.stat(dir)) { $os.rename(dir, previous); movedAside = true } } catch (_e) {}
+                        let installed = false
+                        try { $os.rename(staging, dir); installed = true } catch (_e) {}
+                        const ok = installed && chromiumCachedPath() !== ""
+                        if (ok) {
+                            try { $os.removeAll(previous) } catch (_e) {}
+                        } else {
+                            if (installed) { try { $os.removeAll(dir) } catch (_e) {} }
+                            if (movedAside) { try { $os.rename(previous, dir) } catch (_e) {} }
+                        }
+                        finish(ok, ok ? "" : "couldn't move it into place")
+                    }
+                    if (beforeSwap) beforeSwap(swap)
+                    else swap()
+                })
             })
+        }
+
+        function extractZip(zip: string, dest: string, done: (ok: boolean, why: string) => void): void {
+            if ($os.platform !== "darwin") {
+                try { $osExtra.unzip(zip, dest) } catch (e) { done(false, String(e)); return }
+                done(true, "")
+                return
+            }
+            runCollect((out, code) => done(code === 0, code === 0 ? "" : cleanTail(out) || "ditto exited with code " + code), "sh", "-c", "ditto -x -k " + shq(zip) + " " + shq(dest) + " 2>&1")
         }
 
         let systemChromeAt = ""
@@ -1160,16 +1143,13 @@ function init() {
             if (systemChromeDone) { cb(systemChromeAt); return }
             if (typeof $osExtra === "undefined" || typeof $os === "undefined" || $os.platform === "windows") { cb(""); return }
             const names = "chromium chromium-browser google-chrome google-chrome-stable brave-browser microsoft-edge"
-            try {
-                $osExtra.asyncCmd("sh", "-c", "for c in " + names + "; do p=$(command -v \"$c\" 2>/dev/null); if [ -n \"$p\" ]; then echo \"$p\"; exit 0; fi; done").run((data, _e, code) => {
-                    if (code === undefined) return
-                    systemChromeDone = true
-                    const out = data ? $toString(data).trim().split("\n")[0].trim() : ""
-                    systemChromeAt = out && out.indexOf("/") === 0 ? out : ""
-                    if (systemChromeAt) plog("using the browser already installed at " + systemChromeAt)
-                    cb(systemChromeAt)
-                })
-            } catch (_e) { systemChromeDone = true; cb("") }
+            runCollect((out) => {
+                systemChromeDone = true
+                const first = out.trim().split("\n")[0].trim()
+                systemChromeAt = first.indexOf("/") === 0 ? first : ""
+                if (systemChromeAt) plog("using the browser already installed at " + systemChromeAt)
+                cb(systemChromeAt)
+            }, "sh", "-c", "for c in " + names + "; do p=$(command -v \"$c\" 2>/dev/null); if [ -n \"$p\" ]; then echo \"$p\"; exit 0; fi; done")
         }
 
         function ensureChromium(cb: (path: string) => void): void {
@@ -1191,6 +1171,7 @@ function init() {
             fsChromiumBusy = true
             void chromiumStable(plt).then((st) => {
                 if (!st.url) { fsChromiumBusy = false; setErr("Couldn't find a Chromium download for this platform (" + plt + ") in the release feed; starting without the browser solver."); tray.update(); cb(""); return }
+                if (st.version && st.version === sget<string>("fs.chromiumFailVer", "")) { fsChromiumBusy = false; setErr("Chromium " + st.version + " couldn't be installed last time, so it isn't downloaded again; starting without the browser solver. Press Update Chromium (Advanced) to try again."); tray.update(); cb(""); return }
                 downloadChromium(st, (ok) => { fsChromiumBusy = false; if (ok) checkChromiumDeps(true); cb(ok ? chromiumCachedPath() : "") })
             }).catch((e) => {
                 fsChromiumBusy = false
@@ -1210,6 +1191,7 @@ function init() {
                 if (!st.version || !st.url) { setNote("Couldn't reach the Chromium release feed."); tray.update(); return }
                 const cur = sget<string>("fs.chromiumVer", "")
                 if (cur && !verNewer(st.version, cur)) { setNote("Chromium is up to date (" + cur + ")."); tray.update(); return }
+                if (st.version === sget<string>("fs.chromiumFailVer", "")) { setNote("Chromium " + st.version + " couldn't be installed last time; press Update Chromium to try again."); tray.update(); return }
                 if (fsChromiumDownloadId) { setNote("Chromium is already downloading."); tray.update(); return }
                 const wasRunning = fsMode.get() !== "remote" && (fsStatus.get() === "up" || fsStatus.get() === "starting")
                 let stopped = false
@@ -1260,11 +1242,12 @@ function init() {
             const mac = $os.platform === "darwin"
             const unquarantine = (d: string) => (mac ? "xattr -dr com.apple.quarantine " + shq(d) + " 2>/dev/null; " : "")
             const prep = unquarantine(fsDir) + "chmod -R 755 " + shq(fsDir) + "; "
-                + (chromePath ? unquarantine(chrDir) + "chmod -R 755 " + shq(chrDir) + "; " : "")
+                + (chromePath.indexOf(chrDir) === 0 ? unquarantine(chrDir) + "chmod -R 755 " + shq(chrDir) + "; " : "")
             const ac = $os.platform === "windows"
-                ? $osExtra.asyncCmd("cmd", "/c", /[ \t]/.test(binPath) ? binPath : binPath.replace(/[&^()<>|]/g, "^$&"))
+                ? $osExtra.asyncCmd("cmd", "/c", ".\\solver.exe")
                 : $osExtra.asyncCmd("sh", "-c", prep + "exec " + shq(binPath))
             const c = ac.getCommand()
+            if ($os.platform === "windows") c.dir = $filepath.dir(binPath)
             try {
                 const env = c.environ()
                 env.push("HOST=127.0.0.1")
@@ -1375,15 +1358,23 @@ function init() {
             tray.update()
         }
 
-        const PS_KILL_SOLVER = "$ErrorActionPreference='SilentlyContinue';foreach($p in Get-CimInstance Win32_Process){if($p.Name -eq 'solver.exe' -and $p.CommandLine -like '*aquatils\\*'){Stop-Process -Id $p.ProcessId -Force}}"
+        const PS_KILL_SOLVER = "$ErrorActionPreference='SilentlyContinue';foreach($p in Get-CimInstance Win32_Process){if($p.Name -eq 'solver.exe' -and $p.ExecutablePath -like '*aquatils\\*'){Stop-Process -Id $p.ProcessId -Force}}"
+
+        function runCollect(done: (out: string, code: number) => void, name: string, ...args: string[]): void {
+            let out = ""
+            try {
+                $osExtra.asyncCmd(name, ...args).run((data, err, code) => {
+                    if (data) out += $toString(data) + "\n"
+                    if (err) out += $toString(err) + "\n"
+                    if (code !== undefined) done(out, code)
+                })
+            } catch (_e) {
+                done("", -1)
+            }
+        }
 
         function runThen(done: (() => void) | undefined, name: string, ...args: string[]): void {
-            const fin = (): void => { if (done) done() }
-            try {
-                $osExtra.asyncCmd(name, ...args).run((_d, _e, code) => { if (code !== undefined) fin() })
-            } catch (_e) {
-                fin()
-            }
+            runCollect(() => { if (done) done() }, name, ...args)
         }
 
         function waitPortFree(port: string, done?: () => void): void {
@@ -1412,13 +1403,8 @@ function init() {
             try { if (fsBinary && fsBinary.process) fsBinary.process.kill() } catch (_e) {}
             fsBinary = null
             if (typeof $os === "undefined" || typeof $osExtra === "undefined") guardedDone()
-            else if ($os.platform === "windows") {
-                try {
-                    $osExtra.asyncCmd("cmd", "/c", "powershell", "-NoProfile", "-NonInteractive", "-Command", PS_KILL_SOLVER).run((_d, _e, code) => { if (code !== undefined) reapOurChrome(guardedDone) })
-                } catch (_e) {
-                    guardedDone()
-                }
-            } else reapOrphanSolvers(() => reapOurChrome(() => waitPortFree(fsPort.get() || FS_DEFAULT_PORT, guardedDone)))
+            else if ($os.platform === "windows") runThen(() => reapOurChrome(guardedDone), "cmd", "/c", "powershell", "-NoProfile", "-NonInteractive", "-Command", PS_KILL_SOLVER)
+            else reapOrphanSolvers(() => reapOurChrome(() => waitPortFree(fsPort.get() || FS_DEFAULT_PORT, guardedDone)))
         }
 
         function reapOrphanSolvers(done?: () => void): void {
@@ -1439,7 +1425,7 @@ function init() {
 
         function reapOurChrome(done?: () => void): void {
             if ($os.platform === "windows") runThen(done, "cmd", "/c", "powershell", "-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='SilentlyContinue';foreach($p in Get-CimInstance Win32_Process){if($p.Name -eq 'chrome.exe' -and $p.CommandLine -like '*aquatils\\chromium\\*'){Stop-Process -Id $p.ProcessId -Force}}")
-            else runThen(done, "sh", "-c", "pkill -f '[a]quatils/chromium' 2>/dev/null; exit 0")
+            else runThen(done, "sh", "-c", "pkill -f '[a]quatils/chromium' 2>/dev/null; pkill -f '[a]quatils/browser-profile' 2>/dev/null; exit 0")
         }
 
         function reapLeftoverListener(): void {
@@ -1458,12 +1444,12 @@ function init() {
 
         function sha256OfFile(path: string): string {
             try {
-                const c = $os.platform === "windows"
-                    ? $os.cmd("cmd", "/c", "certutil -hashfile \"" + path.replace(/"/g, "") + "\" SHA256")
+                const win = $os.platform === "windows"
+                const c = win
+                    ? $os.cmd("cmd", "/c", "certutil", "-hashfile", $filepath.base(path), "SHA256")
                     : $os.cmd("sh", "-c", ($os.platform === "darwin" ? "shasum -a 256 " : "sha256sum ") + shq(path))
-                const raw = c.output()
-                const text = typeof raw === "string" ? raw : ""
-                const m = String(text).replace(/\s+/g, "").match(/[0-9a-fA-F]{64}/)
+                if (win) c.dir = $filepath.dir(path)
+                const m = $toString(c.output()).replace(/\s+/g, "").match(/[0-9a-fA-F]{64}/)
                 return m ? m[0].toLowerCase() : ""
             } catch (_e) {
                 return ""
@@ -1675,17 +1661,18 @@ function init() {
                         discard("The solver download was incomplete (" + fmtSize(archiveSize) + " of " + fmtSize(expected) + ") — your connection to GitHub looks slow. Press Start to try again.", "Download incomplete — press Start to retry.", "download truncated: " + fmtSize(archiveSize) + " of " + fmtSize(expected) + " — discarding")
                         return
                     }
+                    const unverified = (why: string): void => discard("Couldn't verify the solver download (" + why + "), so it was discarded and not run. Press Start to try again.", "Couldn't verify the download — press Start to retry.", "couldn't verify " + pick.asset + ": " + why + " — discarding the download")
                     wantSha.then((want) => {
+                        if (fsBinaryGen !== launchGen) return
                         const got = want ? sha256OfFile(archive) : ""
-                        if (want && got && got !== want) {
-                            discard("The downloaded solver did not match the checksum published with the release, so it was discarded and not run. Press Start to try again.", "Checksum mismatch — download discarded.", "checksum mismatch for " + pick.asset + " — discarding the download", "Aqua's Utils: the downloaded solver failed its checksum and was discarded.")
-                            return
+                        if (!want) unverified("the checksum published with the release couldn't be fetched")
+                        else if (!got) unverified("this machine couldn't compute its SHA-256")
+                        else if (got !== want) discard("The downloaded solver did not match the checksum published with the release, so it was discarded and not run. Press Start to try again.", "Checksum mismatch — download discarded.", "checksum mismatch for " + pick.asset + " — discarding the download", "Aqua's Utils: the downloaded solver failed its checksum and was discarded.")
+                        else {
+                            plog("checksum verified for " + pick.asset)
+                            finishInstall(archiveSize, expected)
                         }
-                        if (!want) plog("no published checksum for " + pick.asset + " — continuing unverified")
-                        else if (!got) plog("no working sha256 tool on this machine — continuing unverified")
-                        else plog("checksum verified for " + pick.asset)
-                        finishInstall(archiveSize, expected)
-                    }).catch(() => { finishInstall(archiveSize, expected) })
+                    }).catch((e) => { if (fsBinaryGen === launchGen) unverified(String(e)) })
                 } else if (p.status === "error") {
                     fsBusy = false
                     setStatus("down")
@@ -1935,7 +1922,11 @@ function init() {
         onToggle("fs-chromium-toggle", fsWantChromium)
         ctx.registerEventHandler("fs-remove-solver", () => removeSolverDownloads())
         ctx.registerEventHandler("fs-remove-chromium", () => removeChromiumDownloads())
-        ctx.registerEventHandler("fs-update-chromium", () => updateChromium())
+        ctx.registerEventHandler("fs-update-chromium", () => {
+            try { $storage.remove("fs.chromiumFailVer") } catch (_e) {}
+            if (chromiumDownloadedHere()) updateChromium()
+            else userStart()
+        })
         ctx.registerEventHandler("fs-enable-chromium", () => {
             fsWantChromium.set(true)
             fsPersist()
@@ -2081,7 +2072,7 @@ function init() {
             rows.push(toggleRow(fsAutoUpdate.get(), "fs-autoupdate-toggle", "Auto-update solver & Chromium"))
             rows.push(divider())
             rows.push(heading("Solver"))
-            rows.push(dim("Browser solver — a real browser (WebView2, or a downloaded Chromium) that clears the hard challenges (Cloudflare JS, Turnstile) uTLS can't. Runs in a hidden off-screen window. On headless Linux servers it needs the Chromium system libraries plus xvfb (installed on first run, needs root); if hard-challenge solving fails, enable Verbose logs to see the browser error."))
+            rows.push(dim("Browser solver — a real browser (WebView2, or a downloaded Chromium) that clears the hard challenges (Cloudflare JS, Turnstile) uTLS can't. Runs in a hidden off-screen window. On headless Linux servers it needs the Chromium system libraries plus xvfb (one click in the tray; needs root or passwordless sudo); if hard-challenge solving fails, enable Verbose logs to see the browser error."))
             rows.push(toggleRow(fsCustomTls.get(), "fs-customtls-toggle", "Custom TLS fingerprint", "fs-help-customtls"))
             rows.push(toggleRow(fsPacing.get(), "fs-pacing-toggle", "Adaptive rate-limit pacing", "fs-help-pacing"))
             rows.push(divider())
@@ -2240,7 +2231,7 @@ function init() {
                     items.push(tray.button({ label: prev ? "Update & start" : "Download & start", onClick: "fs-simple-start", intent: "success", size: "sm", style: ACCENT_STYLE }))
                 } else if (needsDownload) {
                     rows.push(dim("aquatils-solver runs locally to get blocked sources (Cloudflare / DDoS-Guard) loading. It's downloaded from GitHub and only contacts the sites you stream."))
-                    rows.push(dim("Hard JS challenges (interactive Turnstile) need a real browser. On Windows the default WebView2 engine needs nothing extra. The Chromium engine instead drives a private copy this plugin downloads (~80 MB) into its own cache — it never uses your installed Chrome or Edge. Tick below to fetch it."))
+                    rows.push(dim("Hard JS challenges (interactive Turnstile) need a real browser. On Windows the default WebView2 engine needs nothing extra. The Chromium engine instead drives a private copy this plugin downloads (~200 MB) into its own cache — it never uses your installed Chrome or Edge. Tick below to fetch it."))
                     rows.push(toggleRow(fsWantChromium.get(), "fs-chromium-toggle", "Fetch a minimal Chromium for the browser solver"))
                     rows.push(toggleRow(fsConsent.get(), "fs-consent-toggle", "I understand — tap to confirm"))
                     items.push(tray.button({ label: "Download & start", onClick: "fs-simple-start", intent: "success", size: "sm", style: ACCENT_STYLE, disabled: true }))
@@ -2341,10 +2332,11 @@ function init() {
                 ],
                 gap: 2,
             }))
-            if (chrHere && fsMode.get() !== "remote") {
+            const chrFailed = sget<string>("fs.chromiumFailVer", "")
+            if ((chrHere || chrFailed) && fsMode.get() !== "remote") {
                 rows.push(tray.flex({
                     items: [
-                        tray.text("Chromium " + chromiumCachedVersion(), { style: { fontSize: "12px", color: "rgba(255,255,255,0.55)" } }),
+                        tray.text(chrHere ? "Chromium " + chromiumCachedVersion() : "Chromium " + chrFailed + " didn't install", { style: { fontSize: "12px", color: "rgba(255,255,255,0.55)" } }),
                         tray.button({ label: "Update Chromium", onClick: "fs-update-chromium", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto" } }),
                     ],
                     gap: 2,
