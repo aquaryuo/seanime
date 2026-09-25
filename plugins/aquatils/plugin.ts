@@ -115,6 +115,12 @@ function init() {
         let sehSeenChars = 0
         let sehMaxT = sget<number>("seh.maxT", 0)
         if (sehMaxT > Date.now()) sehMaxT = 0
+        let sehReadAt = sget<number>("seh.readAt", 0)
+        if (sehReadAt > Date.now() + 60000) sehReadAt = 0
+        let sehOkAt = 0
+        let sehFail = ""
+        let sehEvery = 60000
+        let sehArmedAt = 0
 
         const _storedMode = sget<string>("fs.mode", "")
         const fsMode = ctx.state<string>((!_storedMode || _storedMode === "native" || _storedMode === "docker") ? "binary" : _storedMode)
@@ -163,6 +169,8 @@ function init() {
         let fsTestUntil = 0
         let fsLastLiveUpdate = 0
         let fsManualStop = sget<boolean>("fs.manualStop", false)
+        let fsEverInstalled = sget<boolean>("fs.everInstalled", false)
+        let fsAutoStartAsked = sget<boolean>("fs.autoStartAsked", false)
         let fsAutoUpgradeTried = false
         let fsLaunchAt = 0
         let fsLogOff = -1
@@ -415,10 +423,23 @@ function init() {
 
         function refreshTrayBadge(): void {
             try {
-                if (fsStatus.get() === "down" && !fsManualStop && fsMode.get() !== "remote") { setBadge(1, "error"); return }
+                if (fsStatus.get() === "down" && !fsManualStop && fsMode.get() !== "remote" && fsEverInstalled) { setBadge(1, "error"); return }
                 if (solverUpdatePending()) { setBadge(1, "info"); return }
-                setBadge(errorGroups().length, "warning")
+                setBadge(unreadErrors(), "warning")
             } catch (_e) {}
+        }
+
+        function unreadErrors(): number {
+            return errorGroups().filter((g) => g.t > sehReadAt).length
+        }
+
+        function markErrorsRead(): void {
+            const groups = errorGroups()
+            const top = groups.length ? groups[0].t : 0
+            if (top <= sehReadAt) return
+            sehReadAt = Math.max(Date.now(), top)
+            try { $storage.set("seh.readAt", sehReadAt) } catch (_e) {}
+            refreshTrayBadge()
         }
 
         function buildDiagnostics(): string {
@@ -458,7 +479,7 @@ function init() {
                 }
             }
         }
-        const PANEL_TOP = "4.5rem", PANEL_BOTTOM = "4.5rem", PANEL_LEFT = "6rem"
+        const PANEL_TOP = "4.5rem", PANEL_BOTTOM = "4.5rem", PANEL_LEFT = "max(10px, min(6rem, calc(100vw - 490px)))"
         try {
             if (ctx.dom && ctx.dom.observe) {
                 ctx.dom.observe('[data-plugin-tray-popover-content="aq-aquatils"] [class*="max-h-[35rem]"]', (els) => {
@@ -571,21 +592,26 @@ function init() {
             seen.set(nextSeen.slice(Math.max(0, nextSeen.length - SEH_MAX_SEEN)))
             sehMaxT = hi
             sehPersist()
+            if (trayVisible && view.get() === "errors") markErrorsRead()
             refreshTrayBadge()
             trayPoke()
         }
 
         async function sehPoll(): Promise<void> {
             if (Date.now() < sehRetryAfter) return
+            const was = sehFail
+            let reached = false
             try {
                 const url = (appBase.get() || SEH_DEFAULT_APP).replace(/\/+$/, "") + "/api/v1/logs/latest"
                 const res = await ctx.fetch(url, { method: "GET" })
+                reached = true
                 if (!res.ok) {
+                    sehFail = "HTTP " + res.status
                     if (res.status === 401 || res.status === 403) {
                         sehRetryAfter = Date.now() + 10 * 60 * 1000
                         if (!sehAuthWarned) {
                             sehAuthWarned = true
-                            ctx.toast.warning("Aqua's Utils can't read Seanime's error log (HTTP " + res.status + ") — a server password blocks it. Only the extension-error list is affected; the solver itself works. Clear the password or ignore this.")
+                            ctx.toast.warning("The Errors tab can't read Seanime's log while a server password is set. The solver is unaffected.")
                         }
                     }
                     return
@@ -594,6 +620,8 @@ function init() {
                 sehRetryAfter = 0
                 const body = res.json<{ data?: string }>()
                 const content = body && typeof body.data === "string" ? body.data : ""
+                sehFail = ""
+                sehOkAt = Date.now()
                 if (!content) return
                 let from = content.length >= sehSeenChars ? sehSeenChars : 0
                 let chunk = content.slice(from)
@@ -604,12 +632,16 @@ function init() {
                 sehSeenChars = from + chunk.length
                 sehIngest(sehParse(chunk))
             } catch (_e) {
-                return
+                sehFail = reached ? "unexpected reply" : "unreachable"
+            } finally {
+                if (sehFail !== was) trayPoke()
             }
         }
 
         function sehArm(now: boolean): void {
-            ctx.jobs.poll("aquatils-seh-poll", () => ctx.jobs.singleflight("aquatils-seh-poll-run", sehPoll), trayVisible || notify.get() ? SEH_POLL_MS : 60000, { immediate: now })
+            sehEvery = trayVisible || notify.get() ? SEH_POLL_MS : 60000
+            sehArmedAt = Date.now()
+            ctx.jobs.poll("aquatils-seh-poll", () => ctx.jobs.singleflight("aquatils-seh-poll-run", sehPoll), sehEvery, { immediate: now })
         }
 
         function fsBase(): string {
@@ -782,7 +814,7 @@ function init() {
                     }
                 }
             } else if (fsChromiumBusy) {
-                setNote("Fetching a minimal Chromium…")
+                setNote("Fetching Chromium for Testing (~200 MB)…")
             } else {
                 if (fsStatus.get() === "starting") {
                     if (fsMode.get() === "binary" && !fsDownloadId) {
@@ -813,7 +845,7 @@ function init() {
                             }
                         } else if (fsDownStreak === 2 && !fsManualStop && fsMode.get() !== "remote" && (fsAvBlocked || solverQuarantined())) {
                             notifyOnce("av", "Aqua's Utils: antivirus removed the solver. Add an exclusion for %LOCALAPPDATA%\\aquatils, then Start.")
-                        } else if (fsDownStreak === 2 && !fsManualStop && fsMode.get() !== "remote") {
+                        } else if (fsDownStreak === 2 && !fsManualStop && fsMode.get() !== "remote" && fsEverInstalled) {
                             notifyOnce("down", "Aqua's Utils: the solver isn't running. Open the tray to start it.")
                         }
                     }
@@ -956,7 +988,8 @@ function init() {
         }
 
         function markInstalled(): void {
-            if (sget<boolean>("fs.everInstalled", false)) return
+            if (fsEverInstalled) return
+            fsEverInstalled = true
             try { $storage.set("fs.everInstalled", true) } catch (_e) {}
         }
 
@@ -975,8 +1008,16 @@ function init() {
             fsNotified["av"] = false
         }
 
+        function solverFilesGone(): boolean {
+            try { return $storage.get<string>("fs.solverReady") === FS_VERSION && !solverBinExists() } catch (_e) { return false }
+        }
+
         function solverQuarantined(): boolean {
-            try { return $os.platform === "windows" && $storage.get<string>("fs.solverReady") === FS_VERSION && !solverBinExists() } catch (_e) { return false }
+            return onWindows() && solverFilesGone()
+        }
+
+        function onWindows(): boolean {
+            return typeof $os !== "undefined" && $os.platform === "windows"
         }
 
         function fsLogPath(): string {
@@ -1202,7 +1243,7 @@ function init() {
                 })
                 return
             }
-            setNote("Fetching a minimal Chromium…")
+            setNote("Fetching Chromium for Testing (~200 MB)…")
             tray.update()
             fsChromiumBusy = true
             void chromiumStable(plt).then((st) => {
@@ -1606,7 +1647,7 @@ function init() {
                     return
                 }
             } catch (_e) {}
-            if (!fsConsent.get() && !sget<boolean>("fs.everInstalled", false)) {
+            if (!fsConsent.get() && !fsEverInstalled) {
                 setStatus("down")
                 setNote("Tick the consent box in Aqua's Utils before the solver is downloaded and run.")
                 ctx.toast.warning(fsNote.get())
@@ -1807,12 +1848,16 @@ function init() {
             return fsStatus.get() === "up" && fsMode.get() !== "remote" && !binaryDownloaded() && solverUpdatePending()
         }
 
-        ctx.registerEventHandler("view-errors", () => view.set("errors"))
+        ctx.registerEventHandler("view-errors", () => {
+            view.set("errors")
+            markErrorsRead()
+        })
         ctx.registerEventHandler("view-cf", () => view.set("cf"))
 
         ctx.registerEventHandler("seh-clear", () => {
             errors.set([])
             sehPersist()
+            refreshTrayBadge()
             tray.update()
             ctx.toast.info("Cleared recorded errors")
         })
@@ -1832,17 +1877,19 @@ function init() {
                 ctx.toast.error(fail)
             }
         }
-        ctx.registerEventHandler("seh-copy-all", () => copyOut(() => errors.get().map(sehLabel).join("\n"), "Errors copied to clipboard"))
+        ctx.registerEventHandler("seh-copy-all", () => copyOut(() => errorGroups().map(groupLine).join("\n"), "Errors copied to clipboard"))
         ctx.registerEventHandler("seh-save", () => {
             const raw = (appRef.current || "").trim() || SEH_DEFAULT_APP
             if (!/^https?:\/\/.+/i.test(raw)) { ctx.toast.error("Server URL must start with http:// or https://"); return }
             appBase.set(raw)
-            sehAuthWarned = false
+            sehAuthWarned = true
             sehRetryAfter = 0
             sehSeenChars = 0
             sehPersist()
-            ctx.toast.success("Saved Seanime URL")
-            void sehPoll()
+            void sehPoll().then(() => {
+                if (sehFail) ctx.toast.error(sehFailText())
+                else ctx.toast.success("Connected to Seanime's log")
+            })
         })
 
         ctx.registerEventHandler("fs-start", () => userStart())
@@ -1876,7 +1923,7 @@ function init() {
         for (let gi = 0; gi < 30; gi++) {
             ctx.registerEventHandler("seh-copy-" + gi, () => {
                 const g = sehGroups[gi]
-                if (g) copyOut(() => g.label + (g.count > 1 ? " (×" + g.count + ")" : ""), "Copied", "Couldn't copy")
+                if (g) copyOut(() => groupLine(g), "Copied", "Couldn't copy")
             })
         }
         ctx.registerEventHandler("fs-mode-remote", () => {
@@ -1926,13 +1973,19 @@ function init() {
                 applySolverEnvChange("Browser engine: " + label)
             })
         })
-        ctx.registerEventHandler("fs-help-engine", () => ctx.toast.info("Browser solver engine. WebView2 (default) runs a hidden, off-screen window reusing the Edge WebView2 Runtime present on virtually all Windows 11 machines — no taskbar button, no install. Chromium drives a private copy this plugin downloads into its own cache over CDP; it never touches your installed Chrome or Edge. Switch to Chromium if a solve fails on WebView2."))
+        const HELP: { [id: string]: string } = {
+            "fs-help-engine": "WebView2 (default) runs a hidden, off-screen window reusing the Edge WebView2 Runtime present on virtually all Windows 11 machines — no taskbar button, no install. Chromium drives a private copy this plugin downloads into its own cache over CDP; it never touches your installed Chrome or Edge. Switch to Chromium if a solve fails on WebView2.",
+            "fs-help-wv2warm": "Reuse an already-cleared site instead of re-checking every request - much faster, on by default.",
+            "fs-help-wv2refresh": "While watching, refresh the clearance before it expires so you never hit a mid-binge stall. Off by default; makes a periodic background request only while you're actively watching.",
+            "fs-help-wv2utls": "Experimental: after the first clear, serve requests through the fast uTLS path using the browser cleared cookie - lighter (lets the hidden browser idle). Watch the logs to confirm; off by default.",
+            "fs-help-pacing": "Serializes same-site requests and backs off on HTTP 429 to dodge Cloudflare rate-limit bursts. A bit slower, but more reliable when a source rate-limits.",
+            "fs-help-verbose": "Off by default - the log shows one line per request. Turn on to add detailed per-solve diagnostics (stage, timings, warm hits, cookie checks) for troubleshooting.",
+            "fs-help-customtls": "Off by default. Uses our own Chrome TLS/HTTP2 fingerprint instead of the bundled library's, so we can keep it current independently. Identical to the library today; run the Stealth check after enabling to confirm.",
+        }
+        Object.keys(HELP).forEach((id) => ctx.registerEventHandler(id, () => ctx.toast.info(HELP[id])))
         onToggle("fs-wv2warm-toggle", fsWv2Warm, "Warm-origin fast path")
-        ctx.registerEventHandler("fs-help-wv2warm", () => ctx.toast.info("Reuse an already-cleared site instead of re-checking every request - much faster, on by default."))
         onToggle("fs-wv2refresh-toggle", fsWv2Refresh, "Proactive clearance refresh")
-        ctx.registerEventHandler("fs-help-wv2refresh", () => ctx.toast.info("While watching, refresh the clearance before it expires so you never hit a mid-binge stall. Off by default; makes a periodic background request only while you're actively watching."))
         onToggle("fs-wv2utls-toggle", fsWv2Utls, "uTLS fast path")
-        ctx.registerEventHandler("fs-help-wv2utls", () => ctx.toast.info("Experimental: after the first clear, serve requests through the fast uTLS path using the browser cleared cookie - lighter (lets the hidden browser idle). Watch the logs to confirm; off by default."))
         fsDnsRef.onValueChange((v) => {
             const val = v || "off"
             if (val === fsDns.get()) return
@@ -1947,11 +2000,8 @@ function init() {
             applySolverEnvChange("Custom DoH saved")
         })
         onToggle("fs-pacing-toggle", fsPacing, "Rate-limit pacing")
-        ctx.registerEventHandler("fs-help-pacing", () => ctx.toast.info("Serializes same-site requests and backs off on HTTP 429 to dodge Cloudflare rate-limit bursts. A bit slower, but more reliable when a source rate-limits."))
         onToggle("fs-verbose-toggle", fsVerbose, "Verbose logging")
-        ctx.registerEventHandler("fs-help-verbose", () => ctx.toast.info("Off by default - the log shows one line per request. Turn on to add detailed per-solve diagnostics (stage, timings, warm hits, cookie checks) for troubleshooting; restart the solver to apply."))
         onToggle("fs-customtls-toggle", fsCustomTls, "Custom TLS fingerprint")
-        ctx.registerEventHandler("fs-help-customtls", () => ctx.toast.info("Off by default. Uses our own Chrome TLS/HTTP2 fingerprint instead of the bundled library's, so we can keep it current independently. Identical to the library today; run the Stealth check after enabling to confirm. Restart the solver to apply."))
         onToggle("fs-autostart-toggle", fsAutoStart)
         ctx.registerEventHandler("ui-mode-toggle", () => {
             uiMode.set(uiMode.get() === "simple" ? "advanced" : "simple")
@@ -1971,7 +2021,24 @@ function init() {
             userStart()
         })
         onToggle("fs-consent-toggle", fsConsent)
-        onToggle("fs-chromium-toggle", fsWantChromium)
+        ctx.registerEventHandler("fs-chromium-toggle", () => {
+            const on = !fsWantChromium.get()
+            fsWantChromium.set(on)
+            try { $storage.set("fs.wantChromium", on) } catch (_e) {}
+            if (on && fsStatus.get() === "up" && fsMode.get() !== "remote" && !chromiumDownloadedHere()) applySolverEnvChange("Chromium download on")
+            else tray.update()
+        })
+        function answerAutoStart(yes: boolean): void {
+            fsAutoStartAsked = true
+            try { $storage.set("fs.autoStartAsked", true) } catch (_e) {}
+            if (yes) {
+                fsAutoStart.set(true)
+                try { $storage.set("fs.autoStart", true) } catch (_e) {}
+            }
+            tray.update()
+        }
+        ctx.registerEventHandler("fs-autostart-yes", () => answerAutoStart(true))
+        ctx.registerEventHandler("fs-autostart-no", () => answerAutoStart(false))
         ctx.registerEventHandler("fs-remove-solver", () => removeSolverDownloads())
         ctx.registerEventHandler("fs-remove-chromium", () => removeChromiumDownloads())
         ctx.registerEventHandler("fs-update-chromium", () => {
@@ -2029,19 +2096,30 @@ function init() {
         function callout(items: any[], rgb: string, more?: Record<string, string>): any {
             return tray.div({ items: items, style: { background: "rgba(" + rgb + ",0.09)", borderLeft: "2px solid rgba(" + rgb + ",0.6)", borderRadius: "8px", padding: "10px 12px", ...more } })
         }
-        function toggleRow(on: boolean, click: string, label: string, helpClick?: string): any {
-            const items: any[] = [
-                tray.button({ label: on ? "✓" : "✕", onClick: click, intent: "gray-subtle", size: "sm", style: on ? { ...ACCENT_SUBTLE, fontSize: ICON_FS, width: "40px", padding: "0" } : { fontSize: ICON_FS, width: "40px", padding: "0" } }),
-                tray.text(label, { style: { fontSize: "13px", color: "rgba(255,255,255,0.85)", overflowWrap: "anywhere", wordBreak: "break-word" } }),
-            ]
-            if (helpClick) {
-                items.push(tray.button({ label: "?", onClick: helpClick, intent: "gray-subtle", size: "sm", style: { color: "#FFC840", fontWeight: "700", marginLeft: "2px" } }))
-            }
-            return tray.flex({
-                items: items,
+        function toggleRow(on: boolean, click: string, label: string, help?: string): any {
+            const row = tray.flex({
+                items: [
+                    tray.button({ label: on ? "✓" : "✕", onClick: click, intent: "gray-subtle", size: "sm", style: on ? { ...ACCENT_SUBTLE, fontSize: ICON_FS, width: "40px", padding: "0" } : { fontSize: ICON_FS, width: "40px", padding: "0" } }),
+                    tray.text(label, { style: { fontSize: "13px", color: "rgba(255,255,255,0.85)", overflowWrap: "anywhere", wordBreak: "break-word" } }),
+                ],
                 gap: 2,
                 style: { alignItems: "center" },
             })
+            if (!help) return row
+            return tray.stack({ items: [row, tray.text(help, { style: { color: "rgba(255,255,255,0.5)", fontSize: "12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word", paddingLeft: "48px" } })], gap: 1 })
+        }
+        function copyBtn(click: string, tip: string, outer?: Record<string, string>): any {
+            const t = tray.tooltip(tray.button({ label: "⎘", onClick: click, intent: "gray-subtle", size: "sm", style: { fontSize: ICON_FS } }), { text: tip })
+            return outer ? tray.div({ items: [t], style: outer }) : t
+        }
+        function chromiumRow(): any {
+            return toggleRow(fsWantChromium.get(), "fs-chromium-toggle", onWindows()
+                ? "Also download Chromium from Google (~200 MB) — only needed if WebView2 can't clear a site"
+                : "Download Chromium from Google (~200 MB) — needed for the hardest checks")
+        }
+        function ago(sec: number): string {
+            const a = Math.max(0, Math.round(sec))
+            return a < 90 ? a + "s" : a < 5400 ? Math.round(a / 60) + "m" : Math.round(a / 3600) + "h"
         }
         function currentLog(): string {
             const cleaned = fsLastOut.replace(/\r/g, "").replace(/[^\x20-\x7E\n]+/g, " ")
@@ -2089,11 +2167,27 @@ function init() {
             return groups.slice(0, 30)
         }
 
+        function groupLine(g: { label: string; count: number; t: number }): string {
+            return aqStamp(g.t).slice(0, 5) + " " + g.label + (g.count > 1 ? " ×" + g.count : "")
+        }
+
+        function sehFailText(): string {
+            const auth = sehFail === "HTTP 401" || sehFail === "HTTP 403"
+            return "Can't read Seanime's log (" + sehFail + ") — extension errors won't appear here" + (auth ? " while a server password is set. The solver is unaffected." : ". Check the Seanime URL in ⚙.")
+        }
+
         function errorRows(): any[] {
             const rows: any[] = []
+            const now = Date.now()
+            const warn = (t: string): any => callout([calloutText(t)], "255,199,120")
+            const stale = now - Math.max(sehOkAt, sehArmedAt) > 3 * sehEvery
+            if (sehFail) rows.push(warn(sehFailText()))
+            else if (stale) rows.push(warn("Seanime's log isn't answering" + (sehOkAt ? " (last read " + ago((now - sehOkAt) / 1000) + " ago)" : "") + " — new extension errors may not appear."))
+            else if (!sehOkAt) rows.push(dim("Connecting to Seanime's log…"))
+            else rows.push(dim("Listening to Seanime's log · checked " + ago((now - sehOkAt) / 1000) + " ago"))
             sehGroups = errorGroups()
             if (sehGroups.length === 0) {
-                rows.push(dim("No extension errors reported."))
+                if (!sehFail && !stale && sehOkAt) rows.push(dim("No extension errors reported."))
                 return rows
             }
             rows.push(tray.flex({
@@ -2106,8 +2200,8 @@ function init() {
             const lineStyle = { fontSize: "11px", fontFamily: "ui-monospace, monospace", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: "1.5", color: "rgba(255,255,255,0.8)", flexGrow: "1", minWidth: "0" }
             const items = sehGroups.map((g, i) => tray.flex({
                 items: [
-                    tray.text(g.label + (g.count > 1 ? "  ×" + g.count : ""), { style: lineStyle }),
-                    tray.button({ label: "⎘", onClick: "seh-copy-" + i, intent: "gray-subtle", size: "sm", style: { marginLeft: "6px", fontSize: ICON_FS } }),
+                    tray.text(groupLine(g), { style: lineStyle }),
+                    copyBtn("seh-copy-" + i, "Copy this error", { marginLeft: "6px" }),
                 ],
                 gap: 1,
             }))
@@ -2121,13 +2215,14 @@ function init() {
         function settingsRows(): any[] {
             const rows: any[] = []
             rows.push(heading("Startup"))
-            rows.push(toggleRow(fsAutoStart.get(), "fs-autostart-toggle", "Auto-Start Server on Launch"))
+            rows.push(toggleRow(fsAutoStart.get(), "fs-autostart-toggle", "Start the solver with Seanime"))
             rows.push(toggleRow(fsAutoUpdate.get(), "fs-autoupdate-toggle", "Auto-update solver"))
             rows.push(divider())
             rows.push(heading("Solver"))
             rows.push(dim("Browser solver — a real browser (WebView2, or a downloaded Chromium) that clears the hard challenges (Cloudflare JS, Turnstile) uTLS can't. Runs in a hidden off-screen window. On headless Linux servers it needs the Chromium system libraries plus xvfb (on Debian/Ubuntu one click in the tray; needs root or passwordless sudo); if hard-challenge solving fails, enable Verbose logs to see the browser error."))
-            rows.push(toggleRow(fsCustomTls.get(), "fs-customtls-toggle", "Custom TLS fingerprint", "fs-help-customtls"))
-            rows.push(toggleRow(fsPacing.get(), "fs-pacing-toggle", "Adaptive rate-limit pacing", "fs-help-pacing"))
+            if (fsMode.get() !== "remote") rows.push(chromiumRow())
+            rows.push(toggleRow(fsCustomTls.get(), "fs-customtls-toggle", "Custom TLS fingerprint", HELP["fs-help-customtls"]))
+            rows.push(toggleRow(fsPacing.get(), "fs-pacing-toggle", "Adaptive rate-limit pacing", HELP["fs-help-pacing"]))
             rows.push(divider())
             rows.push(heading("Network"))
             rows.push(dim("Encrypted DNS (DoH) — bypasses ISP DNS blocks. Auto enables it only when a block is detected; Custom takes a DoH URL."))
@@ -2148,7 +2243,7 @@ function init() {
             }
             rows.push(divider())
             rows.push(heading("Diagnostics"))
-            rows.push(toggleRow(fsVerbose.get(), "fs-verbose-toggle", "Verbose solver logs", "fs-help-verbose"))
+            rows.push(toggleRow(fsVerbose.get(), "fs-verbose-toggle", "Verbose solver logs", HELP["fs-help-verbose"]))
             rows.push(toggleRow(notify.get(), "seh-notify-toggle", "Error notifications"))
             rows.push(divider())
             rows.push(heading("Connection"))
@@ -2170,6 +2265,16 @@ function init() {
                 gap: 2,
                 style: { alignItems: "center" },
             }))
+            if (st === "up" && fsMode.get() !== "remote" && !fsAutoStart.get() && !fsAutoStartAsked) {
+                rows.push(dim("Start the solver automatically with Seanime?"))
+                rows.push(tray.flex({
+                    items: [
+                        tray.button({ label: "Yes", onClick: "fs-autostart-yes", intent: "gray-subtle", size: "sm", style: ACCENT_SUBTLE }),
+                        tray.button({ label: "Not now", onClick: "fs-autostart-no", intent: "gray-subtle", size: "sm" }),
+                    ],
+                    gap: 2,
+                }))
+            }
             if (solverAdoptedStale()) {
                 rows.push(tray.alert({
                     intent: "warning",
@@ -2179,7 +2284,7 @@ function init() {
                 rows.push(tray.flex({
                     items: [
                         tray.button({ label: "Restart to update", onClick: "fs-restart-update", intent: "primary", size: "sm", style: ACCENT_STYLE }),
-                        tray.button({ label: "Stop", onClick: "fs-stop", intent: "alert", size: "sm" }),
+                        tray.button({ label: "Stop", onClick: "fs-stop", intent: "alert-subtle", size: "sm" }),
                     ],
                     gap: 2,
                 }))
@@ -2194,7 +2299,7 @@ function init() {
             if (fsCanHard.get() === "no" && !(fsDepsPkgs.get() || []).length) {
                 rows.push(tray.alert({
                     intent: "warning",
-                    title: "Hard challenges can't be solved on this machine",
+                    title: "Some protected sites won't load on this machine",
                     description: (fsHardWhy.get() || "The browser can't complete an interactive check here.") + " Sites behind a light check still work.",
                 }))
             }
@@ -2225,11 +2330,11 @@ function init() {
                 if (fsAvBlocked || solverQuarantined()) {
                     acts.push(tray.button({ label: "Copy folder to exclude", onClick: "fs-copy-cache-path", intent: "gray-subtle", size: "sm", style: ACCENT_SUBTLE }))
                 }
-                acts.push(tray.button({ label: "Retry", onClick: "fs-start", intent: "gray-subtle", size: "sm", style: ACCENT_SUBTLE }))
+                if (uiMode.get() === "advanced") acts.push(tray.button({ label: "Retry", onClick: "fs-start", intent: "gray-subtle", size: "sm", style: ACCENT_SUBTLE }))
                 if (fsMode.get() !== "remote" && !chromiumDownloadedHere() && !fsWantChromium.get()) {
                     acts.push(tray.button({ label: "Enable Chromium", onClick: "fs-enable-chromium", intent: "gray-subtle", size: "sm" }))
                 }
-                acts.push(tray.button({ label: "⎘", onClick: "fs-copy-diag", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto", fontSize: ICON_FS } }))
+                acts.push(copyBtn("fs-copy-diag", "Copy diagnostics", { marginLeft: "auto" }))
                 rows.push(tray.flex({ items: acts, gap: 2 }))
             }
             return rows
@@ -2241,7 +2346,7 @@ function init() {
             rows.push(heading("Logs"))
             rows.push(tray.flex({
                 items: [
-                    tray.button({ label: "⎘", onClick: "fs-logs-copy", intent: "gray-subtle", size: "sm", style: { fontSize: ICON_FS } }),
+                    copyBtn("fs-logs-copy", "Copy log"),
                     tray.button({ label: "Clear", onClick: "fs-logs-clear", intent: "alert-subtle", size: "sm", style: { marginLeft: "auto" } }),
                 ],
                 gap: 2,
@@ -2278,27 +2383,31 @@ function init() {
                     if (!fsErr.get()) {
                         rows.push(dim("Your antivirus removed the solver after it started — Windows Defender flags it as suspicious because it automates a background browser. Add a Windows Security exclusion for the folder below, then Start (it re-downloads into the excluded folder)."))
                         items.push(tray.button({ label: "Copy folder to exclude", onClick: "fs-copy-cache-path", intent: "gray-subtle", size: "sm", style: ACCENT_SUBTLE }))
-                        items.push(tray.button({ label: "Start", onClick: "fs-simple-start", intent: "success", size: "sm", style: ACCENT_STYLE }))
                     }
+                    items.push(tray.button({ label: "Start", onClick: "fs-simple-start", intent: "success", size: "sm", style: ACCENT_STYLE }))
                 } else if (needsDownload && fsConsent.get()) {
                     const prev = solverPrevInstalled()
-                    rows.push(dim(prev
+                    const gone = solverFilesGone()
+                    rows.push(dim(gone
+                        ? "The solver's files were removed (a cache cleanup?). Press Start to download them again."
+                        : prev
                         ? "A newer solver (v" + SOLVER_VERSION + ") is ready to install — it replaces the previous version (old files are removed automatically)."
-                        : "The solver isn't installed. Download v" + SOLVER_VERSION + " to get blocked sources loading again."))
-                    items.push(tray.button({ label: prev ? "Update & start" : "Download & start", onClick: "fs-simple-start", intent: "success", size: "sm", style: ACCENT_STYLE }))
+                        : "The solver isn't installed. Download v" + SOLVER_VERSION + " to get protected sources loading."))
+                    rows.push(chromiumRow())
+                    items.push(tray.button({ label: gone ? "Start" : prev ? "Update & start" : "Download & start", onClick: "fs-simple-start", intent: "success", size: "sm", style: ACCENT_STYLE }))
                 } else if (needsDownload) {
-                    rows.push(dim("aquatils-solver runs locally to get blocked sources (Cloudflare / DDoS-Guard) loading. It's downloaded from GitHub and only contacts the sites you stream."))
-                    rows.push(dim("Hard JS challenges (interactive Turnstile) need a real browser. On Windows the default WebView2 engine needs nothing extra. The Chromium engine instead drives a private copy this plugin downloads (~200 MB) into its own cache — it never uses your installed Chrome or Edge. Tick below to fetch it."))
-                    rows.push(toggleRow(fsWantChromium.get(), "fs-chromium-toggle", "Fetch a minimal Chromium for the browser solver"))
-                    rows.push(toggleRow(fsConsent.get(), "fs-consent-toggle", "I understand — tap to confirm"))
+                    rows.push(dim("Download v" + SOLVER_VERSION + " to get protected sources loading. It's downloaded from GitHub and connects only to the sites your extensions request. By default it looks those names up over Cloudflare's encrypted DNS (Settings → Network)."))
+                    if (onWindows()) rows.push(dim("Hard JS challenges (interactive Turnstile) need a real browser. The default WebView2 engine is built into Windows and needs nothing extra. The Chromium engine instead drives a private copy this plugin downloads into its own cache — it never uses your installed Chrome or Edge."))
+                    rows.push(chromiumRow())
+                    rows.push(toggleRow(fsConsent.get(), "fs-consent-toggle", "I agree to download and run the solver from GitHub"))
                     items.push(tray.button({ label: "Download & start", onClick: "fs-simple-start", intent: "success", size: "sm", style: ACCENT_STYLE, disabled: true }))
                 } else if (st === "starting" && (fsDownloadId || fsChromiumDownloadId)) {
                     items.push(tray.button({ label: "Cancel download", onClick: "fs-stop", intent: "alert-subtle", size: "sm" }))
                 } else if (!solverAdoptedStale()) {
                     if (st === "up" || st === "starting") {
-                        items.push(tray.button({ label: "Stop", onClick: "fs-stop", intent: "alert", size: "sm" }))
-                        items.push(tray.button({ label: fsRestarting ? "Restarting…" : "Restart", onClick: "fs-restart", intent: "warning-subtle", size: "sm", disabled: fsRestarting }))
                         if (st === "up") items.push(tray.button({ label: "Test", onClick: "fs-test", intent: "gray-subtle", size: "sm" }))
+                        if (!solverUpdatePending()) items.push(tray.button({ label: fsRestarting ? "Restarting…" : "Restart", onClick: "fs-restart", intent: "warning-subtle", size: "sm", disabled: fsRestarting }))
+                        items.push(tray.button({ label: "Stop", onClick: "fs-stop", intent: "alert-subtle", size: "sm" }))
                     } else {
                         items.push(tray.button({ label: "Start", onClick: "fs-simple-start", intent: "success", size: "sm", style: ACCENT_STYLE }))
                     }
@@ -2337,20 +2446,20 @@ function init() {
                 rows.push(tray.flex({ items: [tray.input({ fieldRef: fsHostRef, placeholder: FS_DEFAULT_HOST }), tray.input({ fieldRef: fsPortRef, placeholder: FS_DEFAULT_PORT })], gap: 2 }))
                 rows.push(dim("Start the solver there with HOST=0.0.0.0 and SOLVER_ALLOW_EXTERNAL=1. It has no password: reach it over your LAN or a VPN (e.g. Tailscale), never port-forward it."))
             } else {
-                rows.push(dim("Port (binds 127.0.0.1)"))
+                rows.push(dim("Port — extensions must point at http://127.0.0.1:<port>/v1"))
                 rows.push(tray.input({ fieldRef: fsPortRef, placeholder: FS_DEFAULT_PORT }))
             }
             if (fsBase() !== "http://" + FS_DEFAULT_HOST + ":" + FS_DEFAULT_PORT) {
                 rows.push(tray.flex({
                     items: [
                         dim("Set \"Solver URL\" in animepahe and anikoto to " + fsBase() + "/v1"),
-                        tray.button({ label: "⎘", onClick: "fs-copy-url", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto", fontSize: ICON_FS } }),
+                        copyBtn("fs-copy-url", "Copy solver URL", { marginLeft: "auto" }),
                     ],
                     gap: 2,
                     style: { alignItems: "center" },
                 }))
             }
-            rows.push(dim("Session name"))
+            rows.push(dim("Session name — must match animepahe's Solver session setting"))
             rows.push(tray.input({ fieldRef: fsSessionRef, placeholder: FS_DEFAULT_SESSION }))
             rows.push(tray.button({ label: "Save", onClick: "fs-save", intent: "primary", size: "sm", style: ACCENT_STYLE }))
 
@@ -2361,7 +2470,7 @@ function init() {
                     tray.button({ label: "Test", onClick: "fs-test", intent: "gray-subtle", size: "sm" }),
                     tray.button({ label: "Doctor", onClick: "fs-doctor", intent: "gray-subtle", size: "sm" }),
                     tray.button({ label: "Stealth", onClick: "fs-stealth", intent: "gray-subtle", size: "sm" }),
-                    tray.button({ label: "⎘", onClick: "fs-copy-diag", intent: "gray-subtle", size: "sm", style: { fontSize: ICON_FS } }),
+                    copyBtn("fs-copy-diag", "Copy diagnostics"),
                 ],
                 gap: 2,
             }))
@@ -2378,11 +2487,7 @@ function init() {
                 rows.push(heading("Metrics"))
                 const sec = (ms: number) => (Math.round((ms || 0) / 100) / 10) + "s"
                 rows.push(dim((mx.cleared || 0) + " / " + (mx.total || 0) + " cleared (" + (mx.clearedPct || 0) + "%)  ·  last " + sec(mx.lastMs) + "  ·  avg " + sec(mx.avgMs) + "  ·  max " + sec(mx.maxMs)))
-                if (mx.lastClearAgoSec != null) {
-                    const a = mx.lastClearAgoSec
-                    const ago = a < 90 ? a + "s" : a < 5400 ? Math.round(a / 60) + "m" : Math.round(a / 3600) + "h"
-                    rows.push(dim("Last cleared " + ago + " ago"))
-                }
+                if (mx.lastClearAgoSec != null) rows.push(dim("Last cleared " + ago(mx.lastClearAgoSec) + " ago"))
                 const reasons = mx.reasons || {}
                 const rk = Object.keys(reasons)
                 if (rk.length) rows.push(dim("Recent failures — " + rk.map((k) => k + ": " + reasons[k]).join("  ·  ")))
@@ -2416,14 +2521,7 @@ function init() {
             if (m !== "remote" && typeof $os !== "undefined" && $os.platform === "windows") {
                 rows.push(divider())
                 rows.push(heading("Experimental"))
-                rows.push(tray.flex({
-                    items: [
-                        dim("Browser engine"),
-                        tray.button({ label: "?", onClick: "fs-help-engine", intent: "gray-subtle", size: "sm", style: { color: "#FFC840", fontWeight: "700", marginLeft: "2px" } }),
-                    ],
-                    gap: 2,
-                    style: { alignItems: "center" },
-                }))
+                rows.push(dim("Browser engine — " + HELP["fs-help-engine"]))
                 const engineOpts: [string, string][] = [["webview2", "WebView2"], ["chrome", "Chromium"]]
                 rows.push(tray.flex({
                     items: engineOpts.map((o) => tray.button({ label: o[1], onClick: "fs-engine-set-" + o[0], intent: "gray-subtle", size: "sm", style: fsEngine.get() === o[0] ? ACCENT_SUBTLE : {} })),
@@ -2431,9 +2529,9 @@ function init() {
                     style: { flexWrap: "wrap" },
                 }))
                 if (fsEngine.get() === "webview2") {
-                    rows.push(toggleRow(fsWv2Warm.get(), "fs-wv2warm-toggle", "Warm-origin fast path", "fs-help-wv2warm"))
-                    rows.push(toggleRow(fsWv2Refresh.get(), "fs-wv2refresh-toggle", "Proactive clearance refresh", "fs-help-wv2refresh"))
-                    rows.push(toggleRow(fsWv2Utls.get(), "fs-wv2utls-toggle", "uTLS fast path", "fs-help-wv2utls"))
+                    rows.push(toggleRow(fsWv2Warm.get(), "fs-wv2warm-toggle", "Warm-origin fast path", HELP["fs-help-wv2warm"]))
+                    rows.push(toggleRow(fsWv2Refresh.get(), "fs-wv2refresh-toggle", "Proactive clearance refresh", HELP["fs-help-wv2refresh"]))
+                    rows.push(toggleRow(fsWv2Utls.get(), "fs-wv2utls-toggle", "uTLS fast path", HELP["fs-help-wv2utls"]))
                 }
             }
             return rows
@@ -2442,10 +2540,11 @@ function init() {
         tray.render(() => {
             const rows: any[] = []
             const errCount = errorGroups().length
+            const unread = unreadErrors()
             rows.push(tray.flex({
                 items: [
                     tray.button({ label: "Solver", onClick: "view-cf", intent: view.get() === "cf" ? "primary" : "gray-subtle", size: "sm", style: view.get() === "cf" ? ACCENT_STYLE : {} }),
-                    tray.button({ label: errCount ? "Errors (" + errCount + ")" : "Errors", onClick: "view-errors", intent: view.get() === "errors" ? "primary" : "gray-subtle", size: "sm", style: view.get() === "errors" ? ACCENT_STYLE : {} }),
+                    tray.button({ label: unread ? "Errors (" + unread + " new)" : errCount ? "Errors (" + errCount + ")" : "Errors", onClick: "view-errors", intent: view.get() === "errors" ? "primary" : "gray-subtle", size: "sm", style: view.get() === "errors" ? ACCENT_STYLE : {} }),
                     tray.button({ label: "⚙", onClick: "view-settings", intent: view.get() === "settings" ? "primary" : "gray-subtle", size: "sm", style: view.get() === "settings" ? { ...ACCENT_STYLE, marginLeft: "auto", fontSize: ICON_FS } : { marginLeft: "auto", fontSize: ICON_FS } }),
                 ],
                 gap: 2,
@@ -2481,6 +2580,7 @@ function init() {
                 if (st === "up") { animeBtn.setLabel("Solver ▶ on"); animeBtn.setIntent("success-subtle"); animeBtn.setTooltipText("Aqua's Utils solver running at " + fsBase()) }
                 else if (st === "starting") { animeBtn.setLabel("Solver ◐ starting"); animeBtn.setIntent("warning-subtle"); animeBtn.setTooltipText("Solver is starting…") }
                 else if (st === "unknown") { animeBtn.setLabel("Solver ◌ checking"); animeBtn.setIntent("gray-subtle"); animeBtn.setTooltipText("Checking the Aqua's Utils solver…") }
+                else if (!fsEverInstalled && fsMode.get() !== "remote") { animeBtn.setLabel("Solver"); animeBtn.setIntent("gray-subtle"); animeBtn.setTooltipText("Set up the solver in Aqua's Utils") }
                 else { animeBtn.setLabel("Solver ⏻ off"); animeBtn.setIntent("alert-subtle"); animeBtn.setTooltipText(fsMode.get() === "remote" ? "Remote solver not reachable — start it on its host" : "Tap to start the Aqua's Utils solver") }
             } catch (_e) {}
         }
@@ -2491,6 +2591,7 @@ function init() {
                 if (st === "up") { ctx.toast.success("Solver running (v" + (fsVersion.get() || "?") + ") at " + fsBase()); return }
                 if (fsMode.get() === "remote") { ctx.toast.info("Remote mode: start the solver on its host."); return }
                 if (st === "starting" || st === "unknown") { ctx.toast.info(st === "starting" ? "The solver is starting…" : "Checking the solver…"); return }
+                if (!fsEverInstalled && !fsConsent.get()) { ctx.toast.info("Set up the solver in Aqua's Utils from its tray icon."); return }
                 ctx.toast.info("Starting the Aqua's Utils solver…")
                 userStart()
             })
@@ -2511,7 +2612,7 @@ function init() {
         plog("aquatils loaded (managing solver " + SOLVER_VERSION + ")")
 
         try {
-            tray.onOpen(() => { trayVisible = true; sehArm(true); tray.update() })
+            tray.onOpen(() => { trayVisible = true; sehArm(true); if (view.get() === "errors") markErrorsRead(); tray.update() })
             tray.onClose(() => { trayVisible = false; sehArm(false) })
         } catch (_e) {}
 

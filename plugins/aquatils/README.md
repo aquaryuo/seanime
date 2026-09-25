@@ -18,7 +18,7 @@ Launch modes (persisted):
 - **Binary** *(default)* — fetches the OS/arch build (Linux/macOS x64+arm64, Windows x64) into `$CACHE/aquatils/<ver>/solver/`, runs it via `sh -c` / `cmd /c` bound to `127.0.0.1`. First run: one **consent** click + Seanime's **Allow** download prompt.
 - **Remote** — point Host/Port at an aquatils-solver you run (box / NAS / container), started with `HOST=0.0.0.0 SOLVER_ALLOW_EXTERNAL=1`. It has no password: keep it on your LAN or a VPN, never port-forward it. A plain FlareSolverr is detected and refused. Diagnostics show only `remote:<port>`, not the host. The plugin only manages sessions + status. Mandatory under Seanime **strict** secure mode (no `$os` / `$osExtra` / `ctx.downloader`).
 
-Advanced/Settings: **Test** (fetches a test page through the solver + timing, then says whether hard challenges can be solved here), **Doctor** (cache/port/binary), **Stealth** (validates the live TLS fingerprint against `tls.peet.ws`), browser engine (Windows), encrypted DNS (DoH), adaptive rate-limit pacing, own-spec TLS fingerprint, Auto-start + crash-restart.
+Advanced/Settings: **Test** (fetches a test page through the solver + timing, then says whether hard challenges can be solved here), **Doctor** (cache/port/binary), **Stealth** (validates the live TLS fingerprint against `tls.peet.ws`), browser engine (Windows), the Chromium download, encrypted DNS (DoH), adaptive rate-limit pacing, own-spec TLS fingerprint, Auto-start + crash-restart. Auto-start is offered once, after the first successful start.
 
 **Ceiling: IP reputation.** A datacenter / VPS / flagged IP fails regardless of engine. Use a residential connection.
 
@@ -35,7 +35,7 @@ const d = r.json<any>() // d.status === "ok" → d.solution.{ response, cookies,
 
 ## Errors
 
-Surfaces errors provider extensions report — Seanime swallows provider errors before the client. Extensions can't call a plugin directly (isolated runtimes), so the channel is the **server log**: extension `console.error` → `seanime-*.log` → local API `/api/v1/logs/latest`. The tool polls it, parses marked lines, groups by count, auto-expires after 6h, copy/clear. Toasts off by default (Settings). Requires: no server password (else `/logs/latest` → 401), non-strict secure mode, correct Seanime URL (`http://127.0.0.1:43211`, editable).
+Surfaces errors provider extensions report — Seanime swallows provider errors before the client. Extensions can't call a plugin directly (isolated runtimes), so the channel is the **server log**: extension `console.error` → `seanime-*.log` → local API `/api/v1/logs/latest`. The tool polls it, parses marked lines, groups by count with the time of the latest one, auto-expires after 6h, copy/clear. The tab says whether it can read the log, and the tray badge counts only errors you haven't opened yet. Toasts off by default (Settings). Not available when a server password is set (`/logs/latest` → 401). Also needs non-strict secure mode and the correct Seanime URL (`http://127.0.0.1:43211`, editable; Save checks it).
 
 Provider side — emit a marked line (keep `msg` plain ASCII; the log anonymizer mangles non-ASCII JSON):
 
