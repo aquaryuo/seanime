@@ -304,7 +304,7 @@ class Provider implements AnimeProvider {
         if (audio === "dub") {
             const dub = await this.hasEnglishAudio(m3u8, shortid, n)
             if (dub === undefined) throw this.fail("server", "anizone: could not check the dub audio track - retry")
-            if (!dub) throw this.fail("server", "anizone: no dub available for this episode")
+            if (!dub) throw this.fail("server", "anizone: no dub available for this episode", "info")
         }
         const subtitles = this.buildSubs(cached.subs)
         return {
@@ -709,9 +709,9 @@ class Provider implements AnimeProvider {
         return { Referer: `${this.baseUrl}/` }
     }
 
-    private reportError(scope: string, message: string): void {
+    private reportError(scope: string, message: string, lvl?: "warn" | "info"): void {
         try {
-            console.error("SEHERRv1 " + JSON.stringify({ t: Date.now(), ext: "aq-anizone", scope: scope, msg: this.plain(message) }))
+            console.error("SEHERRv1 " + JSON.stringify({ t: Date.now(), ext: "aq-anizone", scope: scope, msg: this.plain(message), lvl: lvl }))
         } catch (_e) {}
     }
 
@@ -727,8 +727,8 @@ class Provider implements AnimeProvider {
             .replace(/^ +| +$/g, "")
     }
 
-    private fail(scope: string, message: string): string {
-        this.reportError(scope, message)
+    private fail(scope: string, message: string, lvl?: "warn" | "info"): string {
+        this.reportError(scope, message, lvl)
         return message
     }
 

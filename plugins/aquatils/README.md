@@ -37,11 +37,17 @@ const d = r.json<any>() // d.status === "ok" → d.solution.{ response, cookies,
 
 Surfaces errors provider extensions report — Seanime swallows provider errors before the client. Extensions can't call a plugin directly (isolated runtimes), so the channel is the **server log**: extension `console.error` → `seanime-*.log` → local API `/api/v1/logs/latest`. The tool polls it, parses marked lines, groups by count with the time of the latest one, auto-expires after 6h, copy/clear. The tab says whether it can read the log, and the tray badge counts only errors you haven't opened yet. Toasts off by default (Settings). Not available when a server password is set (`/logs/latest` → 401). Also needs non-strict secure mode and the correct Seanime URL (`http://127.0.0.1:43211`, editable; Save checks it).
 
-Provider side — emit a marked line (keep `msg` plain ASCII; the log anonymizer mangles non-ASCII JSON):
+Provider side — one `console.error` line per report: the marker `SEHERRv1`, a space, then a JSON object (`console.warn` is logged at debug level and can be dropped):
 
 ```ts
-console.error("SEHERRv1 " + JSON.stringify({ t: Date.now(), ext, scope, msg: String(message) }))
+console.error("SEHERRv1 " + JSON.stringify({ t: Date.now(), ext, scope, msg, lvl }))
 ```
+
+- `t` — ms epoch (`Date.now()`). A record without one, more than 60 s ahead, or older than 6h is dropped.
+- `ext` — extension id, e.g. `aq-anikoto`.
+- `scope` — free text naming the step, e.g. `search`, `episodes`, `server`.
+- `msg` — plain ASCII on one line; the log anonymizer mangles non-ASCII JSON.
+- `lvl` — optional. Leave it out for an error. `"warn"` marks a recovered fallback, `"info"` an expected answer (e.g. no dub for this episode); both show dimmed and labelled, and neither counts toward the badge or notifications. Any other value is treated as an error. `JSON.stringify` drops `lvl: undefined`, so errors carry no `lvl` field.
 
 ## Permissions
 
