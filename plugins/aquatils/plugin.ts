@@ -108,7 +108,7 @@ function init() {
         const seen = ctx.state<string[]>(sget<string[]>("seh.seen", []))
         const notify = ctx.state<boolean>(sget<boolean>("seh.notify", false))
         const appRef = ctx.fieldRef<string>(appBase.get())
-        let trayVisible = true
+        let trayVisible = false
         const sehNotifiedAt: { [label: string]: number } = {}
         let sehAuthWarned = false
         let sehRetryAfter = 0
@@ -356,20 +356,24 @@ function init() {
             if (line) pushLog(line + "\n")
         }
 
+        function put<T>(s: $ui.State<T>, v: T): void {
+            if (s.get() !== v) s.set(v)
+        }
+
         function setNote(msg: string): void {
-            fsNote.set(msg)
+            put(fsNote, msg)
             plog(msg)
         }
 
         function setTest(msg: string): void {
-            fsTest.set(msg)
+            put(fsTest, msg)
             plog(msg)
         }
 
         function setErr(msg: string): void {
             const same = fsErr.get() === msg
-            fsErr.set(msg)
-            fsHint.set("")
+            put(fsErr, msg)
+            put(fsHint, "")
             if (!msg || same) return
             plog(msg, "ERR")
             aqReport(EXT_ID, "solver", msg)
@@ -396,11 +400,11 @@ function init() {
         }
 
         function setStatus(next: string): void {
-            const s = fsStatus
-            const prev = s.get()
-            s.set(next)
-            if (next !== prev) plog("solver " + next)
+            const prev = fsStatus.get()
             fsStartTicks = 0
+            if (next === prev) return
+            fsStatus.set(next)
+            plog("solver " + next)
             if (next === "up") {
                 setNote("")
                 setErr("")
@@ -408,8 +412,7 @@ function init() {
                 fsBadStarts = 0
                 fsBindRetries = 0
                 if (fsMode.get() !== "remote") markInstalled()
-                fsAvBlocked = false
-                try { $storage.set("fs.avBlocked", false) } catch (_e) {}
+                setAvBlocked(false)
                 if (!fsUpSince) fsUpSince = Date.now()
                 fsNotified["down"] = false
                 fsNotified["crash"] = false
@@ -607,7 +610,8 @@ function init() {
             seen.set(nextSeen.slice(Math.max(0, nextSeen.length - SEH_MAX_SEEN)))
             sehMaxT = hi
             sehPersist()
-            tray.update()
+            refreshTrayBadge()
+            trayPoke()
         }
 
         async function sehPoll(): Promise<void> {
@@ -641,6 +645,10 @@ function init() {
             } catch (_e) {
                 return
             }
+        }
+
+        function sehArm(now: boolean): void {
+            ctx.jobs.poll("aquatils-seh-poll", () => ctx.jobs.singleflight("aquatils-seh-poll-run", sehPoll), trayVisible || notify.get() ? SEH_POLL_MS : 60000, { immediate: now })
         }
 
         function fsBase(): string {
@@ -716,8 +724,8 @@ function init() {
             const c = r && r.capability
             if (!c) return
             const before = fsCanHard.get()
-            fsCanHard.set(c.canStageB ? "yes" : "no")
-            fsHardWhy.set(c.canStageB ? "" : String(c.reason || ""))
+            put(fsCanHard, c.canStageB ? "yes" : "no")
+            put(fsHardWhy, c.canStageB ? "" : String(c.reason || ""))
             if (before !== fsCanHard.get()) tray.update()
             if (fsCanHard.get() === "no" && fsHardWhy.get()) {
                 notifyOnce("nohard", "Aqua's Utils: some sites will not load until this is fixed — " + fsHardWhy.get())
@@ -768,11 +776,11 @@ function init() {
                     trayPoke()
                     return
                 }
-                if (p.version) fsVersion.set(p.version)
+                if (p.version) put(fsVersion, p.version)
                 setStatus("up")
                 fsDownStreak = 0
                 if (fsUpSince && Date.now() - fsUpSince >= 30000) fsAutoRestarts = 0
-                if (uiMode.get() === "advanced" && view.get() === "cf" && fsMode.get() !== "remote") {
+                if (trayVisible && uiMode.get() === "advanced" && view.get() === "cf" && fsMode.get() !== "remote") {
                     const mr = await fsApi("metrics", {})
                     if (mr && mr.metrics) fsMetrics.set(mr.metrics)
                 }
@@ -837,6 +845,10 @@ function init() {
             trayPoke()
         }
 
+        function fsTick(): Promise<void> {
+            return ctx.jobs.singleflight("aquatils-fs-poll-run", fsRefresh)
+        }
+
         async function runTest(): Promise<void> {
             fsTesting = true
             fsTestUntil = Date.now() + 70000
@@ -849,7 +861,7 @@ function init() {
                     trayPoke()
                     return
                 }
-                if (ping.version) fsVersion.set(ping.version)
+                if (ping.version) put(fsVersion, ping.version)
                 setStatus("up")
                 fsDownStreak = 0
                 trayPoke()
@@ -956,7 +968,14 @@ function init() {
         }
 
         function markInstalled(): void {
+            if (sget<boolean>("fs.everInstalled", false)) return
             try { $storage.set("fs.everInstalled", true) } catch (_e) {}
+        }
+
+        function setAvBlocked(v: boolean): void {
+            if (fsAvBlocked === v) return
+            fsAvBlocked = v
+            try { $storage.set("fs.avBlocked", v) } catch (_e) {}
         }
 
         function fsResetRestartCap(): void {
@@ -1285,8 +1304,7 @@ function init() {
                     fsBinary = null
                     setStatus("down")
                     const avHit = (verb: string, why: string, err: string): void => {
-                        fsAvBlocked = true
-                        try { $storage.set("fs.avBlocked", true) } catch (_e) {}
+                        setAvBlocked(true)
                         plog("antivirus " + verb + " the solver (" + why + ")")
                         setErr("Antivirus (e.g. Windows Defender) " + err + " — it flags the solver as suspicious because it automates a background browser.")
                         fsHint.set("Add a Windows Security exclusion for the aquatils folder (%LOCALAPPDATA%\\aquatils), then press Start.")
@@ -1691,15 +1709,14 @@ function init() {
             if (fsMode.get() === "remote") {
                 setNote("Remote mode: start the solver yourself; this only manages sessions at " + fsBase() + ".")
                 tray.update()
-                void fsRefresh()
+                void fsTick()
                 return
             }
             setManualStop(false)
             fsDepsPkgs.set([])
             fsDepsChecked = false
             fsNotified["chromedeps"] = false
-            fsAvBlocked = false
-            try { $storage.set("fs.avBlocked", false) } catch (_e) {}
+            setAvBlocked(false)
             binaryEnsureAndStart()
         }
 
@@ -1812,7 +1829,7 @@ function init() {
                     setStatus("down")
                     setNote("Switched to Remote - the solver running on this machine was stopped.")
                     tray.update()
-                    void fsRefresh()
+                    void fsTick()
                 })
                 return
             }
@@ -1930,7 +1947,7 @@ function init() {
             } else {
                 ctx.toast.success("Saved solver settings")
             }
-            void fsRefresh()
+            void fsTick()
         })
 
         function dim(t: string): any {
@@ -2400,18 +2417,16 @@ function init() {
         plog("aquatils loaded (managing solver " + SOLVER_VERSION + ")")
 
         try {
-            tray.onOpen(() => { trayVisible = true; tray.update() })
-            tray.onClose(() => { trayVisible = false })
+            tray.onOpen(() => { trayVisible = true; sehArm(true); tray.update() })
+            tray.onClose(() => { trayVisible = false; sehArm(false) })
         } catch (_e) {}
 
-        ctx.jobs.poll("aquatils-seh-poll", () => ctx.jobs.singleflight("aquatils-seh-poll-run", sehPoll), SEH_POLL_MS, { immediate: true })
-        ctx.jobs.poll("aquatils-fs-poll", () => ctx.jobs.singleflight("aquatils-fs-poll-run", fsRefresh), FS_POLL_MS, { immediate: true })
+        sehArm(true)
+        ctx.jobs.poll("aquatils-fs-poll", fsTick, FS_POLL_MS, { immediate: true })
 
-        if (!fsAutoStart.get()) {
-            void fsRefresh()
-        } else if (uiMode.get() !== "advanced" || fsMode.get() !== "remote") {
-            void fsRefresh().then(() => {
-                if (fsStatus.get() !== "up") fsStart()
+        if (fsAutoStart.get() && fsMode.get() !== "remote") {
+            void fsTick().then(() => {
+                if (fsStatus.get() !== "up" && !fsNotified["foreign"]) fsStart()
             })
         }
     })
