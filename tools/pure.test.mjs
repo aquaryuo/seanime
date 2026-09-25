@@ -563,8 +563,6 @@ console.log("aquatils (source invariants)")
     eq(has('setErr("The solver download failed: "'), true, "downloads: a failed solver download is reported, not only noted")
     eq(has('data.solver === "aquatils"'), true, "identity: the probe requires our own solver to claim health")
     eq(has("p.foreign"), true, "identity: another compatible server on the port is reported, not counted as healthy")
-    eq(has("const avEvidence ="), true, "windows: a scanner verdict needs scanner evidence")
-    eq(has("execRefused && !avEvidence"), true, "windows: a refusal to execute is reported as itself")
 }
 
 console.log("aquatils (boot)")
@@ -609,7 +607,7 @@ console.log("aquatils (boot)")
         eq(h.status(), "down", what)
     })
 
-    pending("exit: a stale bind line in solver.log does not mask this launch's library error", async (what) => {
+    await run("exit: a stale bind line in solver.log does not mask this launch's library error", async (what) => {
         const h = bootPlugin({ storage: INSTALLED, files: { [BIN]: "x", [LOG]: "listen tcp 127.0.0.1:8191: bind: address already in use\n" } })
         await h.settle()
         h.fire("fs-start")
@@ -620,6 +618,21 @@ console.log("aquatils (boot)")
         await h.settle()
         eq(/shared libraries/.test(h.reported[h.reported.length - 1]), true, what)
     })
+
+    const winExit = async (lines, log) => {
+        const h = bootPlugin({ os: { platform: "windows" }, storage: INSTALLED, files: { [BIN + ".exe"]: "x", ...(log ? { [LOG]: log } : {}) } })
+        await h.settle()
+        h.fire("fs-start")
+        await h.settle()
+        const s = h.spawns()[0]
+        lines.forEach(s.fail)
+        s.exit(1)
+        await h.settle()
+        return [h.storage.get("fs.avBlocked") === true, /^(Antivirus|Windows refused)/.exec(h.reported[h.reported.length - 1] || "")?.[0]]
+    }
+    eq(await winExit(["Access is denied."]), [false, "Windows refused"], "windows: a refusal to execute is reported as itself")
+    eq(await winExit(["Access is denied."], "Operation did not complete successfully because the file contains a virus\n"), [false, "Windows refused"], "windows: a scanner line from an earlier run is not scanner evidence")
+    eq(await winExit(["Operation did not complete successfully because the file contains a virus or potentially unwanted software.", "Access is denied."]), [true, "Antivirus"], "windows: a scanner verdict in this launch's output outranks the refusal")
 
     await run("boot: auto-start with the solver not answering launches it exactly once", async (what) => {
         const h = bootPlugin({ storage: { ...INSTALLED, "fs.autoStart": true }, files: { [BIN]: "x" } })
@@ -656,12 +669,14 @@ console.log("aquatils (boot)")
         eq([closed, open, h.every["aquatils-seh-poll"], bootPlugin({ storage: { "seh.notify": true } }).every["aquatils-seh-poll"]], [60000, 6000, 60000, 6000], what)
     })
 
-    pending("launch: a stored headless flag gives no SOLVER_HEADLESS and is removed at load", async (what) => {
-        const h = bootPlugin({ storage: { ...INSTALLED, "fs.browserMode": "headless" }, files: { [BIN]: "x" } })
+    await run("launch: a stored headless flag gives no SOLVER_HEADLESS and is removed at load", async (what) => {
+        const h = bootPlugin({ storage: { ...INSTALLED, "fs.browserMode": "headless", "fs.logFilter": true }, files: { [BIN]: "x" } })
         await h.settle()
+        const kept = ["fs.browserMode", "fs.logFilter"].filter((k) => h.storage.has(k))
         h.fire("fs-start")
         await h.settle()
-        eq([h.spawns()[0].cmd.env.includes("SOLVER_HEADLESS=1"), h.storage.has("fs.browserMode")], [false, false], what)
+        const env = h.spawns()[0].cmd.env.filter((e) => /^SOLVER_(HEADLESS|XVFB|BROWSER_MODE)=/.test(e))
+        eq([kept, env], [[], ["SOLVER_BROWSER_MODE=auto", "SOLVER_XVFB=1"]], what)
     })
 }
 
