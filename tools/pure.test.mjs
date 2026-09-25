@@ -55,7 +55,7 @@ function bootPlugin(fakes = {}) {
         now: 1767225600000,
         storage: new Map(Object.entries(fakes.storage || {})),
         files: Object.assign({}, fakes.files),
-        handlers: {}, polls: {}, every: {}, writes: [], sets: 0, updates: 0, cmds: [], timers: [], notes: [], toasts: [], reported: [], downloads: [],
+        handlers: {}, polls: {}, every: {}, writes: [], sets: 0, updates: 0, cmds: [], timers: [], notes: [], toasts: [], reported: [], downloads: [], watchers: {},
     }
     const bytes = (s) => new Uint8Array(Buffer.from(s))
     const under = (p) => Object.keys(h.files).filter((f) => f === p || f.startsWith(p + "/"))
@@ -72,7 +72,12 @@ function bootPlugin(fakes = {}) {
         fieldRef: (v) => ({ current: v, onValueChange() {} }),
         newTray: () => tray,
         dom: { observe() {} },
-        downloader: { download: (url) => h.downloads.push(url), watch: () => () => {}, cancel() {} },
+        downloader: {
+            download: (url) => String(h.downloads.push(url)),
+            watch: (id, cb) => { h.watchers[id] = cb; return () => {} },
+            cancel: (id) => setImmediate(() => h.watchers[id] && h.watchers[id]({ status: "cancelled" })),
+        },
+        action: { newAnimePageButton: (p) => (h.anime = { label: p.label, setLabel: (l) => { h.anime.label = l }, setIntent() {}, setTooltipText() {}, onClick: (fn) => { h.anime.click = fn }, mount() {} }) },
         fetch: (url, o) => {
             const r = (fakes.fetch || (() => null))(url, o && o.body ? JSON.parse(o.body) : {})
             return r ? Promise.resolve({ ok: !r.status || r.status < 400, status: r.status || 200, json: () => r.json, text: () => r.text || "" }) : Promise.reject(new Error("connection refused"))
@@ -95,10 +100,12 @@ function bootPlugin(fakes = {}) {
         readFile: (p) => { if (!(p in h.files)) throw new Error("not found"); return bytes(h.files[p]) },
         readDir: () => [],
         removeAll: (p) => under(p).forEach((f) => delete h.files[f]),
+        rename: (a, b) => under(a).forEach((f) => { h.files[b + f.slice(a.length)] = h.files[f]; delete h.files[f] }),
         mkdirAll() {},
         truncate: (p) => { h.files[p] = "" },
     }
     const osExtra = {
+        unzip: (zip, dest) => (fakes.unzip || []).forEach((f) => { h.files[dest + "/" + f] = "x" }),
         asyncCmd: (...args) => {
             const c = { args: args.join(" ") }
             h.cmds.push(c)
@@ -597,7 +604,7 @@ console.log("aquatils (boot)")
         ]], what)
     })
 
-    pending("remote: Start with the remote host down ends Off, not Starting", async (what) => {
+    await run("remote: Start with the remote host down ends Off, not Starting", async (what) => {
         const h = bootPlugin({ storage: { "fs.mode": "remote", "fs.host": "10.0.0.5" } })
         await h.settle()
         h.fire("fs-simple-start")
@@ -605,6 +612,99 @@ console.log("aquatils (boot)")
         for (let i = 0; i < 3; i++) { h.now += 5000; await h.tick("aquatils-fs-poll") }
         await h.settle()
         eq(h.status(), "down", what)
+    })
+
+    const sweeps = (h) => h.cmds.filter((c) => c.args.includes("[a]quatils/.*/solver/solver")).length
+
+    await run("remote: the Simple view offers Reconnect, not the local download, and no local dependency check runs", async (what) => {
+        const h = bootPlugin({ storage: { "fs.mode": "remote", "fs.host": "10.0.0.5" } })
+        await h.settle()
+        for (let i = 0; i < 2; i++) { h.now += 5000; await h.tick("aquatils-fs-poll") }
+        await h.settle()
+        const view = JSON.stringify(h.render())
+        eq([h.status(), view.includes('"label":"Reconnect"'), view.includes("Download & start"), h.cmds.filter((c) => c.args.includes("Xvfb")).length], ["down", true, false, 0], what)
+    })
+
+    await run("mode: switching to Remote stops the local solver and re-checks; switching back re-checks the local one", async (what) => {
+        const h = bootPlugin({ storage: { ...INSTALLED, "fs.host": "10.0.0.5" }, files: { [BIN]: "x" }, fetch: ours })
+        await h.settle()
+        h.fire("fs-mode-remote")
+        await h.settle()
+        const remote = [h.status(), sweeps(h)]
+        h.fire("fs-mode-binary")
+        await h.settle()
+        eq([remote, h.status(), h.spawns().length], [["unknown", 1], "up", 0], what)
+    })
+
+    await run("anime button: reads checking before the first answer and never relaunches a start in progress", async (what) => {
+        const h = bootPlugin({ storage: INSTALLED, files: { [BIN]: "x" } })
+        await h.settle()
+        const checking = h.anime.label
+        h.anime.click()
+        await h.settle()
+        const idle = h.spawns().length
+        h.fire("fs-start")
+        await h.settle()
+        h.anime.click()
+        await h.settle()
+        eq([checking, idle, h.spawns().length, h.status()], ["Solver ◌ checking", 0, 1, "starting"], what)
+    })
+
+    await run("launch: an OS/arch without a build ends Off with the reason shown, not Starting", async (what) => {
+        const h = bootPlugin({ os: { arch: "386" } })
+        await h.settle()
+        h.fire("fs-simple-start")
+        await h.settle()
+        eq([h.status(), /No prebuilt binary/.test(h.reported[h.reported.length - 1] || "")], ["down", true], what)
+    })
+
+    await run("download: a Restart mid-download keeps the new download's state and offers Cancel download", async (what) => {
+        const h = bootPlugin({ storage: { "fs.consent": true, "fs.wantChromium": false } })
+        await h.settle()
+        h.fire("fs-simple-start")
+        await h.settle()
+        h.fire("fs-restart")
+        await h.settle()
+        eq([h.downloads.length, h.status(), JSON.stringify(h.render()).includes('"label":"Cancel download"'), h.reported], [2, "starting", true, []], what)
+    })
+
+    const CHR = "/cache/aquatils/chromium/chrome-linux64/chrome"
+    const feed = (url, body) => (/chrome-for-testing/.test(url)
+        ? { json: { channels: { Stable: { version: "200.0.0.0", downloads: { chrome: [{ platform: "linux64", url: "https://cft.example/chrome.zip" }] } } } } }
+        : ours(url, body))
+
+    await run("chromium update: downloads while the solver keeps running; a Restart meanwhile restarts once with no false error", async (what) => {
+        const h = bootPlugin({ storage: { ...INSTALLED, "fs.chromiumVer": "100.0.0.0" }, files: { [BIN]: "x", [CHR]: "x" }, fetch: feed })
+        await h.settle()
+        h.fire("fs-update-chromium")
+        await h.settle()
+        const during = [h.status(), h.downloads.length, sweeps(h)]
+        h.fire("fs-restart")
+        await h.settle()
+        eq([during, sweeps(h), h.spawns().length, h.reported], [["up", 1, 0], 1, 1, []], what)
+    })
+
+    await run("chromium update: a finished download shows Starting for the swap, then relaunches on the new copy", async (what) => {
+        const h = bootPlugin({ storage: { ...INSTALLED, "fs.chromiumVer": "100.0.0.0" }, files: { [BIN]: "x", [CHR]: "x" }, fetch: feed, unzip: ["chrome-linux64/chrome"] })
+        await h.settle()
+        h.fire("fs-update-chromium")
+        await h.settle()
+        h.watchers["1"]({ status: "completed" })
+        const swapping = h.status()
+        await h.settle()
+        eq([swapping, h.storage.get("fs.chromiumVer"), h.spawns().length, CHR in h.files], ["starting", "200.0.0.0", 1, true], what)
+    })
+
+    await run("deps: a dependency install that finishes after Stop does not start the solver", async (what) => {
+        const h = bootPlugin({ storage: INSTALLED, files: { [BIN]: "x" } })
+        await h.settle()
+        h.fire("fs-start")
+        await h.settle()
+        h.spawns()[0].fail("solver: error while loading shared libraries: libnss3.so: cannot open shared object file")
+        h.fire("fs-install-deps")
+        h.fire("fs-stop")
+        await h.settle()
+        eq([h.cmds.some((c) => c.args.includes("apt-get install")), h.spawns().length, h.storage.get("fs.manualStop")], [true, 1, true], what)
     })
 
     await run("exit: a stale bind line in solver.log does not mask this launch's library error", async (what) => {

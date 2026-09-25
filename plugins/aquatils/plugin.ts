@@ -219,6 +219,7 @@ function init() {
         }
 
         function checkChromiumDeps(force?: boolean): void {
+            if (fsMode.get() === "remote") return
             if (typeof $os === "undefined" || typeof $osExtra === "undefined" || $os.platform !== "linux") return
             if (fsDepsChecked && !force) return
             const chrome = chromiumCachedPath()
@@ -276,8 +277,8 @@ function init() {
                         fsDepsInstallMsg.set("")
                         fsDepsChecked = false
                         fsNotified["chromedeps"] = false
-                        try { ctx.toast.success("System packages installed - restarting the solver.") } catch (_e) {}
-                        fsStart()
+                        try { ctx.toast.success("System packages installed" + (fsManualStop ? "." : " - restarting the solver.")) } catch (_e) {}
+                        if (!fsManualStop) fsStart()
                     } else {
                         const why = cleanTail(tail)
                         fsDepsInstallMsg.set("Automatic install failed (exit " + code + ")" + (why ? ": " + why : "") + ". You likely need root or passwordless sudo - use Copy command to run it yourself.")
@@ -1082,18 +1083,31 @@ function init() {
             return sget<string>("fs.chromiumVer", "") || "?"
         }
 
-        function downloadChromium(st: { version: string; url: string }, done: (ok: boolean) => void): void {
+        function downloadChromium(st: { version: string; url: string }, done: (ok: boolean) => void, beforeSwap?: (swap: () => void) => void): void {
             const dir = $filepath.join($os.cacheDir(), "aquatils", "chromium")
             const staging = dir + ".new"
             try { $os.removeAll(staging) } catch (_e) {}
             try { $os.mkdirAll(staging, 493) } catch (_e) {}
             const zip = $filepath.join(staging, "chrome.zip")
+            const gen = fsBinaryGen
             let id = ""
             try { id = dl.download(st.url, zip, { timeout: 900.5 }) } catch (_e) { try { $os.removeAll(staging) } catch (_e2) {} setErr("Chromium download couldn't start: " + String(_e)); done(false); return }
             fsChromiumDownloadId = id
             plog("downloading Chromium" + (st.version ? " " + st.version : "") + " (browser solver)")
             dlLogAt = 0
 
+            const finish = (ok: boolean): void => {
+                if (ok) {
+                    if (st.version) {
+                        try { $storage.set("fs.chromiumVer", st.version) } catch (_e) {}
+                    }
+                } else {
+                    try { $os.removeAll(staging) } catch (_e) {}
+                    setErr("Chromium download/extract failed — the copy already installed was left in place.")
+                    tray.update()
+                }
+                done(ok)
+            }
             const cancel = dl.watch(id, (p: $downloader.DownloadProgress | undefined) => {
                 if (!p) return
                 if (p.status === "downloading") {
@@ -1102,6 +1116,10 @@ function init() {
                     return
                 }
                 cancel()
+                if (gen !== fsBinaryGen) {
+                    try { $os.removeAll(staging) } catch (_e) {}
+                    return
+                }
                 fsChromiumDownloadId = ""
                 if (p.status !== "completed") {
                     try { $os.removeAll(staging) } catch (_e) {}
@@ -1114,32 +1132,25 @@ function init() {
                 let unzipOk = true
                 try { $osExtra.unzip(zip, staging) } catch (_e) { unzipOk = false }
                 try { $os.removeAll(zip) } catch (_e) {}
-                let ok = unzipOk && chromiumPathUnder(staging) !== ""
-                if (ok) {
+                if (!unzipOk || chromiumPathUnder(staging) === "") { finish(false); return }
+                const swap = (): void => {
                     const previous = dir + ".old"
                     let movedAside = false
                     try { $os.removeAll(previous) } catch (_e) {}
                     try { if ($os.stat(dir)) { $os.rename(dir, previous); movedAside = true } } catch (_e) {}
                     let installed = false
                     try { $os.rename(staging, dir); installed = true } catch (_e) {}
-                    ok = installed && chromiumCachedPath() !== ""
+                    const ok = installed && chromiumCachedPath() !== ""
                     if (ok) {
                         try { $os.removeAll(previous) } catch (_e) {}
                     } else {
                         if (installed) { try { $os.removeAll(dir) } catch (_e) {} }
                         if (movedAside) { try { $os.rename(previous, dir) } catch (_e) {} }
                     }
+                    finish(ok)
                 }
-                if (ok) {
-                    if (st.version) {
-                        try { $storage.set("fs.chromiumVer", st.version) } catch (_e) {}
-                    }
-                } else {
-                    try { $os.removeAll(staging) } catch (_e) {}
-                    setErr("Chromium download/extract failed — the copy already installed was left in place.")
-                    tray.update()
-                }
-                done(ok)
+                if (beforeSwap) beforeSwap(swap)
+                else swap()
             })
         }
 
@@ -1199,20 +1210,18 @@ function init() {
                 if (!st.version || !st.url) { setNote("Couldn't reach the Chromium release feed."); tray.update(); return }
                 const cur = sget<string>("fs.chromiumVer", "")
                 if (cur && !verNewer(st.version, cur)) { setNote("Chromium is up to date (" + cur + ")."); tray.update(); return }
+                if (fsChromiumDownloadId) { setNote("Chromium is already downloading."); tray.update(); return }
                 const wasRunning = fsMode.get() !== "remote" && (fsStatus.get() === "up" || fsStatus.get() === "starting")
-                const apply = (): void => {
-                    fsChromiumBusy = true
-                    setNote("Updating Chromium…")
+                let stopped = false
+                if (!wasRunning) fsChromiumBusy = true
+                setNote("Updating Chromium…")
+                tray.update()
+                downloadChromium(st, (ok) => {
+                    fsChromiumBusy = false
+                    setNote(ok ? ("Chromium updated to " + st.version + ".") : "Chromium update failed.")
                     tray.update()
-                    downloadChromium(st, (ok) => {
-                        fsChromiumBusy = false
-                        setNote(ok ? ("Chromium updated to " + st.version + ".") : "Chromium update failed.")
-                        tray.update()
-                        if (wasRunning && !fsManualStop && fsMode.get() !== "remote") fsStart()
-                    })
-                }
-                if (wasRunning) binaryStop(apply)
-                else apply()
+                    if (stopped && !fsManualStop && fsMode.get() !== "remote") fsStart()
+                }, wasRunning ? (swap) => { stopped = true; setStatus("starting"); binaryStop(swap) } : undefined)
             })
         }
 
@@ -1541,6 +1550,8 @@ function init() {
             }
             const pick = binaryAsset()
             if (!pick) {
+                setStatus("down")
+                setErr("No prebuilt binary for this OS/arch — use Remote mode.")
                 setNote("No prebuilt binary for this OS/arch — use Remote mode.")
                 ctx.toast.warning(fsNote.get())
                 tray.update()
@@ -1551,6 +1562,8 @@ function init() {
             try {
                 cacheDir = $os.cacheDir()
             } catch (_e) {
+                setStatus("down")
+                setErr("No cache-dir access for the download.")
                 setNote("No cache-dir access for the download.")
                 tray.update()
                 return
@@ -1652,12 +1665,9 @@ function init() {
                     return
                 }
                 cancel()
+                if (fsBinaryGen !== launchGen) return
                 fsDownloadId = ""
                 if (p.status === "completed") {
-                    if (fsBinaryGen !== launchGen) {
-                        fsBusy = false
-                        return
-                    }
                     let archiveSize = 0
                     try { const sa = $os.stat(archive); if (sa) { try { archiveSize = sa.size() } catch (_e) {} } } catch (_e) {}
                     const expected = p.totalSize || 0
@@ -1684,7 +1694,7 @@ function init() {
                     tray.update()
                 } else if (p.status === "cancelled") {
                     fsBusy = false
-                    if (fsBinaryGen !== launchGen || fsManualStop || fsMode.get() === "remote") {
+                    if (fsManualStop || fsMode.get() === "remote") {
                         tray.update()
                         return
                     }
@@ -1698,8 +1708,7 @@ function init() {
 
         function fsStart(): void {
             if (fsMode.get() === "remote") {
-                setNote("Remote mode: start the solver yourself; this only manages sessions at " + fsBase() + ".")
-                tray.update()
+                ctx.toast.info("Checking the remote solver at " + fsBase() + "…")
                 void fsTick()
                 return
             }
@@ -1711,10 +1720,30 @@ function init() {
             binaryEnsureAndStart()
         }
 
+        function userStart(): void {
+            fsResetRestartCap()
+            fsStart()
+        }
+
+        function resetForMode(): void {
+            put(fsCanHard, "")
+            put(fsHardWhy, "")
+            put(fsVersion, "")
+            put(fsTest, "")
+            fsMetrics.set(null)
+            fsDepsPkgs.set([])
+            setErr("")
+            fsCapAt = 0
+            fsDownStreak = 0
+            fsDepsChecked = false
+            setStatus("unknown")
+            tray.update()
+            void fsTick()
+        }
+
         function fsStop(): void {
             if (fsMode.get() === "remote") {
-                setNote("Remote mode: stop the solver on its host.")
-                tray.update()
+                ctx.toast.info("Remote mode: stop the solver on its host.")
                 return
             }
             setManualStop(true)
@@ -1779,7 +1808,7 @@ function init() {
             void sehPoll()
         })
 
-        ctx.registerEventHandler("fs-start", () => { fsResetRestartCap(); fsStart() })
+        ctx.registerEventHandler("fs-start", () => userStart())
         ctx.registerEventHandler("fs-stop", () => fsStop())
         ctx.registerEventHandler("fs-restart", () => {
             plog("restart requested")
@@ -1812,24 +1841,24 @@ function init() {
             })
         }
         ctx.registerEventHandler("fs-mode-remote", () => {
+            if (fsMode.get() === "remote") return
             const wasLocal = fsStatus.get() === "up" || fsStatus.get() === "starting"
             fsMode.set("remote")
             fsPersist()
             if (wasLocal) {
                 binaryStop(() => {
-                    setStatus("down")
                     setNote("Switched to Remote - the solver running on this machine was stopped.")
-                    tray.update()
-                    void fsTick()
+                    resetForMode()
                 })
                 return
             }
-            tray.update()
+            resetForMode()
         })
         ctx.registerEventHandler("fs-mode-binary", () => {
+            if (fsMode.get() === "binary") return
             fsMode.set("binary")
             fsPersist()
-            tray.update()
+            resetForMode()
         })
         onToggle("fs-autoupdate-toggle", fsAutoUpdate)
         function applySolverEnvChange(note: string): void {
@@ -1895,12 +1924,12 @@ function init() {
             tray.update()
         })
         ctx.registerEventHandler("fs-simple-start", () => {
-            setManualStop(false)
-            fsResetRestartCap()
-            setStatus("starting")
-            setNote("Starting solver…")
-            tray.update()
-            fsStart()
+            if (fsMode.get() !== "remote") {
+                setStatus("starting")
+                setNote("Starting solver…")
+                tray.update()
+            }
+            userStart()
         })
         onToggle("fs-consent-toggle", fsConsent)
         onToggle("fs-chromium-toggle", fsWantChromium)
@@ -1911,12 +1940,12 @@ function init() {
             fsWantChromium.set(true)
             fsPersist()
             ctx.toast.info("Chromium enabled — restarting the solver to fetch it.")
-            fsStart()
+            userStart()
         })
         ctx.registerEventHandler("fs-restart-update", () => {
             setNote("Restarting to apply the updated solver…")
             tray.update()
-            fsStart()
+            userStart()
         })
         ctx.registerEventHandler("fs-copy-diag", () => copyOut(buildDiagnostics, "Diagnostics copied — paste them when reporting an issue."))
         ctx.registerEventHandler("fs-install-deps", () => installChromiumDeps())
@@ -2106,7 +2135,7 @@ function init() {
                 rows.push(tray.flex({
                     items: [
                         tray.button({ label: "Restart to update", onClick: "fs-restart-update", intent: "primary", size: "sm", style: ACCENT_STYLE }),
-                        tray.button({ label: "Stop", onClick: "fs-stop", intent: "alert", size: "sm", disabled: fsRestarting }),
+                        tray.button({ label: "Stop", onClick: "fs-stop", intent: "alert", size: "sm" }),
                     ],
                     gap: 2,
                 }))
@@ -2189,9 +2218,15 @@ function init() {
             const rows: any[] = cfStatusRows()
             const st = fsStatus.get()
             if (uiMode.get() !== "advanced") {
-                const needsDownload = st !== "up" && st !== "starting" && !binaryDownloaded()
+                const remote = fsMode.get() === "remote"
+                const needsDownload = st !== "up" && st !== "starting" && !binaryDownloaded() && !remote
                 const items: any[] = []
-                if (needsDownload && (fsAvBlocked || solverQuarantined())) {
+                if (remote) {
+                    if (st === "up") rows.push(dim("Using the remote solver at " + fsBase()))
+                    else if (st === "down") rows.push(dim("The remote solver at " + fsBase() + " isn't reachable. Start it on its host."))
+                    items.push(tray.button({ label: "Reconnect", onClick: "fs-start", intent: "gray-subtle", size: "sm" }))
+                    if (st === "up") items.push(tray.button({ label: "Test", onClick: "fs-test", intent: "gray-subtle", size: "sm" }))
+                } else if (needsDownload && (fsAvBlocked || solverQuarantined())) {
                     if (!fsErr.get()) {
                         rows.push(dim("Your antivirus removed the solver after it started — Windows Defender flags it as suspicious because it automates a background browser. Add a Windows Security exclusion for the folder below, then Start (it re-downloads into the excluded folder)."))
                         items.push(tray.button({ label: "Copy folder to exclude", onClick: "fs-copy-cache-path", intent: "gray-subtle", size: "sm", style: ACCENT_SUBTLE }))
@@ -2209,9 +2244,11 @@ function init() {
                     rows.push(toggleRow(fsWantChromium.get(), "fs-chromium-toggle", "Fetch a minimal Chromium for the browser solver"))
                     rows.push(toggleRow(fsConsent.get(), "fs-consent-toggle", "I understand — tap to confirm"))
                     items.push(tray.button({ label: "Download & start", onClick: "fs-simple-start", intent: "success", size: "sm", style: ACCENT_STYLE, disabled: true }))
+                } else if (st === "starting" && (fsDownloadId || fsChromiumDownloadId)) {
+                    items.push(tray.button({ label: "Cancel download", onClick: "fs-stop", intent: "alert-subtle", size: "sm" }))
                 } else if (!solverAdoptedStale()) {
                     if (st === "up" || st === "starting") {
-                        items.push(tray.button({ label: "Stop", onClick: "fs-stop", intent: "alert", size: "sm", disabled: fsRestarting }))
+                        items.push(tray.button({ label: "Stop", onClick: "fs-stop", intent: "alert", size: "sm" }))
                         items.push(tray.button({ label: fsRestarting ? "Restarting…" : "Restart", onClick: "fs-restart", intent: "warning-subtle", size: "sm", disabled: fsRestarting }))
                         if (st === "up") items.push(tray.button({ label: "Test", onClick: "fs-test", intent: "gray-subtle", size: "sm" }))
                     } else {
@@ -2220,6 +2257,7 @@ function init() {
                 }
                 items.push(tray.button({ label: "Advanced", onClick: "ui-mode-toggle", intent: "gray-subtle", size: "sm", style: { marginLeft: "auto" } }))
                 rows.push(tray.flex({ items: items, gap: 2 }))
+                if (remote && st === "up" && fsTest.get()) rows.push(dim(fsTest.get()))
                 appendLogs(rows)
                 return rows
             }
@@ -2382,16 +2420,19 @@ function init() {
                 const st = fsStatus.get()
                 if (st === "up") { animeBtn.setLabel("Solver ▶ on"); animeBtn.setIntent("success-subtle"); animeBtn.setTooltipText("Aqua's Utils solver running at " + fsBase()) }
                 else if (st === "starting") { animeBtn.setLabel("Solver ◐ starting"); animeBtn.setIntent("warning-subtle"); animeBtn.setTooltipText("Solver is starting…") }
+                else if (st === "unknown") { animeBtn.setLabel("Solver ◌ checking"); animeBtn.setIntent("gray-subtle"); animeBtn.setTooltipText("Checking the Aqua's Utils solver…") }
                 else { animeBtn.setLabel("Solver ⏻ off"); animeBtn.setIntent("alert-subtle"); animeBtn.setTooltipText(fsMode.get() === "remote" ? "Remote solver not reachable — start it on its host" : "Tap to start the Aqua's Utils solver") }
             } catch (_e) {}
         }
         try {
             animeBtn = ctx.action.newAnimePageButton({ label: "Solver", intent: "gray-subtle", tooltipText: "Aqua's Utils solver" })
             animeBtn.onClick(() => {
-                if (fsStatus.get() === "up") { ctx.toast.success("Solver running (v" + (fsVersion.get() || "?") + ") at " + fsBase()); return }
+                const st = fsStatus.get()
+                if (st === "up") { ctx.toast.success("Solver running (v" + (fsVersion.get() || "?") + ") at " + fsBase()); return }
                 if (fsMode.get() === "remote") { ctx.toast.info("Remote mode: start the solver on its host."); return }
+                if (st === "starting" || st === "unknown") { ctx.toast.info(st === "starting" ? "The solver is starting…" : "Checking the solver…"); return }
                 ctx.toast.info("Starting the Aqua's Utils solver…")
-                fsStart()
+                userStart()
             })
             animeBtn.mount()
             refreshAnimeBtn()
