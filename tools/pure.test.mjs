@@ -62,7 +62,7 @@ function bootPlugin(fakes = {}) {
     const running = {}
     const tray = new Proxy({
         update: () => { h.updates++ },
-        updateBadge() {},
+        updateBadge: (b) => { h.badge = b },
         render: (fn) => { h.render = fn },
         onOpen: (fn) => { h.open = fn },
         onClose: (fn) => { h.close = fn },
@@ -80,7 +80,7 @@ function bootPlugin(fakes = {}) {
         action: { newAnimePageButton: (p) => (h.anime = { label: p.label, setLabel: (l) => { h.anime.label = l }, setIntent() {}, setTooltipText() {}, onClick: (fn) => { h.anime.click = fn }, mount() {} }) },
         fetch: (url, o) => {
             const r = (fakes.fetch || (() => null))(url, o && o.body ? JSON.parse(o.body) : {})
-            return r ? Promise.resolve({ ok: !r.status || r.status < 400, status: r.status || 200, json: () => r.json, text: () => r.text || "" }) : Promise.reject(new Error("connection refused"))
+            return r && r.hang ? new Promise(() => {}) : r ? Promise.resolve({ ok: !r.status || r.status < 400, status: r.status || 200, json: () => r.json, text: () => r.text || "" }) : Promise.reject(new Error("connection refused"))
         },
         jobs: {
             poll: (key, fn, ms, o) => { h.polls[key] = fn; h.every[key] = ms; if (o && o.immediate) fn() },
@@ -577,6 +577,8 @@ console.log("aquatils (source invariants)")
     eq(has('setErr("The solver download failed: "'), true, "downloads: a failed solver download is reported, not only noted")
     eq(has('data.solver === "aquatils"'), true, "identity: the probe requires our own solver to claim health")
     eq(has("p.foreign"), true, "identity: another compatible server on the port is reported, not counted as healthy")
+    eq(has("tray.tooltip({"), false, "tooltip: the host takes a props object as the tooltip's item, so the item goes first and the text second")
+    eq(count('label: "⎘"'), 1, "copy: every ⎘ comes from the one helper that gives it a tooltip")
 }
 
 console.log("aquatils (boot)")
@@ -601,7 +603,7 @@ console.log("aquatils (boot)")
     await run("boot: the registered handler ids are unchanged", async (what) => {
         const ids = Object.keys(bootPlugin().handlers)
         eq([ids.filter((id) => /^seh-copy-\d+$/.test(id)).length, ids.filter((id) => !/^seh-copy-\d+$/.test(id)).sort()], [30, [
-            "fs-autostart-toggle", "fs-autoupdate-toggle", "fs-chromium-toggle", "fs-consent-toggle", "fs-copy-cache-path", "fs-copy-deps", "fs-copy-diag",
+            "fs-autostart-no", "fs-autostart-toggle", "fs-autostart-yes", "fs-autoupdate-toggle", "fs-chromium-toggle", "fs-consent-toggle", "fs-copy-cache-path", "fs-copy-deps", "fs-copy-diag",
             "fs-copy-url", "fs-customtls-toggle", "fs-dns-custom-save", "fs-doctor", "fs-enable-chromium", "fs-engine-set-chrome", "fs-engine-set-webview2",
             "fs-help-customtls", "fs-help-engine", "fs-help-pacing", "fs-help-verbose", "fs-help-wv2refresh", "fs-help-wv2utls", "fs-help-wv2warm",
             "fs-install-deps", "fs-logs-clear", "fs-logs-copy", "fs-mode-binary", "fs-mode-remote", "fs-pacing-toggle", "fs-remove-chromium",
@@ -893,7 +895,7 @@ console.log("aquatils (boot)")
         await h.settle()
         const view = JSON.stringify(h.render())
         const w = await install({ os: { platform: "windows" }, fetch: sums, hash: certutil, unzip: [] })
-        eq([h.notes.some((n) => /antivirus/.test(n)), view.includes("Copy folder to exclude"), view.includes("Download & start"), w.spawns().length, w.storage.get("fs.avBlocked"), /^Antivirus.*right after it was downloaded/.test(lastErr(w))],
+        eq([h.notes.some((n) => /antivirus/.test(n)), view.includes("Copy folder to exclude"), view.includes("The solver's files were removed (a cache cleanup?). Press Start to download them again."), w.spawns().length, w.storage.get("fs.avBlocked"), /^Antivirus.*right after it was downloaded/.test(lastErr(w))],
             [false, false, true, 0, true, true], what)
     })
 
@@ -903,7 +905,7 @@ console.log("aquatils (boot)")
             : body.cmd === "metrics" ? { json: { metrics: { uptimeSec: uptime } } } : ours(url, body))
         const h = bootPlugin({ storage: INSTALLED, files: { [BIN]: "x" }, fetch })
         await h.settle()
-        const alert = () => JSON.stringify(h.render()).includes("Hard challenges can't be solved")
+        const alert = () => JSON.stringify(h.render()).includes("Some protected sites won't load on this machine")
         const before = alert()
         canHard = true
         h.fire("fs-restart")
@@ -1007,6 +1009,125 @@ console.log("aquatils (boot)")
         await h.settle()
         const view = JSON.stringify(h.render())
         eq([view.includes("Install all dependencies"), view.includes("Copy command"), view.includes("xorg-x11-server-Xvfb"), h.notes.length, h.notes.filter((n) => /one click/.test(n)).length], [false, false, true, 1, 0], what)
+    })
+
+    await run("first run: the consent tick names what it agrees to, the Chromium row is worded per OS and stays after consent and in Settings, and it writes only its own key", async (what) => {
+        const linRow = "Download Chromium from Google (~200 MB) — needed for the hardest checks"
+        const lin = bootPlugin()
+        await lin.settle()
+        const before = JSON.stringify(lin.render())
+        lin.fire("fs-consent-toggle")
+        const after = JSON.stringify(lin.render())
+        lin.fire("view-settings")
+        const settings = JSON.stringify(lin.render())
+        lin.writes.length = 0
+        lin.fire("fs-chromium-toggle")
+        const win = bootPlugin({ os: { platform: "windows" } })
+        await win.settle()
+        const wv = JSON.stringify(win.render())
+        const up = bootPlugin({ storage: INSTALLED, files: { [BIN]: "x" }, fetch: ours })
+        await up.settle()
+        up.fire("fs-chromium-toggle")
+        eq([before.includes("I agree to download and run the solver from GitHub"), before.includes(linRow), before.includes("WebView2"), before.includes("Cloudflare's encrypted DNS"),
+            after.includes(linRow), settings.includes(linRow), lin.writes, lin.storage.get("fs.wantChromium"),
+            wv.includes("Also download Chromium from Google (~200 MB) — only needed if WebView2 can't clear a site"), wv.includes("WebView2 engine is built into Windows"),
+            up.toasts.some((t) => /Chromium download on — restarting the solver/.test(t))],
+            [true, true, false, true, true, true, ["fs.wantChromium"], false, true, true, true], what)
+    })
+
+    await run("auto-start: offered once after a healthy local start; Yes turns it on, Not now only ends the offer", async (what) => {
+        const offer = "Start the solver automatically with Seanime?"
+        const boot = async (storage = {}) => { const h = bootPlugin({ storage: { ...INSTALLED, ...storage }, files: { [BIN]: "x" }, fetch: ours }); await h.settle(); return h }
+        const shows = (h) => JSON.stringify(h.render()).includes(offer)
+        const yes = await boot()
+        const shown = shows(yes)
+        yes.fire("fs-autostart-yes")
+        const no = await boot()
+        no.fire("fs-autostart-no")
+        const down = bootPlugin()
+        await down.settle()
+        const others = [await boot({ "fs.autoStartAsked": true }), await boot({ "fs.autoStart": true }), await boot({ "fs.mode": "remote" }), down]
+        eq([shown, [yes, no].map((h) => [h.storage.get("fs.autoStart") === true, h.storage.get("fs.autoStartAsked"), shows(h)]), others.map(shows)],
+            [true, [[true, true, false], [false, true, false]], [false, false, false, false]], what)
+    })
+
+    await run("noise: a solver never installed sends no 'isn't running' notification and keeps the badge and anime button quiet; an installed one still does", async (what) => {
+        const quiet = bootPlugin()
+        const loud = bootPlugin({ storage: { "fs.everInstalled": true, "fs.solverReady": "0.2.0", "fs.wantChromium": false }, files: { [BIN]: "x" } })
+        for (const h of [quiet, loud]) {
+            await h.settle()
+            for (let i = 0; i < 2; i++) { h.now += 5000; await h.tick("aquatils-fs-poll") }
+            await h.settle()
+        }
+        eq([quiet, loud].map((h) => [h.status(), h.notes.filter((n) => /isn't running/.test(n)).length, h.badge && h.badge.number ? h.badge.intent : "", h.anime.label]),
+            [["down", 0, "", "Solver"], ["down", 1, "error", "Solver ⏻ off"]], what)
+    })
+
+    await run("errors: the row, row copy and Copy all share one timed line built from the grouped rows; the badge and tab count only unread groups", async (what) => {
+        const at = 1767225600000
+        const line = (t, msg) => "x |ERR| extension > (console.error): SEHERRv1 " + JSON.stringify({ t, ext: "aq-anizone", scope: "server", msg }) + "\n"
+        let log = line(at - 60000, "episode page failed (404)") + line(at - 30000, "episode page failed (404)") + line(at - 5000, "solver unreachable")
+        const h = bootPlugin({ fetch: (url) => (/logs\/latest/.test(url) ? { json: { data: log } } : null) })
+        await h.settle()
+        const hm = (t) => new Date(t).toTimeString().slice(0, 5)
+        const want = [hm(at - 5000) + " [aq-anizone · server] solver unreachable", hm(at - 30000) + " [aq-anizone · server] episode page failed (404) ×2"]
+        const tab = () => (/"label":"(Errors[^"]*)"/.exec(JSON.stringify(h.render())) || [])[1]
+        const unread = [h.badge.number, tab()]
+        h.fire("view-errors")
+        const read = [h.badge.number, tab(), h.storage.get("seh.readAt") >= at]
+        const view = JSON.stringify(h.render())
+        h.fire("seh-copy-1")
+        const row = h.clip
+        h.fire("seh-copy-all")
+        const all = h.clip
+        h.fire("view-cf")
+        h.now += 60000
+        log += line(h.now, "solver unreachable")
+        await h.tick("aquatils-seh-poll")
+        await h.settle()
+        eq([unread, read, view.includes(want[1]), view.includes("Listening to Seanime's log · checked 0s ago"), view.includes('"b":{"text":"Copy this error"}'), row, all, [h.badge.number, tab()]],
+            [[2, "Errors (2 new)"], [0, "Errors (2)", true], true, true, true, want[1], want.join("\n"), [1, "Errors (1 new)"]], what)
+    })
+
+    await run("errors: a 401 replaces the empty list without advice to drop the password, Save reports what the probe found, and a read that stops answering goes stale", async (what) => {
+        let reply = { status: 401 }
+        const h = bootPlugin({ fetch: (url) => (/logs\/latest/.test(url) ? reply : null) })
+        await h.settle()
+        h.fire("view-errors")
+        const locked = JSON.stringify(h.render())
+        const warned = h.toasts.slice()
+        reply = null
+        h.fire("seh-save")
+        await h.settle()
+        const refused = h.toasts[h.toasts.length - 1]
+        reply = { json: { data: "" } }
+        h.fire("seh-save")
+        await h.settle()
+        const ok = [h.toasts[h.toasts.length - 1], JSON.stringify(h.render()).includes("No extension errors reported.")]
+        reply = { hang: true }
+        h.tick("aquatils-seh-poll")
+        h.now += 181000
+        const stale = JSON.stringify(h.render())
+        eq([locked.includes("Can't read Seanime's log (HTTP 401) — extension errors won't appear here while a server password is set. The solver is unaffected."), locked.includes("No extension errors reported."),
+            warned, refused, ok, stale.includes("Seanime's log isn't answering (last read 3m ago)")],
+            [true, false, ["warning: The Errors tab can't read Seanime's log while a server password is set. The solver is unaffected."],
+                "error: Can't read Seanime's log (unreachable) — extension errors won't appear here. Check the Seanime URL in ⚙.", ["success: Connected to Seanime's log", true], true], what)
+    })
+
+    await run("actions: the Running row is Test, Restart, then a subtle Stop; no plain Restart while an update waits; the crash row's Retry is Advanced-only", async (what) => {
+        const labels = (h) => [...JSON.stringify(h.render()).matchAll(/"label":"(Test|Restart|Stop|Restart to update|Retry|Start)","onClick":"[^"]+","intent":"([^"]+)"/g)].map((m) => m[1] + ":" + m[2])
+        const up = bootPlugin({ storage: INSTALLED, files: { [BIN]: "x" }, fetch: ours })
+        const old = bootPlugin({ storage: INSTALLED, files: { [BIN]: "x" }, fetch: (u, b) => ours(u, b) && { json: { solver: "aquatils", version: "0.1.9", sessions: ["seanime"] } } })
+        const crash = bootPlugin({ storage: INSTALLED, files: { [BIN]: "x" } })
+        for (const h of [up, old, crash]) await h.settle()
+        crash.fire("fs-start")
+        await crash.settle()
+        crash.spawns()[0].exit(1)
+        await crash.settle()
+        const simple = labels(crash)
+        crash.fire("ui-mode-toggle")
+        eq([labels(up), labels(old), simple, labels(crash).includes("Retry:gray-subtle")],
+            [["Test:gray-subtle", "Restart:warning-subtle", "Stop:alert-subtle"], ["Restart to update:primary", "Test:gray-subtle", "Stop:alert-subtle"], ["Start:success"], true], what)
     })
 }
 
