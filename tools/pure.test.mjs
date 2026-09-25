@@ -55,20 +55,20 @@ function bootPlugin(fakes = {}) {
         now: 1767225600000,
         storage: new Map(Object.entries(fakes.storage || {})),
         files: Object.assign({}, fakes.files),
-        handlers: {}, polls: {}, cmds: [], timers: [], notes: [], toasts: [], reported: [], downloads: [],
+        handlers: {}, polls: {}, every: {}, writes: [], sets: 0, updates: 0, cmds: [], timers: [], notes: [], toasts: [], reported: [], downloads: [],
     }
     const bytes = (s) => new Uint8Array(Buffer.from(s))
     const under = (p) => Object.keys(h.files).filter((f) => f === p || f.startsWith(p + "/"))
     const running = {}
     const tray = new Proxy({
-        update() {},
+        update: () => { h.updates++ },
         updateBadge() {},
         render: (fn) => { h.render = fn },
-        onOpen() {},
-        onClose() {},
+        onOpen: (fn) => { h.open = fn },
+        onClose: (fn) => { h.close = fn },
     }, { get: (o, k) => o[k] || ((a, b) => ({ t: k, a, b })) })
     const ctx = {
-        state: (v) => { const s = { value: v, get: () => s.value, set: (x) => { s.value = x } }; return s },
+        state: (v) => { const s = { value: v, get: () => s.value, set: (x) => { h.sets++; s.value = x } }; return s },
         fieldRef: (v) => ({ current: v, onValueChange() {} }),
         newTray: () => tray,
         dom: { observe() {} },
@@ -78,7 +78,7 @@ function bootPlugin(fakes = {}) {
             return r ? Promise.resolve({ ok: !r.status || r.status < 400, status: r.status || 200, json: () => r.json, text: () => r.text || "" }) : Promise.reject(new Error("connection refused"))
         },
         jobs: {
-            poll: (key, fn, ms, o) => { h.polls[key] = fn; if (o && o.immediate) fn() },
+            poll: (key, fn, ms, o) => { h.polls[key] = fn; h.every[key] = ms; if (o && o.immediate) fn() },
             singleflight: (key, fn) => running[key] || (running[key] = Promise.resolve(fn()).finally(() => { delete running[key] })),
         },
         registerEventHandler: (id, fn) => { h.handlers[id] = fn },
@@ -122,7 +122,7 @@ function bootPlugin(fakes = {}) {
     }
     const g = {
         $ui: { register: (cb) => cb(ctx) },
-        $storage: { get: (k) => h.storage.get(k), set: (k, v) => h.storage.set(k, v), remove: (k) => h.storage.delete(k) },
+        $storage: { get: (k) => h.storage.get(k), set: (k, v) => { h.writes.push(k); h.storage.set(k, v) }, remove: (k) => h.storage.delete(k) },
         $os: os,
         $osExtra: osExtra,
         $filepath: { join: (...p) => p.join("/") },
@@ -621,13 +621,39 @@ console.log("aquatils (boot)")
         eq(/shared libraries/.test(h.reported[h.reported.length - 1]), true, what)
     })
 
-    pending("boot: auto-start with the solver not answering launches it exactly once", async (what) => {
+    await run("boot: auto-start with the solver not answering launches it exactly once", async (what) => {
         const h = bootPlugin({ storage: { ...INSTALLED, "fs.autoStart": true }, files: { [BIN]: "x" } })
         await h.settle()
         for (let i = 0; i < 2; i++) { h.now += 5000; await h.tick("aquatils-fs-poll") }
         await h.settle()
         const sweeps = h.cmds.filter((c) => c.args.includes("[a]quatils/.*/solver/solver")).length
         eq([h.spawns().length, sweeps], [1, 1], what)
+    })
+
+    await run("boot: auto-start does not launch over a port held by another server", async (what) => {
+        const h = bootPlugin({ storage: { ...INSTALLED, "fs.autoStart": true }, files: { [BIN]: "x" }, fetch: () => ({ json: { status: "ok" } }) })
+        await h.settle()
+        eq([h.spawns().length, h.status()], [0, "down"], what)
+    })
+
+    await run("poll: a steady Running solver writes no storage, sets no state and renders nothing while the tray is closed", async (what) => {
+        const h = bootPlugin({ storage: { ...INSTALLED, "fs.avBlocked": true }, files: { [BIN]: "x" }, fetch: ours })
+        await h.settle()
+        const boot = [h.writes.slice().sort(), h.storage.get("fs.avBlocked"), h.storage.get("fs.everInstalled")]
+        h.writes.length = 0
+        const sets = h.sets, updates = h.updates
+        for (let i = 0; i < 3; i++) { h.now += 5000; await h.tick("aquatils-fs-poll") }
+        await h.settle()
+        eq([boot, h.writes, h.sets - sets, h.updates - updates, h.status()], [[["fs.avBlocked", "fs.everInstalled"], false, true], [], 0, 0, "up"], what)
+    })
+
+    await run("poll: the error log is read every 60 s with the tray closed, every 6 s with it open or notifications on", async (what) => {
+        const h = bootPlugin()
+        const closed = h.every["aquatils-seh-poll"]
+        h.open()
+        const open = h.every["aquatils-seh-poll"]
+        h.close()
+        eq([closed, open, h.every["aquatils-seh-poll"], bootPlugin({ storage: { "seh.notify": true } }).every["aquatils-seh-poll"]], [60000, 6000, 60000, 6000], what)
     })
 
     pending("launch: a stored headless flag gives no SOLVER_HEADLESS and is removed at load", async (what) => {
