@@ -54,7 +54,7 @@
   {
     "id": "aq-aquatils",
     "name": "Aqua's Utils",
-    "version": "1.0.30",
+    "version": "1.0.31",
     "description": "Toolbox plugin: surfaces compatible extension errors, launches a self-contained solver (or connects to a remote one you run) to reach guarded sites, and more.",
     "author": "aquaryuo",
     "type": "plugin",

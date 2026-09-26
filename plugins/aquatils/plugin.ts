@@ -89,7 +89,7 @@ function init() {
         const SEH_DEFAULT_APP = "http://127.0.0.1:43211"
         const FS_CONTAINER = "solver"
         const SOLVER_REPO = "aquaryuo/seanime"
-        const SOLVER_VERSION = "0.2.0"
+        const SOLVER_VERSION = "0.2.3"
         const FS_VERSION = SOLVER_VERSION
         const FS_DEFAULT_HOST = "127.0.0.1"
         const FS_DEFAULT_PORT = "8191"
@@ -176,18 +176,20 @@ function init() {
         let fsLaunchAt = 0
         let fsLogOff = -1
         let fsLogSize = -1
-        let fsHasApt = true
         const fsNotified: { [k: string]: boolean } = {}
         const dl = (ctx as any).downloader
         const fsErr = ctx.state<string>("")
         const fsHint = ctx.state<string>("")
-        const fsDepsPkgs = ctx.state<string[]>([])
         const fsCanHard = ctx.state<string>("")
         const fsHardWhy = ctx.state<string>("")
         let fsCapAt = 0
-        const fsDepsInstalling = ctx.state<boolean>(false)
-        const fsDepsInstallMsg = ctx.state<string>("")
+        type LinuxDeps = { xvfb: boolean; libs: string[]; musl: boolean; nixos: boolean; pm: string; sys: string }
+        let fsDeps: LinuxDeps | null = null
+        const sysChromeOnly = (): boolean => !!fsDeps && (fsDeps.musl || fsDeps.nixos)
+        let fsDepsCmd = ""
+        let fsDepsSeq = 0
         let fsDepsChecked = false
+        let fsChromeWhy = ""
         const fsVersion = ctx.state<string>("")
         const fsTest = ctx.state<string>("")
         const fsConsent = ctx.state<boolean>(sget<boolean>("fs.consent", false))
@@ -204,123 +206,100 @@ function init() {
                 .replace(/[A-Za-z0-9_-]{32,}={0,2}/g, "<redacted>")
         }
 
-        const LIB_PKG: { [k: string]: string } = {
-            "libnspr4": "libnspr4",
-            "libnss3": "libnss3", "libnssutil3": "libnss3", "libsmime3": "libnss3", "libssl3": "libnss3", "libplc4": "libnspr4", "libplds4": "libnspr4",
-            "libatk-1.0": "libatk1.0-0", "libatk-bridge-2.0": "libatk-bridge2.0-0",
-            "libcups": "libcups2", "libcupsimage": "libcups2",
-            "libdrm": "libdrm2", "libgbm": "libgbm1",
-            "libasound": "libasound2", "libxkbcommon": "libxkbcommon0",
-            "libXcomposite": "libxcomposite1", "libXdamage": "libxdamage1", "libXfixes": "libxfixes3", "libXrandr": "libxrandr2",
-            "libgtk-3": "libgtk-3-0", "libgdk-3": "libgtk-3-0",
-            "libpango-1.0": "libpango-1.0-0", "libpangocairo-1.0": "libpango-1.0-0", "libcairo": "libcairo2", "libcairo-gobject": "libcairo2",
-            "libatspi": "libatspi2.0-0",
-            "libXrender": "libxrender1", "libXext": "libxext6", "libXtst": "libxtst6", "libXi": "libxi6", "libXcursor": "libxcursor1",
-            "libXss": "libxss1", "libXScrnSaver": "libxss1",
-            "libdbus-1": "libdbus-1-3", "libexpat": "libexpat1", "libfontconfig": "libfontconfig1",
-            "libglib-2.0": "libglib2.0-0", "libgio-2.0": "libglib2.0-0", "libgobject-2.0": "libglib2.0-0", "libgmodule-2.0": "libglib2.0-0",
-            "libX11": "libx11-6", "libX11-xcb": "libx11-xcb1", "libxcb": "libxcb1", "libxshmfence": "libxshmfence1",
-            "libwayland-client": "libwayland-client0", "libwayland-server": "libwayland-server0", "libwayland-egl": "libwayland-egl1",
+        const DEPS_PROBE = "command -v Xvfb >/dev/null 2>&1 || echo NOXVFB; "
+            + "for m in apt-get dnf zypper pacman apk; do command -v \"$m\" >/dev/null 2>&1 && { echo \"PM $m\"; break; }; done; "
+            + "ldd --version 2>&1 | grep -qi musl && echo MUSL; "
+            + "grep -qsx ID=nixos /etc/os-release && echo NIXOS; "
+            + "for b in chromium chromium-browser google-chrome google-chrome-stable brave-browser microsoft-edge; do p=$(command -v \"$b\" 2>/dev/null) || continue; "
+            + "case \"$p $(readlink -f \"$p\" 2>/dev/null)\" in */snap/*|*/snap) continue;; esac; "
+            + "grep -qsI /snap/ \"$p\" && continue; echo \"SYS $p\"; break; done; "
+            + "[ -n \"$c\" ] && ldd \"$c\" 2>/dev/null | grep 'not found'; true"
+
+        function parseDeps(out: string): LinuxDeps {
+            const d: LinuxDeps = { xvfb: true, libs: [], musl: false, nixos: false, pm: "", sys: "" }
+            out.split("\n").forEach((raw) => {
+                const l = raw.trim()
+                const lib = /^(\S+) => not found/.exec(l)
+                if (l === "NOXVFB") d.xvfb = false
+                else if (l === "MUSL") d.musl = true
+                else if (l === "NIXOS") d.nixos = true
+                else if (/^PM [a-z-]+$/.test(l)) d.pm = l.slice(3)
+                else if (/^SYS \//.test(l)) d.sys = l.slice(4)
+                else if (lib) d.libs.push(lib[1])
+            })
+            return d
         }
 
-        const CHROME_DEPS = "ca-certificates fonts-liberation libasound2 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 libcairo2 libcups2 libdbus-1-3 libdrm2 libexpat1 libfontconfig1 libgbm1 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxkbcommon0 libxrandr2 libxrender1 libxshmfence1 libxss1 libxtst6 libvulkan1 xvfb"
-
-        function libToPkg(soname: string): string {
-            const base = soname.split(".so")[0]
-            return LIB_PKG[base] || soname
+        function depsMissing(d: LinuxDeps): string[] {
+            const miss: string[] = d.xvfb ? [] : ["Xvfb"]
+            if (!d.musl && !d.nixos) return miss.concat(d.libs)
+            return d.sys ? miss : miss.concat(["Chromium"])
         }
 
-        function checkChromiumDeps(force?: boolean): void {
-            if (fsMode.get() === "remote") return
-            if (typeof $os === "undefined" || typeof $osExtra === "undefined" || $os.platform !== "linux") return
-            if (fsDepsChecked && !force) return
+        function chromiumDepsList(name: string): string[] {
             const chrome = chromiumCachedPath()
-            if (!chrome && (!fsWantChromium.get() || !binaryDownloaded())) return
+            if (!chrome) return []
+            try {
+                return $toString($os.readFile($filepath.join($filepath.dir(chrome), name))).split("\n").map((l) => l.trim()).filter((l) => l !== "")
+            } catch (_e) {
+                return []
+            }
+        }
+
+        function depsCommand(d: LinuxDeps): string {
+            if (d.nixos) return "environment.systemPackages = with pkgs; [ chromium xorg-server ];"
+            const run = (c: string): string => "sh -c " + shq("S=; [ \"$(id -u)\" = 0 ] || S=$(command -v sudo || command -v doas || echo sudo); $S " + c)
+            if (d.pm === "apk") return run("apk add chromium xvfb")
+            if (d.pm === "pacman") return run("pacman -Syu --needed xorg-server-xvfb chromium")
+            if (d.pm === "apt-get") {
+                const deb = chromiumDepsList("deb.deps")
+                if (!deb.length && d.libs.length) return ""
+                return run("apt-get update && $S apt-get install -y --no-install-recommends xvfb" + (deb.length ? " libx11-xcb1 && $S apt-get satisfy -y --no-install-recommends " + shq(deb.join(", ")) : ""))
+            }
+            if (d.pm !== "dnf" && d.pm !== "zypper") return ""
+            const rpm = chromiumDepsList("rpm.deps").filter((l) => l.indexOf("rpmlib(") !== 0 && l.indexOf("(") !== 0).map(shq)
+            if (!rpm.length && d.libs.length) return ""
+            return run((d.pm === "dnf" ? "dnf install -y " : "zypper -n install ") + ["xorg-x11-server-Xvfb"].concat(rpm).join(" "))
+        }
+
+        function linuxLocal(): boolean {
+            return fsMode.get() !== "remote" && typeof $os !== "undefined" && typeof $osExtra !== "undefined" && $os.platform === "linux"
+        }
+
+        function checkChromiumDeps(done?: (d: LinuxDeps | null) => void): void {
+            if (!linuxLocal()) {
+                if (done) done(null)
+                return
+            }
             fsDepsChecked = true
-            const script = "command -v apt-get >/dev/null 2>&1 || echo NOAPT; c=" + shq(chrome) + "; miss=; "
-                + "for t in Xvfb; do command -v \"$t\" >/dev/null 2>&1 || miss=\"$miss $t\"; done; "
-                + "lib=0; [ -n \"$c\" ] && ldd \"$c\" 2>/dev/null | grep -q 'not found' && lib=1; "
-                + "if [ \"$lib\" = 1 ] || [ -n \"$miss\" ]; then echo BROKEN; "
-                + "if command -v dpkg-query >/dev/null 2>&1; then "
-                + "for p in " + CHROME_DEPS + "; do dpkg-query -W -f='${Status}' \"$p\" 2>/dev/null | grep -q 'install ok installed' || echo \"$p\"; done; "
-                + "else for t in $miss; do [ \"$t\" = Xvfb ] && echo xvfb || echo \"$t\"; done; fi; "
-                + "else echo OK; fi"
-            runCollect((out) => {
-                fsHasApt = out.indexOf("NOAPT") < 0
-                if (out.indexOf("BROKEN") < 0) {
-                    if (out.indexOf("OK") >= 0) fsDepsPkgs.set([])
-                    return
-                }
-                const pkgs = out.split("\n").map((l) => l.replace(/\s+/g, "")).filter((t) => /^[a-z0-9][a-z0-9+.-]*$/.test(t)).sort()
-                if (!pkgs.length) {
-                    plog("browser solver: Chromium is missing a system library (no dpkg here to name it)")
-                    notifyOnce("chromedeps", "Aqua's Utils: the browser solver's Chromium is missing a system library, so hard challenges can't be solved until it's installed.")
-                    return
-                }
-                fsDepsPkgs.set(pkgs)
-                tray.update()
-                promptDeps()
-            }, "sh", "-c", script)
-        }
-
-        function installChromiumDeps(): void {
-            if (typeof $os === "undefined" || typeof $osExtra === "undefined" || $os.platform !== "linux") return
-            if (fsDepsInstalling.get()) return
-            if (!(fsDepsPkgs.get() || []).length) return
-            fsDepsInstalling.set(true)
-            fsDepsInstallMsg.set("Installing the Chromium dependency set in one step... this can take a minute.")
-            plog("installing the Chromium dependency set")
-            tray.update()
-            const root = "DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y " + CHROME_DEPS
-            const nonRoot = "sudo -n env DEBIAN_FRONTEND=noninteractive apt-get update && sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y " + CHROME_DEPS
-            const cmd = "if [ \"$(id -u)\" = 0 ]; then " + root + "; else " + nonRoot + "; fi"
+            const seq = ++fsDepsSeq
             runCollect((out, code) => {
-                fsDepsInstalling.set(false)
-                if (code === 0) {
-                    plog("Chromium system packages installed - restarting the solver")
-                    fsDepsPkgs.set([])
-                    fsDepsInstallMsg.set("")
-                    fsDepsChecked = false
-                    fsNotified["chromedeps"] = false
-                    try { ctx.toast.success("System packages installed" + (fsManualStop ? "." : " - restarting the solver.")) } catch (_e) {}
-                    if (!fsManualStop) fsStart()
-                } else {
-                    const why = cleanTail(out)
-                    fsDepsInstallMsg.set("Automatic install failed (exit " + code + ")" + (why ? ": " + why : "") + ". You likely need root or passwordless sudo - use Copy command to run it yourself.")
-                    plog("Chromium deps install failed (exit " + code + ")")
-                    try { ctx.toast.error("Automatic install failed - see the tray for the command to run yourself.") } catch (_e) {}
-                    promptDeps()
+                const d = code === 0 ? parseDeps(out) : null
+                if (seq === fsDepsSeq) {
+                    fsDeps = d
+                    const miss = d ? depsMissing(d) : []
+                    fsDepsCmd = d && miss.length ? depsCommand(d) : ""
+                    if (d && miss.length) promptDeps(miss, fsDepsCmd, d.nixos)
+                    trayPoke()
                 }
-                tray.update()
-            }, "sh", "-c", cmd + " 2>&1")
+                if (done) done(d)
+            }, "sh", "-c", "c=" + shq(chromiumCachedPath()) + "; " + DEPS_PROBE)
         }
 
-        function promptDeps(): void {
-            const pkgs = fsDepsPkgs.get() || []
-            if (!pkgs.length) return
-            const needsClick = pkgs.indexOf("xvfb") >= 0
-            plog("browser solver: missing " + pkgs.length + " system package(s)" + (needsClick ? " incl. xvfb (interactive challenges will fail without it)" : "") + " - see the tray")
-            notifyOnce("chromedeps", !fsHasApt
-                ? "Aqua's Utils: the browser solver needs Xvfb and Chromium's system libraries on this box. Open the tray to see what to install."
-                : needsClick
-                ? "Aqua's Utils: the browser solver needs xvfb to clear interactive Cloudflare challenges on this box. Open the tray to install it in one click (needs root or passwordless sudo)."
-                : "Aqua's Utils: the browser solver's Chromium needs system packages that aren't installed. Open the tray to install them in one click.")
-            tray.update()
+        function againVerb(): string {
+            return fsStatus.get() === "up" || fsStatus.get() === "starting" ? "Restart" : "Start"
         }
 
-        function scanChromeDeps(chunk: string): void {
-            if (typeof $os === "undefined" || $os.platform !== "linux") return
-            if ((fsDepsPkgs.get() || []).length) return
-            const m = /error while loading shared libraries:\s*([^\s:]+)/i.exec(chunk)
-            if (!m) return
-            fsDepsPkgs.set([libToPkg(m[1])])
-            checkChromiumDeps(true)
-            promptDeps()
+        function promptDeps(miss: string[], cmd: string, nixos: boolean): void {
+            const how = (!cmd ? "Open the tray to see what to install, install it with your package manager, then press "
+                : nixos ? "Open the tray to copy the configuration line, add it and rebuild, then press "
+                : "Open the tray to copy the install command, run it in a terminal, then press ") + againVerb() + "."
+            plog("browser solver: missing " + miss.join(", ") + ". " + how)
+            notifyOnce("chromedeps", "Aqua's Utils: the browser solver is missing " + (miss.length > 1 ? miss.length + " system packages" : miss[0]) + " on this machine. " + how)
         }
 
         function pushLog(chunk: string): string {
             if (!chunk) return ""
-            scanChromeDeps(chunk)
             const lines = scrubLog(chunk).split("\n")
             let all = ""
             for (let i = 0; i < lines.length; i++) {
@@ -756,7 +735,7 @@ function init() {
         async function fsRefresh(): Promise<void> {
             if (fsTesting && Date.now() < fsTestUntil) return
             if (trayVisible) syncAdoptedLog()
-            if (!fsDepsChecked) checkChromiumDeps()
+            if (!fsDepsChecked && linuxLocal() && (chromiumCachedPath() || (fsWantChromium.get() && binaryDownloaded()))) checkChromiumDeps()
             const base = fsBase()
             const p = await fsProbe()
             if (base !== fsBase()) return
@@ -1144,6 +1123,7 @@ function init() {
                     if (st.version) {
                         try { $storage.set("fs.chromiumVer", st.version) } catch (_e) {}
                     }
+                    checkChromiumDeps()
                 } else {
                     try { $os.removeAll(staging) } catch (_e) {}
                     let msg = "Chromium" + (st.version ? " " + st.version : "") + " couldn't be installed" + (why ? ": " + why : "") + kept() + "."
@@ -1225,7 +1205,22 @@ function init() {
             }, "sh", "-c", "for c in " + names + "; do p=$(command -v \"$c\" 2>/dev/null); if [ -n \"$p\" ]; then echo \"$p\"; exit 0; fi; done")
         }
 
-        function ensureChromium(cb: (path: string) => void): void {
+        function ensureChromium(done: (path: string) => void): void {
+            const gen = fsBinaryGen
+            const cb = (path: string): void => { fsChromeWhy = path ? "" : fsErr.get(); done(path) }
+            checkChromiumDeps((d) => {
+                if (gen !== fsBinaryGen) return
+                if (!d || (!d.musl && !d.nixos)) { fetchChromium(cb); return }
+                if (d.sys) plog("using the system Chromium at " + d.sys)
+                else {
+                    setErr("Google's Chromium build can't run on " + (d.musl ? "musl-based systems like Alpine" : "NixOS") + " and no system Chromium was found, so hard challenges can't be solved. Install Chromium (the tray shows how), then press " + againVerb() + " — the fast path keeps working meanwhile.")
+                    tray.update()
+                }
+                cb(d.sys)
+            })
+        }
+
+        function fetchChromium(cb: (path: string) => void): void {
             const cached = chromiumCachedPath()
             if (cached) {
                 cb(cached)
@@ -1252,7 +1247,7 @@ function init() {
             void chromiumStable(plt).then((st) => {
                 if (!st.url) { fsChromiumBusy = false; setErr("Couldn't find a Chromium download for this platform (" + plt + ") in the release feed; starting without the browser solver."); tray.update(); cb(""); return }
                 if (st.version && st.version === sget<string>("fs.chromiumFailVer", "")) { fsChromiumBusy = false; setErr("Chromium " + st.version + " couldn't be installed last time, so it isn't downloaded again; starting without the browser solver. Press Update Chromium (Advanced) to try again."); tray.update(); cb(""); return }
-                downloadChromium(st, (ok) => { fsChromiumBusy = false; if (ok) checkChromiumDeps(true); cb(ok ? chromiumCachedPath() : "") })
+                downloadChromium(st, (ok) => { fsChromiumBusy = false; cb(ok ? chromiumCachedPath() : "") })
             }).catch((e) => {
                 fsChromiumBusy = false
                 setErr("Couldn't reach the Chromium release feed (" + String(e) + ") - starting without the browser solver.")
@@ -1447,7 +1442,9 @@ function init() {
             notifyOnce("av", "Aqua's Utils: antivirus " + verb + " the solver. Add an exclusion for %LOCALAPPDATA%\\aquatils, then Start.")
         }
 
-        const PS_KILL_SOLVER = "$ErrorActionPreference='SilentlyContinue';foreach($p in Get-CimInstance Win32_Process){if($p.Name -eq 'solver.exe' -and $p.ExecutablePath -like '*aquatils\\*'){Stop-Process -Id $p.ProcessId -Force}}"
+        function psKill(name: string, under: string): string {
+            return "$ErrorActionPreference='SilentlyContinue';foreach($p in Get-CimInstance Win32_Process){if($p.Name -eq '" + name + "' -and $p.ExecutablePath -like ('" + psLike(under + "\\") + "*')){Stop-Process -Id $p.ProcessId -Force}}"
+        }
 
         function runCollect(done: (out: string, code: number) => void, name: string, ...args: string[]): void {
             let out = ""
@@ -1491,44 +1488,63 @@ function init() {
             }
             try { if (fsBinary && fsBinary.process) fsBinary.process.kill() } catch (_e) {}
             fsBinary = null
-            if (typeof $os === "undefined" || typeof $osExtra === "undefined") guardedDone()
-            else if ($os.platform === "windows") runThen(() => reapOurChrome(guardedDone), "cmd", "/c", "powershell", "-NoProfile", "-NonInteractive", "-Command", PS_KILL_SOLVER)
-            else reapOrphanSolvers(() => reapOurChrome(() => waitPortFree(fsPort.get() || FS_DEFAULT_PORT, guardedDone)))
+            const dir = reapDir()
+            if (typeof $os === "undefined" || typeof $osExtra === "undefined" || !dir) guardedDone()
+            else if ($os.platform === "windows") runThen(() => reapOurChrome(dir, guardedDone), "cmd", "/c", "powershell", "-NoProfile", "-NonInteractive", "-Command", psKill("solver.exe", dir))
+            else reapOrphanSolvers(dir, () => reapOurChrome(dir, () => waitPortFree(fsPort.get() || FS_DEFAULT_PORT, guardedDone)))
         }
 
-        function reapOrphanSolvers(done?: () => void): void {
+        function reapOrphanSolvers(dir: string, done?: () => void): void {
             const raw = fsPort.get() || FS_DEFAULT_PORT
             const port = /^[0-9]{1,5}$/.test(raw) ? raw : ""
             const host = (fsHost.get() || FS_DEFAULT_HOST).trim()
             const localHost = host === "" || host === "127.0.0.1" || host === "localhost" || host === "::1"
-            let cmd = "pkill -9 -f '[a]quatils/.*/solver/solver' 2>/dev/null; "
+            let cmd = "pkill -9 -f " + shq("^" + reEsc(dir) + "/[0-9]+\\.[0-9]+\\.[0-9]+/solver/solver( |$)") + " 2>/dev/null; "
             if (port && localHost) {
                 cmd += "P=$(lsof -tiTCP:" + port + " -sTCP:LISTEN 2>/dev/null | head -n1); "
                     + "[ -z \"$P\" ] && P=$(ss -H -ltnp 2>/dev/null | grep -E '[:.]" + port + " ' | grep -oE 'pid=[0-9]+' | head -n1 | cut -d= -f2); "
-                    + "if [ -n \"$P\" ]; then X=$(readlink -f /proc/\"$P\"/exe 2>/dev/null); "
-                    + "[ -z \"$X\" ] && X=$(lsof -a -p \"$P\" -d txt -Fn 2>/dev/null | grep -m1 aquatils/); "
-                    + "case \"$X\" in *aquatils/*) kill -9 \"$P\" 2>/dev/null;; esac; fi; "
+                    + "if [ -n \"$P\" ] && D=$(cd " + shq(dir) + " 2>/dev/null && pwd -P); then X=$(readlink -f /proc/\"$P\"/exe 2>/dev/null); "
+                    + "[ -z \"$X\" ] && X=$(lsof -a -p \"$P\" -d txt -Fn 2>/dev/null | grep -m1 -F \"n$D/\"); "
+                    + "case \"$X\" in \"$D\"/*|\"n$D\"/*) kill -9 \"$P\" 2>/dev/null;; esac; fi; "
             }
             runThen(done, "sh", "-c", cmd + "exit 0")
         }
 
-        function reapOurChrome(done?: () => void): void {
-            if ($os.platform === "windows") runThen(done, "cmd", "/c", "powershell", "-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='SilentlyContinue';foreach($p in Get-CimInstance Win32_Process){if($p.Name -eq 'chrome.exe' -and $p.CommandLine -like '*aquatils\\chromium\\*'){Stop-Process -Id $p.ProcessId -Force}}")
-            else runThen(done, "sh", "-c", "pkill -f '[a]quatils/chromium' 2>/dev/null; pkill -f '[a]quatils/browser-profile' 2>/dev/null; exit 0")
+        function reapOurChrome(dir: string, done?: () => void): void {
+            if ($os.platform === "windows") runThen(done, "cmd", "/c", "powershell", "-NoProfile", "-NonInteractive", "-Command", psKill("chrome.exe", dir + "\\chromium"))
+            else runThen(done, "sh", "-c", "pkill -f " + shq("^" + reEsc(dir) + "/chromium/") + " 2>/dev/null; pkill -f -- " + shq("--user-data-dir[=]" + reEsc(dir) + "/browser-profile( |$)") + " 2>/dev/null; exit 0")
         }
 
         function reapLeftoverListener(): void {
-            if (typeof $os === "undefined" || typeof $osExtra === "undefined") return
-            if ($os.platform === "windows") runThen(undefined, "cmd", "/c", "powershell", "-NoProfile", "-NonInteractive", "-Command", PS_KILL_SOLVER)
-            else reapOrphanSolvers()
+            const dir = reapDir()
+            if (typeof $os === "undefined" || typeof $osExtra === "undefined" || !dir) return
+            if ($os.platform === "windows") runThen(undefined, "cmd", "/c", "powershell", "-NoProfile", "-NonInteractive", "-Command", psKill("solver.exe", dir))
+            else reapOrphanSolvers(dir)
         }
 
         function aquatilsDir(): string {
             return $filepath.join($os.cacheDir(), "aquatils")
         }
 
+        function reapDir(): string {
+            try { return aquatilsDir() } catch (_e) { return "" }
+        }
+
         function shq(s: string): string {
             return "'" + String(s).replace(/'/g, "'\\''") + "'"
+        }
+
+        function reEsc(s: string): string {
+            let out = ""
+            for (const c of String(s)) {
+                const n = c.codePointAt(0) as number
+                out += n < 0x80 ? c.replace(/[\\^$.[()|*+?{]/, "\\$&") : "(" + c + "|\\?{" + (n < 0x800 ? 2 : n < 0x10000 ? 3 : 4) + "})"
+            }
+            return out
+        }
+
+        function psLike(s: string): string {
+            return String(s).replace(/[`[\]*?]/g, "`$&").replace(/['\u2018\u2019\u201a\u201b]/g, "$&$&").replace(/[%!]/g, (c) => "'+[char]" + c.charCodeAt(0) + "+'")
         }
 
         function sha256OfFile(path: string): string {
@@ -1601,6 +1617,9 @@ function init() {
                     setNote("Couldn't fully remove Chromium - a file may still be locked. Make sure the solver is stopped, then try again.")
                 } else {
                     try { $storage.set("fs.chromiumVer", "") } catch (_e) {}
+                    fsDeps = null
+                    fsDepsCmd = ""
+                    fsDepsChecked = false
                     setNote(present
                         ? "Removed the downloaded Chromium." + (wasUp ? " The solver was stopped to release it - press Start to run it again." : "")
                         : "No Chromium download was present.")
@@ -1796,7 +1815,6 @@ function init() {
                 return
             }
             setManualStop(false)
-            fsDepsPkgs.set([])
             fsDepsChecked = false
             fsNotified["chromedeps"] = false
             setAvBlocked(false)
@@ -1818,7 +1836,8 @@ function init() {
             put(fsVersion, "")
             put(fsTest, "")
             fsMetrics.set(null)
-            fsDepsPkgs.set([])
+            fsDeps = null
+            fsDepsCmd = ""
             setErr("")
             fsCapAt = 0
             fsDownStreak = 0
@@ -2035,7 +2054,7 @@ function init() {
             const on = !fsWantChromium.get()
             fsWantChromium.set(on)
             try { $storage.set("fs.wantChromium", on) } catch (_e) {}
-            if (on && fsStatus.get() === "up" && fsMode.get() !== "remote" && !chromiumDownloadedHere()) applySolverEnvChange("Chromium download on")
+            if (on && fsStatus.get() === "up" && fsMode.get() !== "remote" && !chromiumDownloadedHere() && !sysChromeOnly()) applySolverEnvChange("Chromium download on")
             else tray.update()
         })
         function answerAutoStart(yes: boolean): void {
@@ -2052,6 +2071,7 @@ function init() {
         ctx.registerEventHandler("fs-remove-solver", () => removeSolverDownloads())
         ctx.registerEventHandler("fs-remove-chromium", () => removeChromiumDownloads())
         ctx.registerEventHandler("fs-update-chromium", () => {
+            if (sysChromeOnly()) { setNote("This system uses its installed Chromium — Google's build can't run here."); return }
             try { $storage.remove("fs.chromiumFailVer") } catch (_e) {}
             if (chromiumDownloadedHere()) updateChromium()
             else userStart()
@@ -2069,8 +2089,7 @@ function init() {
         })
         ctx.registerEventHandler("fs-copy-diag", () => copyOut(() => { syncAdoptedLog(); return buildDiagnostics() }, "Diagnostics copied — paste them when reporting an issue."))
         ctx.registerEventHandler("fs-copy-url", () => copyOut(() => fsBase() + "/v1", "Solver URL copied"))
-        ctx.registerEventHandler("fs-install-deps", () => installChromiumDeps())
-        ctx.registerEventHandler("fs-copy-deps", () => copyOut(() => (fsDepsPkgs.get() || []).length ? "sudo apt-get update && sudo apt-get install -y " + CHROME_DEPS : "", "Install command copied — run it, then restart the solver."))
+        ctx.registerEventHandler("fs-copy-deps", () => copyOut(() => fsDepsCmd, (fsDeps && fsDeps.nixos ? "Configuration line copied — add it to your NixOS configuration and rebuild, then press " : "Install command copied — run it in a terminal, then press ") + againVerb() + "."))
         ctx.registerEventHandler("fs-copy-cache-path", () => copyOut(aquatilsDir, "Folder path copied — add it as a Windows Security exclusion, then Start.", "Couldn't copy the path"))
         ctx.registerEventHandler("fs-save", () => {
             const host = (fsHostRef.current || "").trim() || FS_DEFAULT_HOST
@@ -2229,8 +2248,8 @@ function init() {
             rows.push(toggleRow(fsAutoUpdate.get(), "fs-autoupdate-toggle", "Auto-update solver"))
             rows.push(divider())
             rows.push(heading("Solver"))
-            rows.push(dim("Browser solver — a real browser (WebView2, or a downloaded Chromium) that clears the hard challenges (Cloudflare JS, Turnstile) uTLS can't. Runs in a hidden off-screen window. On headless Linux servers it needs the Chromium system libraries plus xvfb (on Debian/Ubuntu one click in the tray; needs root or passwordless sudo); if hard-challenge solving fails, enable Verbose logs to see the browser error."))
-            if (fsMode.get() !== "remote") rows.push(chromiumRow())
+            rows.push(dim("Browser solver — a real browser (WebView2, or a downloaded Chromium) that clears the hard challenges (Cloudflare JS, Turnstile) uTLS can't. Runs in a hidden off-screen window. On Linux it needs Xvfb and Chromium's system libraries; when any are missing, the Solver tab shows the command to install them. If hard-challenge solving fails, enable Verbose logs to see the browser error."))
+            if (fsMode.get() !== "remote" && !sysChromeOnly()) rows.push(chromiumRow())
             rows.push(toggleRow(fsCustomTls.get(), "fs-customtls-toggle", "Custom TLS fingerprint", HELP["fs-help-customtls"]))
             rows.push(toggleRow(fsPacing.get(), "fs-pacing-toggle", "Adaptive rate-limit pacing", HELP["fs-help-pacing"]))
             rows.push(divider())
@@ -2306,32 +2325,33 @@ function init() {
                 }))
                 rows.push(tray.button({ label: "Restart to update", onClick: "fs-restart-update", intent: "primary", size: "sm", style: ACCENT_STYLE }))
             }
-            if (fsCanHard.get() === "no" && !(fsDepsPkgs.get() || []).length) {
+            if (fsCanHard.get() === "no") {
                 rows.push(tray.alert({
                     intent: "warning",
                     title: "Some protected sites won't load on this machine",
-                    description: (fsHardWhy.get() || "The browser can't complete an interactive check here.") + " Sites behind a light check still work.",
+                    description: (fsChromeWhy || fsHardWhy.get() || "The browser can't complete an interactive check here.") + " Sites behind a light check still work.",
                 }))
             }
-            if ((fsDepsPkgs.get() || []).length) {
-                const pkgs = fsDepsPkgs.get() || []
-                const items: any[] = [
-                    calloutText(fsHasApt
-                        ? "Chromium is missing system packages, so hard Cloudflare challenges can't clear (uTLS still works). Install adds them all and restarts the solver."
-                        : "Hard Cloudflare challenges need Xvfb and Chromium's system libraries (uTLS still works). Install them with your package manager - Xvfb is xorg-x11-server-Xvfb on Fedora and xorg-server-xvfb on Arch - then press Restart."),
-                    calloutText("Missing: " + pkgs.join(", "), { marginTop: "6px", color: "rgba(255,255,255,0.7)" }),
-                ]
-                if (fsDepsInstallMsg.get()) items.push(calloutText(fsDepsInstallMsg.get(), { marginTop: "6px" }))
+            const miss = fsDeps && fsMode.get() !== "remote" ? depsMissing(fsDeps) : []
+            if (fsDeps && miss.length) {
+                const cmd = fsDepsCmd
+                const again = againVerb()
+                const items: any[] = [calloutText("Hard Cloudflare challenges need these on this machine (uTLS still works): " + miss.join(", ") + ".")]
+                if (cmd) {
+                    items.push(tray.flex({
+                        items: [
+                            calloutText(cmd, { fontFamily: "ui-monospace, monospace", fontSize: "11px", flexGrow: "1", minWidth: "0" }),
+                            copyBtn("fs-copy-deps", "Copy install command", { marginLeft: "6px" }),
+                        ],
+                        gap: 1,
+                        style: { marginTop: "6px" },
+                    }))
+                }
+                items.push(calloutText(!cmd ? "Install them with your system's package manager, then press " + again + "."
+                    : fsDeps.nixos ? "Add this to your NixOS configuration and rebuild, then press " + again + "."
+                    : "Run it in a terminal, then press " + again + ".", { marginTop: "6px", color: "rgba(255,255,255,0.7)" }))
                 rows.push(callout(items, "90,150,255"))
-                rows.push(tray.flex({
-                    items: fsHasApt ? [
-                        tray.button({ label: fsDepsInstalling.get() ? "Installing…" : "Install all dependencies", onClick: "fs-install-deps", intent: "success", size: "sm", style: ACCENT_STYLE, disabled: fsDepsInstalling.get() }),
-                        tray.button({ label: "Copy command", onClick: "fs-copy-deps", intent: "gray-subtle", size: "sm", style: ACCENT_SUBTLE }),
-                    ] : [
-                        tray.button({ label: "Restart", onClick: "fs-restart", intent: "gray-subtle", size: "sm", style: ACCENT_SUBTLE }),
-                    ],
-                    gap: 2,
-                }))
+                if (uiMode.get() === "advanced") rows.push(tray.button({ label: again, onClick: again === "Restart" ? "fs-restart" : "fs-start", intent: "gray-subtle", size: "sm", style: ACCENT_SUBTLE }))
             }
             if (fsErr.get()) {
                 rows.push(callout([calloutText(fsErr.get())], "255,90,90", { maxHeight: "160px", overflowY: "auto" }))
@@ -2341,7 +2361,7 @@ function init() {
                     acts.push(tray.button({ label: "Copy folder to exclude", onClick: "fs-copy-cache-path", intent: "gray-subtle", size: "sm", style: ACCENT_SUBTLE }))
                 }
                 if (uiMode.get() === "advanced") acts.push(tray.button({ label: "Retry", onClick: "fs-start", intent: "gray-subtle", size: "sm", style: ACCENT_SUBTLE }))
-                if (fsMode.get() !== "remote" && !chromiumDownloadedHere() && !fsWantChromium.get()) {
+                if (fsMode.get() !== "remote" && !chromiumDownloadedHere() && !fsWantChromium.get() && !sysChromeOnly()) {
                     acts.push(tray.button({ label: "Enable Chromium", onClick: "fs-enable-chromium", intent: "gray-subtle", size: "sm" }))
                 }
                 acts.push(copyBtn("fs-copy-diag", "Copy diagnostics", { marginLeft: "auto" }))
@@ -2403,12 +2423,12 @@ function init() {
                         : prev
                         ? "A newer solver (v" + SOLVER_VERSION + ") is ready to install — it replaces the previous version (old files are removed automatically)."
                         : "The solver isn't installed. Download v" + SOLVER_VERSION + " to get protected sources loading."))
-                    rows.push(chromiumRow())
+                    if (!sysChromeOnly()) rows.push(chromiumRow())
                     items.push(tray.button({ label: gone ? "Start" : prev ? "Update & start" : "Download & start", onClick: "fs-simple-start", intent: "success", size: "sm", style: ACCENT_STYLE }))
                 } else if (needsDownload) {
                     rows.push(dim("Download v" + SOLVER_VERSION + " to get protected sources loading. It's downloaded from GitHub and connects only to the sites your extensions request. By default it looks those names up over Cloudflare's encrypted DNS (Settings → Network)."))
                     if (onWindows()) rows.push(dim("Hard JS challenges (interactive Turnstile) need a real browser. The default WebView2 engine is built into Windows and needs nothing extra. The Chromium engine instead drives a private copy this plugin downloads into its own cache — it never uses your installed Chrome or Edge."))
-                    rows.push(chromiumRow())
+                    if (!sysChromeOnly()) rows.push(chromiumRow())
                     rows.push(toggleRow(fsConsent.get(), "fs-consent-toggle", "I agree to download and run the solver from GitHub"))
                     items.push(tray.button({ label: "Download & start", onClick: "fs-simple-start", intent: "success", size: "sm", style: ACCENT_STYLE, disabled: true }))
                 } else if (st === "starting" && (fsDownloadId || fsChromiumDownloadId)) {
@@ -2516,7 +2536,7 @@ function init() {
                 gap: 2,
             }))
             const chrFailed = sget<string>("fs.chromiumFailVer", "")
-            if ((chrHere || chrFailed) && fsMode.get() !== "remote") {
+            if ((chrHere || chrFailed) && fsMode.get() !== "remote" && !sysChromeOnly()) {
                 rows.push(tray.flex({
                     items: [
                         tray.text(chrHere ? "Chromium " + chromiumCachedVersion() : "Chromium " + chrFailed + " didn't install", { style: { fontSize: "12px", color: "rgba(255,255,255,0.55)" } }),
