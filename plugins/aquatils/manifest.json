@@ -1,7 +1,7 @@
 {
   "id": "aq-aquatils",
   "name": "Aqua's Utils",
-  "version": "1.0.30",
+  "version": "1.0.31",
   "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/plugins/aquatils/manifest.json",
   "language": "typescript",
   "type": "plugin",
@@ -29,7 +29,7 @@
         "commandScopes": [
           {
             "command": "sh",
-            "description": "Linux/macOS (Binary mode): start the downloaded aquatils-solver and prepare the downloaded Chromium (chmod, and clear the macOS quarantine flag on both); hash the download before it runs (sha256sum/shasum); unpack Chromium on macOS (ditto); check Chromium's system libraries (Xvfb, ldd, dpkg-query, whether apt-get exists) and look for an installed Chromium; install missing packages with apt-get as root or passwordless sudo, only when you press Install; stop this plugin's own solver and Chromium processes (pkill/kill, matched on an aquatils folder in their path) and wait for the solver port to close (ss/lsof).",
+            "description": "Linux/macOS (Binary mode): start the downloaded aquatils-solver and prepare the downloaded Chromium (chmod, and clear the macOS quarantine flag on both); hash the download before it runs (sha256sum/shasum); unpack Chromium on macOS (ditto); look for an installed Chromium-based browser (command -v); on Linux, check read-only what the browser solver needs (command -v for Xvfb and the package manager; readlink/grep on that browser's launcher to skip snap wrappers; ldd on the downloaded Chromium; /etc/os-release for NixOS and ldd --version for musl) so the tray can show an install command for you to run yourself - the plugin never installs system packages; stop this plugin's own solver and Chromium processes (pkill/kill, matched exactly on this plugin's own cache folder: a program inside it, or a browser whose profile is inside it) and wait for the solver port to close (ss/lsof).",
             "args": [
               {
                 "value": "-c"
@@ -41,7 +41,7 @@
           },
           {
             "command": "cmd",
-            "description": "Windows (Binary mode): start the downloaded aquatils-solver from its own folder; hash the download with certutil before it runs; stop this plugin's own leftover solver and Chromium processes via PowerShell, matched on an aquatils folder in their path.",
+            "description": "Windows (Binary mode): start the downloaded aquatils-solver from its own folder; hash the download with certutil before it runs; stop this plugin's own leftover solver and Chromium processes via PowerShell, matched exactly on this plugin's own cache folder: a program inside it.",
             "args": [
               {
                 "value": "/c"
