@@ -232,7 +232,7 @@ function init() {
 
         function depsMissing(d: LinuxDeps): string[] {
             const miss: string[] = d.xvfb ? [] : ["Xvfb"]
-            if (!d.musl && !d.nixos) return miss.concat(d.libs)
+            if (!d.musl && !d.nixos) return d.sys || chromiumCachedPath() || fsWantChromium.get() ? miss.concat(d.libs) : []
             return d.sys ? miss : miss.concat(["Chromium"])
         }
 
@@ -252,12 +252,12 @@ function init() {
             if (d.pm === "apk") return run("apk add chromium xvfb")
             if (d.pm === "pacman") return run("pacman -Syu --needed xorg-server-xvfb chromium")
             if (d.pm === "apt-get") {
-                const deb = chromiumDepsList("deb.deps")
+                const deb = chromiumDepsList("deb.deps").filter((l) => /^[a-z0-9][a-z0-9+.:~()<>=| -]*$/i.test(l))
                 if (!deb.length && d.libs.length) return ""
                 return run("apt-get update && $S apt-get install -y --no-install-recommends xvfb" + (deb.length ? " libx11-xcb1 && $S apt-get satisfy -y --no-install-recommends " + shq(deb.join(", ")) : ""))
             }
             if (d.pm !== "dnf" && d.pm !== "zypper") return ""
-            const rpm = chromiumDepsList("rpm.deps").filter((l) => l.indexOf("rpmlib(") !== 0 && l.indexOf("(") !== 0).map(shq)
+            const rpm = chromiumDepsList("rpm.deps").filter((l) => l.indexOf("rpmlib(") !== 0 && /^[A-Za-z0-9_][A-Za-z0-9_.+()-]*$/.test(l) && !/\.rpm$/i.test(l)).map(shq)
             if (!rpm.length && d.libs.length) return ""
             return run((d.pm === "dnf" ? "dnf install -y " : "zypper -n install ") + ["xorg-x11-server-Xvfb"].concat(rpm).join(" "))
         }
@@ -1837,6 +1837,7 @@ function init() {
             put(fsTest, "")
             fsMetrics.set(null)
             fsDeps = null
+            fsDepsSeq++
             fsDepsCmd = ""
             setErr("")
             fsCapAt = 0

@@ -1099,6 +1099,31 @@ console.log("aquatils (boot)")
             ["Aqua's Utils: the browser solver is missing 2 system packages on this machine. Open the tray to copy the configuration line, add it and rebuild, then press Start."], [["", true, true], ["", true, true]]], what)
     })
 
+    await run("deps: package lists never inject options or URLs into the copied command, no browser means no nag, and a probe that answers after switching to Remote stays silent", async (what) => {
+        const inject = "--nogpgcheck\nhttps://attacker.example/x.rpm\nfoo\x1b[201~bar\n"
+        const copy = async (pm, file, body) => {
+            const h = bootPlugin({ storage: { ...INSTALLED, "fs.wantChromium": true }, files: { [BIN]: "x", [CHR]: "x", [file]: body }, sh: probed(["NOXVFB", "PM " + pm]) })
+            await h.settle()
+            h.fire("fs-copy-deps")
+            return h.clip || ""
+        }
+        const rpmClip = await copy("dnf", RPM, "libX11.so.6()(64bit)\n" + inject)
+        const debClip = await copy("apt-get", DEB, "libc6 (>= 2.26)\n" + inject)
+        const bare = bootPlugin({ storage: INSTALLED, files: { [BIN]: "x" }, sh: probed(["NOXVFB", "PM apt-get"]) })
+        await bare.settle()
+        bare.fire("fs-start")
+        await bare.settle()
+        const raced = bootPlugin({ storage: { ...INSTALLED, "fs.wantChromium": true }, files: { [BIN]: "x" }, sh: (a) => (a.includes("command -v Xvfb") ? { hold: true } : {}) })
+        await raced.settle()
+        raced.fire("fs-mode-remote")
+        await raced.settle()
+        const held = raced.held[0]
+        if (held) { ["NOXVFB", "PM apt-get"].forEach(held.line); held.exit(0) }
+        await raced.settle()
+        eq([rpmClip.includes("'libX11.so.6()(64bit)'"), /nogpgcheck|attacker|\x1b/.test(rpmClip), debClip.includes("libc6 (>= 2.26)"), /nogpgcheck|attacker|\x1b/.test(debClip), bare.notes, JSON.stringify(bare.render()).includes("need these on this machine"), !!held, raced.notes],
+            [true, false, true, false, [], false, true, []], what)
+    })
+
     await run("deps: a probe that answers after a newer one is ignored, and a Stop while the probe runs starts no Chromium download and no solver", async (what) => {
         const boot = async () => {
             const h = bootPlugin({ storage: { ...INSTALLED, "fs.wantChromium": true }, files: { [BIN]: "x" }, fetch: feed, sh: (a) => (a.includes("command -v Xvfb") ? { hold: true } : {}) })
