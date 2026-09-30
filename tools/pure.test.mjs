@@ -357,6 +357,22 @@ console.log("anikoto: time budget")
         await lp.isPlayable({ server: "Auto", headers: {}, videoSources: [{ url, type: "m3u8", quality: "default", subtitles: [] }] })
     }
     eq(learned, ["fetch.y.top"], "cdn: only hosts with the /anime/ layout are learned as subtitle and failover hosts")
+
+    const wrappedAs = async (seg, head) => {
+        const asked = []
+        const wp = load("anikoto", {
+            fetch: (url) => {
+                asked.push(url)
+                const body = url.indexOf("master") !== -1 ? "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv/index.m3u8\n" : url.indexOf("index") !== -1 ? "#EXTM3U\n#EXTINF:4.0,\n" + seg + "\n" : head
+                return Promise.resolve({ ok: true, status: 200, text: () => body })
+            },
+        })
+        const ok = await wp.isPlayable({ server: "Auto", headers: {}, videoSources: [{ url: "https://c.cdn/a/master.m3u8", type: "m3u8", quality: "default", subtitles: [] }] })
+        return [ok, wp.wrapped, asked[2]]
+    }
+    eq([await wrappedAs("seg-1.jpg", "�PNG\r\n\x1a\n"), await wrappedAs("/s/seg-1.jpg", "G@\x00\x10"), await wrappedAs("https://img.cdn/x.image?sig=1", "�PNG\r\n\x1a\n")],
+        [[true, true, "https://c.cdn/a/v/seg-1.jpg"], [true, false, "https://c.cdn/s/seg-1.jpg"], [true, true, "https://img.cdn/x.image?sig=1"]],
+        "segments: a stream whose first segment is a PNG-wrapped TS is flagged, a plain TS is not, and the segment URL resolves relative, root-relative and absolute")
 }
 
 console.log("anikoto: enc resolve cost")
