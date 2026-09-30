@@ -13,6 +13,7 @@ class Provider implements AnimeProvider {
     private solverUrl = this.cfg("solverUrl", "http://127.0.0.1:8191/v1")
     private solverCooldown = 90000
     private badgeReported = false
+    private wrapped = false
     private alt: { [key: string]: string } = {}
     private mirrors = ["https://anikototv.to", "https://anikoto.cz", "https://anikoto.me", "https://anikoto.net", "https://anikototv.se"]
     private cacheTtl = 900000
@@ -528,6 +529,7 @@ class Provider implements AnimeProvider {
 
         const wantSubs = this.loadSubtitles !== "disabled"
         let playableNoSubs: EpisodeServer | undefined
+        let wrappedFallback: EpisodeServer | undefined
         let lastReason = ""
         const seenUrl: { [key: string]: boolean } = {}
         const tried: string[] = []
@@ -547,6 +549,10 @@ class Provider implements AnimeProvider {
             resolved.server = "Auto"
             const playable = await this.isPlayable(resolved, !playableNoSubs)
             if (playable) {
+                if (this.wrapped) {
+                    if (!wrappedFallback) wrappedFallback = resolved
+                    continue
+                }
                 if (!wantSubs || resolved.videoSources[0].subtitles.length > 0) {
                     await this.alignSubtitleHost(resolved)
                     return resolved
@@ -555,6 +561,10 @@ class Provider implements AnimeProvider {
             }
         }
         if (playableNoSubs) return playableNoSubs
+        if (wrappedFallback) {
+            await this.alignSubtitleHost(wrappedFallback)
+            return wrappedFallback
+        }
         try {
             for (const id of tried) $store.remove(`anikoto:src:${id}`)
             $store.remove(`anikoto:slist:${dataIds}`)
@@ -688,6 +698,7 @@ class Provider implements AnimeProvider {
     }
 
     private async isPlayable(server: EpisodeServer, allowSolver: boolean = true): Promise<boolean> {
+        this.wrapped = false
         const src = server.videoSources[0]
         if (!src || !src.url) return false
         try {
@@ -712,12 +723,18 @@ class Provider implements AnimeProvider {
             if (body === undefined) return false
             if (/^https?:\/\/[^/]+\/anime\//.test(src.url)) this.rememberCdnHost(this.hostOf(src.url))
             const variants = this.variantLevelUrls(body, src.url)
-            if (variants.length === 0) return true
+            if (variants.length === 0) {
+                this.wrapped = await this.pngWrapped(body, src.url, server.headers)
+                return true
+            }
             for (const v of variants) {
                 if (this.outOfTime()) return v === variants[0]
                 try {
                     const r = await fetch(v, { headers: server.headers })
-                    if (r.ok) return true
+                    if (r.ok) {
+                        this.wrapped = await this.pngWrapped(r.text(), v, server.headers)
+                        return true
+                    }
                 } catch (_e) {}
             }
             return false
@@ -919,6 +936,18 @@ class Provider implements AnimeProvider {
     private hostOf(u: string): string {
         const m = u.match(/^https?:\/\/([^/]+)/i)
         return m ? m[1].toLowerCase() : ""
+    }
+
+    private async pngWrapped(playlist: string, url: string, headers: { [k: string]: string }): Promise<boolean> {
+        const seg = playlist.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && l.charAt(0) !== "#")[0]
+        if (!seg) return false
+        const abs = /^https?:\/\//i.test(seg) ? seg : seg.charAt(0) === "/" ? this.originOf(url) + seg : url.replace(/[?#].*$/, "").replace(/[^/]*$/, "") + seg
+        try {
+            const r = await fetch(abs, { headers: Object.assign({ Range: "bytes=0-7" }, headers) })
+            return r.text().slice(1, 4) === "PNG"
+        } catch (_e) {
+            return false
+        }
     }
 
     private variantLevelUrls(master: string, masterUrl: string): string[] {

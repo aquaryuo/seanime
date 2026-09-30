@@ -2,7 +2,7 @@
   {
     "id": "aq-anikoto",
     "name": "Anikoto",
-    "version": "1.4.6",
+    "version": "1.4.7",
     "description": "Only anikoto compatibility layer you'll ever need",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
