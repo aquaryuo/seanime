@@ -590,7 +590,7 @@ console.log("animelok")
 console.log("error channel")
 {
     const out = []
-    const cap = { console: { log() {}, info() {}, warn() {}, error: (s) => out.push(String(s)) } }
+    const cap = { console: { log() {}, info() {}, warn: (s) => out.push("warn " + s), error: (s) => out.push(String(s)) } }
     load("anikoto", cap).reportError("server", "a")
     load("anikoto", cap).reportError("server", "b", "warn")
     for (const name of ["anizone", "animelok"]) {
@@ -598,10 +598,10 @@ console.log("error channel")
         load(name, cap).fail("server", "d", "info")
     }
     eq(out.map((s) => s.replace(/"t":\d+/, "")), [
-        'SEHERRv1 {,"ext":"aq-anikoto","scope":"server","msg":"a"}', 'SEHERRv1 {,"ext":"aq-anikoto","scope":"server","msg":"b","lvl":"warn"}',
-        'SEHERRv1 {,"ext":"aq-anizone","scope":"server","msg":"c"}', 'SEHERRv1 {,"ext":"aq-anizone","scope":"server","msg":"d","lvl":"info"}',
-        'SEHERRv1 {,"ext":"aq-animelok","scope":"server","msg":"c"}', 'SEHERRv1 {,"ext":"aq-animelok","scope":"server","msg":"d","lvl":"info"}',
-    ], "lvl: an error record carries no lvl field; a notice carries its level")
+        'SEHERRv1 {,"ext":"aq-anikoto","scope":"server","msg":"a"}', 'warn SEHERRv1 {,"ext":"aq-anikoto","scope":"server","msg":"b","lvl":"warn"}',
+        'SEHERRv1 {,"ext":"aq-anizone","scope":"server","msg":"c"}', 'warn SEHERRv1 {,"ext":"aq-anizone","scope":"server","msg":"d","lvl":"info"}',
+        'SEHERRv1 {,"ext":"aq-animelok","scope":"server","msg":"c"}', 'warn SEHERRv1 {,"ext":"aq-animelok","scope":"server","msg":"d","lvl":"info"}',
+    ], "lvl: an error goes to console.error with no lvl field; a notice carries its level and goes to console.warn, so hosts that treat console.error as failure don't")
     const sites = (name) => { const src = fs.readFileSync(`${ROOT}/extensions/${name}/provider.ts`, "utf8"); return [(src.match(/, "warn"\)/g) || []).length, (src.match(/, "info"\)/g) || []).length] }
     eq(["anikoto", "anizone", "animelok", "animepahe"].map(sites), [[3, 1], [0, 1], [0, 1], [0, 0]], "lvl: only the listed recovered and expected reports are relabelled")
 }
