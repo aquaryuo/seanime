@@ -37,10 +37,12 @@ const d = r.json<any>() // d.status === "ok" → d.solution.{ response, cookies,
 
 Surfaces errors provider extensions report — Seanime swallows provider errors before the client. Extensions can't call a plugin directly (isolated runtimes), so the channel is the **server log**: extension `console.error` → `seanime-*.log` → local API `/api/v1/logs/latest`. The tool polls it, parses marked lines, groups by count with the time of the latest one, auto-expires after 6h, copy/clear. The tab says whether it can read the log, and the tray badge counts only errors you haven't opened yet. Toasts off by default (Settings). Not available when a server password is set (`/logs/latest` → 401). Also needs non-strict secure mode and the correct Seanime URL (`http://127.0.0.1:43211`, editable; Save checks it).
 
-Provider side — one `console.error` line per report: the marker `SEHERRv1`, a space, then a JSON object (`console.warn` is logged at debug level and can be dropped):
+Provider side — one line per report: the marker `SEHERRv1`, a space, then a JSON object. Errors go to `console.error`; a `lvl` notice goes to `console.warn`, so hosts that treat `console.error` as a failure don't misread it (Seanime logs `console.warn` at debug level, so notices disappear if debug logging is off):
 
 ```ts
-console.error("SEHERRv1 " + JSON.stringify({ t: Date.now(), ext, scope, msg, lvl }))
+const line = "SEHERRv1 " + JSON.stringify({ t: Date.now(), ext, scope, msg, lvl })
+if (lvl) console.warn(line)
+else console.error(line)
 ```
 
 - `t` — ms epoch (`Date.now()`). A record without one, more than 60 s ahead, or older than 6h is dropped.

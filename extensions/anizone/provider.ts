@@ -711,7 +711,9 @@ class Provider implements AnimeProvider {
 
     private reportError(scope: string, message: string, lvl?: "warn" | "info"): void {
         try {
-            console.error("SEHERRv1 " + JSON.stringify({ t: Date.now(), ext: "aq-anizone", scope: scope, msg: this.plain(message), lvl: lvl }))
+            const line = "SEHERRv1 " + JSON.stringify({ t: Date.now(), ext: "aq-anizone", scope: scope, msg: this.plain(message), lvl: lvl })
+            if (lvl) console.warn(line)
+            else console.error(line)
         } catch (_e) {}
     }
 
