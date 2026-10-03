@@ -587,6 +587,50 @@ console.log("animelok")
     eq(p.trackScore("English", true, false, false) > p.trackScore("English (Signs & Songs)", true, true, true), true, "track: full dialogue beats a default signs track")
 }
 
+console.log("haifacdn")
+{
+    const lib = [
+        { id: 1, title: "Skeleton Knight", anilist_id: 132474, audio: ["Japanese", "English"] },
+        { id: 2, title: "Skeleton Knight S2", anilist_id: 999, audio: ["Japanese"] },
+        { id: 3, title: "Skeleton Knight OVA", anilist_id: null, audio: ["Japanese"] },
+    ]
+    const ep = (id, n) => ({ id, episode: n, title: "E" + n, stream: `https://cdn.lua.locker/hls/${id}/master.m3u8` })
+    const routes = {
+        "/series/1": { seasons_detail: [{ season: 0, episodes: [ep("sp", 1)] }, { season: 2, episodes: [ep("b1", 1)] }, { season: 1, episodes: [ep("a2", 2), ep("a1", 1)] }] },
+        "/series/3": { seasons_detail: [{ season: 1, episodes: [ep("o3", 3), ep("o2", 2)] }] },
+        "/episodes/ja": { stream: "https://x/ja.m3u8", audio: [{ label: "Japanese", language: "jpn" }], subtitles: [{ label: "Signs", language: "eng", url: "https://x/1.vtt" }, { label: "English Dialogue", language: "eng", default: true, url: "https://x/0.vtt" }] },
+        "/episodes/en": { stream: "https://x/en.m3u8", audio: [{ label: "Japanese", language: "jpn" }, { label: "English 2.0", language: "eng" }], subtitles: [] },
+    }
+    const seen = []
+    const mk = (key) => load("haifacdn", {
+        $getUserPreference: (k) => (k === "apiKey" ? key : undefined),
+        fetch: (url, opts) => {
+            seen.push(opts.headers.Authorization)
+            const path = url.replace("https://cdn.lua.locker/v1", "")
+            if (path.startsWith("/series?") && path.includes("&offset=")) return Promise.resolve({ ok: true, status: 200, json: () => ({ total: 3, series: lib }) })
+            if (path.startsWith("/series?")) return Promise.resolve({ ok: true, status: 200, json: () => ({ series: lib }) })
+            const body = routes[path.split("?")[0]]
+            return Promise.resolve(body ? { ok: true, status: 200, json: () => body } : { ok: false, status: 404, json: () => ({ error: "not_found" }) })
+        },
+    })
+    const p = mk(" ak_test ")
+    const media = (id) => ({ id, synonyms: [], isAdult: false })
+    const ids = async (id, dub, query = "skeleton") => (await p.search({ media: media(id), query, dub })).map((r) => r.id + ":" + r.subOrDub)
+    eq([await ids(132474, false), await ids(132474, true), await ids(999, true), await ids(0, false), await ids(5555, false)],
+        [["1$sub:both"], ["1$dub:both"], [], ["1$sub:both", "2$sub:sub", "3$sub:sub"], ["3$sub:sub"]],
+        "search: the AniList id wins, dub needs English audio, a manual query lists everything, and an unmapped query skips series mapped to other shows")
+    eq((await p.findEpisodes("1$dub")).map((e) => [e.number, e.id]), [[1, "a1$dub"], [2, "a2$dub"], [3, "b1$dub"]], "episodes: several seasons are numbered in order and specials are left out")
+    eq((await p.findEpisodes("3$sub")).map((e) => e.number), [2, 3], "episodes: a single season keeps its own episode numbers")
+    const srv = await p.findEpisodeServer({ id: "ja$sub", number: 1, url: "" }, "Haifa CDN")
+    eq([srv.videoSources[0].url, srv.videoSources[0].type, srv.videoSources[0].subtitles.map((s) => s.language), Object.keys(srv.headers).length], ["https://x/ja.m3u8", "m3u8", ["English Dialogue", "Signs"], 0], "server: the master playlist plays as is, with the default subtitle first and no headers")
+    let noDub = ""
+    try { await p.findEpisodeServer({ id: "ja$dub", number: 1, url: "" }, "Haifa CDN") } catch (e) { noDub = String(e) }
+    eq([noDub, (await p.findEpisodeServer({ id: "en$dub", number: 1, url: "" }, "Haifa CDN")).videoSources[0].url], ["Haifa CDN: this episode has no English audio", "https://x/en.m3u8"], "server: dub needs an English audio track")
+    let noKey = ""
+    try { await mk("").findEpisodes("1$sub") } catch (e) { noKey = String(e) }
+    eq([noKey, seen.every((h) => h === "Bearer ak_test")], ["Haifa CDN: add your API key in the extension settings", true], "auth: the key is sent trimmed as a bearer token, and a missing key says where to set it")
+}
+
 console.log("error channel")
 {
     const out = []

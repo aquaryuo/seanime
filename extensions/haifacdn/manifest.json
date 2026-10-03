@@ -1,0 +1,24 @@
+{
+  "id": "aq-haifacdn",
+  "name": "Haifa CDN",
+  "version": "0.1.0",
+  "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/gate/extensions/haifacdn/manifest.json",
+  "language": "typescript",
+  "type": "onlinestream-provider",
+  "description": "Streams from the Haifa CDN private library. Needs an API key from the library owner. Dub streams carry every audio track; pick English in the player's audio menu.",
+  "author": "aquaryuo",
+  "website": "https://cdn.lua.locker/docs",
+  "lang": "en",
+  "payloadURI": "https://raw.githubusercontent.com/aquaryuo/seanime/gate/extensions/haifacdn/provider.ts",
+  "userConfig": {
+    "version": 1,
+    "requiresConfig": true,
+    "fields": [
+      {
+        "type": "text",
+        "name": "apiKey",
+        "label": "API key (ak_...)"
+      }
+    ]
+  }
+}

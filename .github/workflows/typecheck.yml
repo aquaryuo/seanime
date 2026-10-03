@@ -1,7 +1,7 @@
 name: typecheck
 on:
   push:
-    branches: [main]
+    branches: [main, gate]
   pull_request:
   workflow_dispatch:
 jobs:
