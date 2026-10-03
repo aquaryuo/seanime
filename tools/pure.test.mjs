@@ -590,15 +590,15 @@ console.log("animelok")
 console.log("haifacdn")
 {
     const lib = [
-        { id: 1, title: "Skeleton Knight", anilist_id: 132474, audio: ["Japanese", "English"] },
-        { id: 2, title: "Skeleton Knight S2", anilist_id: 999, audio: ["Japanese"] },
-        { id: 3, title: "Skeleton Knight OVA", anilist_id: null, audio: ["Japanese"] },
+        { id: 1, title: "Skeleton Knight in Another World", anilist_id: 132474, seasons: 2, audio: ["Japanese", "English"] },
+        { id: 2, title: "Frieren: Beyond Journey’s End", anilist_id: 154587, seasons: 2, audio: ["Japanese"] },
+        { id: 3, title: "Skeleton Knight OVA", anilist_id: null, seasons: 1, audio: ["Japanese"] },
     ]
     const ep = (id, n) => ({ id, episode: n, title: "E" + n, stream: `https://cdn.lua.locker/hls/${id}/master.m3u8` })
     const routes = {
         "/series/1": { seasons_detail: [{ season: 0, episodes: [ep("sp", 1)] }, { season: 2, episodes: [ep("b1", 1)] }, { season: 1, episodes: [ep("a2", 2), ep("a1", 1)] }] },
         "/series/3": { seasons_detail: [{ season: 1, episodes: [ep("o3", 3), ep("o2", 2)] }] },
-        "/episodes/ja": { stream: "https://x/ja.m3u8", audio: [{ label: "Japanese", language: "jpn" }], subtitles: [{ label: "Signs", language: "eng", url: "https://x/1.vtt" }, { label: "English Dialogue", language: "eng", default: true, url: "https://x/0.vtt" }] },
+        "/episodes/ja": { stream: "https://x/ja.m3u8", audio: [{ label: "Japanese", language: "jpn" }], subtitles: [{ label: "Forced", language: "eng", url: "https://x/0.vtt" }, { label: "Latin American (CC)", language: "spa", default: true, url: "https://x/1.vtt" }, { label: "Subtitles 3", language: "eng", default: true, url: "https://x/2.vtt" }, { label: "Arabic (Saudi Arabia)", language: "ara", default: true, url: "https://x/3.vtt" }, { label: "Simplified", language: "chi", url: "https://x/4.vtt" }, { label: "Weird", language: "xyz", url: "https://x/5.vtt" }] },
         "/episodes/en": { stream: "https://x/en.m3u8", audio: [{ label: "Japanese", language: "jpn" }, { label: "English 2.0", language: "eng" }], subtitles: [] },
     }
     const seen = []
@@ -614,20 +614,28 @@ console.log("haifacdn")
         },
     })
     const p = mk(" ak_test ")
-    const media = (id) => ({ id, synonyms: [], isAdult: false })
-    const ids = async (id, dub, query = "skeleton") => (await p.search({ media: media(id), query, dub })).map((r) => r.id + ":" + r.subOrDub)
-    eq([await ids(132474, false), await ids(132474, true), await ids(999, true), await ids(0, false), await ids(5555, false)],
-        [["1$sub:both"], ["1$dub:both"], [], ["1$sub:both", "2$sub:sub", "3$sub:sub"], ["3$sub:sub"]],
-        "search: the AniList id wins, dub needs English audio, a manual query lists everything, and an unmapped query skips series mapped to other shows")
-    eq((await p.findEpisodes("1$dub")).map((e) => [e.number, e.id]), [[1, "a1$dub"], [2, "a2$dub"], [3, "b1$dub"]], "episodes: several seasons are numbered in order and specials are left out")
-    eq((await p.findEpisodes("3$sub")).map((e) => e.number), [2, 3], "episodes: a single season keeps its own episode numbers")
+    const media = (id, english = "", romaji = "", synonyms = []) => ({ id, englishTitle: english, romajiTitle: romaji, synonyms, isAdult: false })
+    const ids = async (m, dub, query = "skeleton") => (await p.search({ media: m, query, dub })).map((r) => r.id + ":" + r.subOrDub)
+    eq([
+        await ids(media(132474, "Skeleton Knight in Another World"), false),
+        await ids(media(185542, "Skeleton Knight in Another World Season 2", "Gaikotsu Kishi-sama, Tadaima Isekai e Odekakechuu II"), true),
+        await ids(media(182255, "Frieren: Beyond Journey's End Season 2", "Sousou no Frieren 2nd Season"), false),
+        await ids(media(182255, "Frieren: Beyond Journey's End Season 2", "Sousou no Frieren 2nd Season"), true),
+        await ids(media(777777, "Skeleton Knight in Another World Season 3"), false),
+        await ids(media(0), false),
+        await ids(media(5555, "Something Else"), false),
+    ], [["1$s1$sub:both"], ["1$s2$dub:both"], ["2$s2$sub:sub"], [], [], ["1$s1$sub:both", "1$s2$sub:both", "2$s1$sub:sub", "2$s2$sub:sub", "3$s1$sub:sub"], ["3$s1$sub:sub"]],
+        "search: the AniList id picks season 1, a sequel picks its season by title, dub needs English audio, a season the library lacks gives nothing, a manual query lists every season, and an unmapped query skips series mapped to other shows")
+    eq([(await p.findEpisodes("1$s1$dub")).map((e) => [e.number, e.id]), (await p.findEpisodes("1$s2$sub")).map((e) => [e.number, e.id]), (await p.findEpisodes("1$sub")).map((e) => e.id), (await p.findEpisodes("3$s1$sub")).map((e) => e.number)],
+        [[[1, "a1$dub"], [2, "a2$dub"]], [[1, "b1$sub"]], ["a1$sub", "a2$sub"], [2, 3]],
+        "episodes: only the picked season is listed with its own numbers, specials stay out, and an id without a season means season 1")
     const srv = await p.findEpisodeServer({ id: "ja$sub", number: 1, url: "" }, "Haifa CDN")
-    eq([srv.videoSources[0].url, srv.videoSources[0].type, srv.videoSources[0].subtitles.map((s) => s.language), Object.keys(srv.headers).length], ["https://x/ja.m3u8", "m3u8", ["English Dialogue", "Signs"], 0], "server: the master playlist plays as is, with the default subtitle first and no headers")
+    eq([srv.videoSources[0].url, srv.videoSources[0].type, srv.videoSources[0].subtitles.map((s) => s.language + (s.isDefault ? "*" : "")), Object.keys(srv.headers).length], ["https://x/ja.m3u8", "m3u8", ["English*", "English (Forced)", "Spanish (Latin American, CC)", "Arabic (Saudi Arabia)", "Chinese (Simplified)", "Weird"], 0], "server: the master playlist plays as is with no headers; subtitles are named from their language code, and exactly one default is kept, preferring English dialogue")
     let noDub = ""
     try { await p.findEpisodeServer({ id: "ja$dub", number: 1, url: "" }, "Haifa CDN") } catch (e) { noDub = String(e) }
     eq([noDub, (await p.findEpisodeServer({ id: "en$dub", number: 1, url: "" }, "Haifa CDN")).videoSources[0].url], ["Haifa CDN: this episode has no English audio", "https://x/en.m3u8"], "server: dub needs an English audio track")
     let noKey = ""
-    try { await mk("").findEpisodes("1$sub") } catch (e) { noKey = String(e) }
+    try { await mk("").findEpisodes("1$s1$sub") } catch (e) { noKey = String(e) }
     eq([noKey, seen.every((h) => h === "Bearer ak_test")], ["Haifa CDN: add your API key in the extension settings", true], "auth: the key is sent trimmed as a bearer token, and a missing key says where to set it")
 }
 

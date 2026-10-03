@@ -1,6 +1,6 @@
 declare const console: { log(...args: any[]): void; info(...args: any[]): void; warn(...args: any[]): void; error(...args: any[]): void }
 
-type Series = { id: number; title: string; anilist_id?: number | null; audio?: string[] }
+type Series = { id: number; title: string; anilist_id?: number | null; audio?: string[]; seasons?: number }
 type Episode = { id: string; episode: number; title?: string; stream: string }
 type Season = { season: number; episodes?: Episode[] }
 type Track = { label?: string; language?: string; default?: boolean; url?: string }
@@ -8,43 +8,79 @@ type Track = { label?: string; language?: string; default?: boolean; url?: strin
 class Provider implements AnimeProvider {
     private base = "https://cdn.lua.locker/v1"
     private libraryTtl = 600000
+    private langs: { [code: string]: string } = {
+        eng: "English", jpn: "Japanese", spa: "Spanish", por: "Portuguese", fre: "French", fra: "French", ger: "German", deu: "German",
+        ita: "Italian", rus: "Russian", ara: "Arabic", chi: "Chinese", zho: "Chinese", kor: "Korean", ind: "Indonesian", may: "Malay",
+        msa: "Malay", tha: "Thai", vie: "Vietnamese", fil: "Filipino", tgl: "Filipino", pol: "Polish", tur: "Turkish", hin: "Hindi",
+    }
 
     getSettings(): Settings {
         return { episodeServers: ["Haifa CDN"], supportsDub: true }
     }
 
     async search(opts: SearchOptions): Promise<SearchResult[]> {
-        const id = opts.media && opts.media.id > 0 ? opts.media.id : 0
-        let hits: Series[] = id ? (await this.library()).filter((s) => s.anilist_id === id) : []
-        if (hits.length === 0 && opts.query) {
-            const found = await this.api<{ series?: Series[] }>(`/series?limit=100&q=${encodeURIComponent(opts.query)}`)
-            hits = (found.series || []).filter((s) => !id || !s.anilist_id || s.anilist_id === id)
+        const media = opts.media || ({} as Media)
+        const id = media.id > 0 ? media.id : 0
+        const lib = id ? await this.library() : []
+        let picks: { s: Series; season: number }[] = lib.filter((s) => s.anilist_id === id).map((s) => ({ s, season: 1 }))
+        if (picks.length === 0 && id) {
+            const season = this.seasonOf(media)
+            const names = this.titles(media).map((t) => this.baseTitle(t))
+            picks = lib.filter((s) => names.indexOf(this.baseTitle(s.title)) !== -1).map((s) => ({ s, season }))
+        }
+        if (picks.length === 0 && opts.query) {
+            const found = (await this.api<{ series?: Series[] }>(`/series?limit=100&q=${encodeURIComponent(opts.query)}`)).series || []
+            const season = id ? this.seasonOf(media) : 0
+            for (const s of found) {
+                if (id && s.anilist_id) continue
+                for (let n = 1; n <= Math.max(1, s.seasons || 1); n++) if (!season || n === season) picks.push({ s, season: n })
+            }
         }
         const audio = opts.dub ? "dub" : "sub"
-        return hits
-            .filter((s) => !opts.dub || (s.audio || []).some((a) => this.english(a)))
-            .map((s) => ({
-                id: `${s.id}$${audio}`,
-                title: s.title,
-                url: `${this.base}/series/${s.id}`,
-                subOrDub: (s.audio || []).some((a) => this.english(a)) ? "both" : "sub",
+        return picks
+            .filter((p) => p.season <= Math.max(1, p.s.seasons || 1))
+            .filter((p) => !opts.dub || (p.s.audio || []).some((a) => this.english(a)))
+            .map((p) => ({
+                id: `${p.s.id}$s${p.season}$${audio}`,
+                title: p.s.title + ((p.s.seasons || 1) > 1 ? ` Season ${p.season}` : ""),
+                url: `${this.base}/series/${p.s.id}`,
+                subOrDub: (p.s.audio || []).some((a) => this.english(a)) ? "both" : "sub",
             }))
     }
 
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {
-        const [sid, audio] = id.split("$")
-        const s = await this.api<{ seasons_detail?: Season[] }>(`/series/${encodeURIComponent(sid)}`)
-        let seasons = (s.seasons_detail || []).slice().sort((a, b) => a.season - b.season)
-        const main = seasons.filter((x) => x.season > 0)
-        if (main.length > 0) seasons = main
-        const eps = seasons.reduce((all: Episode[], x) => all.concat((x.episodes || []).slice().sort((a, b) => a.episode - b.episode)), [])
-        if (eps.length === 0) throw this.fail("episodes", "Haifa CDN: this series has no episodes yet")
-        return eps.map((e, i) => ({
-            id: `${e.id}$${audio || "sub"}`,
-            number: seasons.length > 1 ? i + 1 : e.episode,
-            url: e.stream,
-            title: e.title,
-        }))
+        const parts = id.split("$")
+        const tag = parts.filter((x) => /^s\d+$/.test(x))[0]
+        const want = tag ? parseInt(tag.slice(1), 10) : 1
+        const audio = parts.indexOf("dub") !== -1 ? "dub" : "sub"
+        const s = await this.api<{ seasons_detail?: Season[] }>(`/series/${encodeURIComponent(parts[0])}`)
+        const season = (s.seasons_detail || []).filter((x) => x.season === want)[0]
+        const eps = ((season && season.episodes) || []).slice().sort((a, b) => a.episode - b.episode)
+        if (eps.length === 0) throw this.fail("episodes", `Haifa CDN: season ${want} of this series isn't in the library yet`)
+        return eps.map((e) => ({ id: `${e.id}$${audio}`, number: e.episode, url: e.stream, title: e.title }))
+    }
+
+    private titles(media: Media): string[] {
+        return [media.englishTitle || "", media.romajiTitle || ""].concat(media.synonyms || []).filter((t) => !!t)
+    }
+
+    private seasonOf(media: Media): number {
+        for (const t of this.titles(media)) {
+            const m = t.match(/\bseason\s*(\d+)\b/i) || t.match(/\b(\d+)(?:st|nd|rd|th)\s+season\b/i) || t.match(/\bs(\d+)$/i)
+            if (m) return parseInt(m[1], 10)
+            const r = t.match(/\s(II|III|IV|V|VI)$/)
+            if (r) return ["II", "III", "IV", "V", "VI"].indexOf(r[1]) + 2
+        }
+        return 1
+    }
+
+    private baseTitle(t: string): string {
+        return (t || "")
+            .toLowerCase()
+            .replace(/[’']/g, "")
+            .replace(/\bseason\s*\d+\b|\b\d+(?:st|nd|rd|th)\s+season\b|\bs\d+$|\s(?:ii|iii|iv|v|vi)$/g, " ")
+            .replace(/[^a-z0-9]+/g, " ")
+            .trim()
     }
 
     async findEpisodeServer(episode: EpisodeDetails, _server: string): Promise<EpisodeServer> {
@@ -54,14 +90,26 @@ class Provider implements AnimeProvider {
         if (audio === "dub" && !(e.audio || []).some((a) => this.english(a.language || a.label || ""))) {
             throw this.fail("server", "Haifa CDN: this episode has no English audio")
         }
-        const subs = (e.subtitles || [])
-            .filter((t) => !!t.url)
-            .map((t, i) => ({ id: String(i), url: t.url as string, language: t.label || t.language || "Unknown", isDefault: !!t.default }))
+        const tracks = (e.subtitles || []).filter((t) => !!t.url)
+        const eng = (t: Track) => this.english(t.language || "") && !/forced|signs/i.test(t.label || "")
+        let pick = tracks.findIndex((t) => !!t.default && eng(t))
+        if (pick < 0) pick = tracks.findIndex((t) => !!t.default)
+        if (pick < 0) pick = Math.max(0, tracks.findIndex(eng))
+        const subs = tracks.map((t, i) => ({ id: String(i), url: t.url as string, language: this.trackName(t), isDefault: i === pick }))
         return {
             server: "Haifa CDN",
             headers: {},
             videoSources: [{ url: e.stream, type: "m3u8", quality: "auto", subtitles: subs.filter((t) => t.isDefault).concat(subs.filter((t) => !t.isDefault)) }],
         }
+    }
+
+    private trackName(t: Track): string {
+        const label = (t.label || "").trim()
+        const lang = this.langs[(t.language || "").toLowerCase()] || ""
+        if (!lang) return label || t.language || "Unknown"
+        if (!label || /^subtitles?\s*\d*$/i.test(label) || label.toLowerCase() === lang.toLowerCase()) return lang
+        if (label.toLowerCase().indexOf(lang.toLowerCase()) === 0) return label
+        return `${lang} (${label.replace(/\s*\(([^()]*)\)$/, ", $1")})`
     }
 
     private async library(): Promise<Series[]> {
