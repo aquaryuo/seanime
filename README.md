@@ -6,6 +6,10 @@ Since you're here anyway: these are [Seanime](https://seanime.rahim.app) extensi
 
 `https://raw.githubusercontent.com/aquaryuo/seanime/main/marketplace.json`
 
+Extensions and plugins that aren't officially released live on the `gate` branch. Its list also carries everything from `main`, so use it in place of the one above to get both:
+
+`https://raw.githubusercontent.com/aquaryuo/seanime/gate/marketplace.json`
+
 `animepahe` needs the `aquatils` solver plugin running to load anything at all.
 
 | payload | kind | what it is |
@@ -14,6 +18,7 @@ Since you're here anyway: these are [Seanime](https://seanime.rahim.app) extensi
 | `anizone` | onlinestream provider | anizone.to |
 | `animelok` | onlinestream provider | animelok.live |
 | `animepahe` | onlinestream provider | animepahe; cannot load anything without the solver below |
+| `haifacdn` | onlinestream provider | a private library; needs an API key from its owner (`gate` only) |
 | `aquatils` | plugin | downloads and supervises a Cloudflare solver, and surfaces errors other extensions report |
 | `seatags` | plugin | tags marketplace cards and adds filters |
 
