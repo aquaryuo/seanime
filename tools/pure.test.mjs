@@ -58,6 +58,20 @@ console.log("haifacdn")
         "/series/1": { seasons_detail: [{ season: 0, episodes: [ep("sp", 1)] }, { season: 2, episodes: [ep("b1", 1)] }, { season: 1, episodes: [ep("a2", 2), ep("a1", 1)] }] },
         "/series/3": { seasons_detail: [{ season: 1, episodes: [ep("o3", 3), ep("o2", 2)] }] },
         "/episodes/ja": { stream: "https://x/ja.m3u8", audio: [{ label: "Japanese", language: "jpn" }], subtitles: [{ label: "Forced", language: "eng", url: "https://x/0.vtt" }, { label: "Latin American (CC)", language: "spa", default: true, url: "https://x/1.vtt" }, { label: "Subtitles 3", language: "eng", default: true, url: "https://x/2.vtt" }, { label: "Arabic (Saudi Arabia)", language: "ara", default: true, url: "https://x/3.vtt" }, { label: "Simplified", language: "chi", url: "https://x/4.vtt" }, { label: "Weird", language: "xyz", url: "https://x/5.vtt" }] },
+        "/episodes/loc": {
+            stream: "https://x/loc.m3u8",
+            audio: [{ label: "Japan", language: "ja-JP", default: true }, { label: "United States", language: "en-US" }, { label: "Latin America", language: "es-419" }, { label: "", language: "es-ES" }],
+            subtitles: [
+                { label: "Saudi Arabia", language: "ar-SA", default: true, url: "https://x/ar.ass" },
+                { label: "", language: "en-US", default: true, url: "https://x/en.ass" },
+                { label: "Forced", language: "en-US", url: "https://x/enf.ass" },
+                { label: "Latin America", language: "es-419", url: "https://x/es419.ass" },
+                { label: "Signs & Songs", language: "es-ES", url: "https://x/eses.ass" },
+                { label: "Brazil", language: "pt-BR", url: "https://x/ptbr.ass" },
+                { label: "", language: "de-DE", url: "https://x/de.ass" },
+                { label: "Klingon", language: "tlh-QO", url: "https://x/tlh.ass" },
+            ],
+        },
         "/episodes/en": { stream: "https://x/en.m3u8", audio: [{ label: "Japanese", language: "jpn" }, { label: "English 2.0", language: "eng" }], subtitles: [] },
     }
     const seen = []
@@ -93,6 +107,10 @@ console.log("haifacdn")
     let noDub = ""
     try { await p.findEpisodeServer({ id: "ja$dub", number: 1, url: "" }, "Haifa CDN") } catch (e) { noDub = String(e) }
     eq([noDub, (await p.findEpisodeServer({ id: "en$dub", number: 1, url: "" }, "Haifa CDN")).videoSources[0].url], ["Haifa CDN: this episode has no English audio", "https://x/en.m3u8"], "server: dub needs an English audio track")
+    const loc = await p.findEpisodeServer({ id: "loc$dub", number: 1, url: "" }, "Haifa CDN")
+    eq(loc.videoSources[0].subtitles.map((t) => t.language + (t.isDefault ? "*" : "")),
+        ["English*", "Arabic", "English (Forced)", "Spanish (Latin America)", "Spanish (Spain, Signs & Songs)", "Portuguese", "German", "Klingon"],
+        "server: locale-coded tracks (en-US, es-419) are named by language, add the region only when one language comes in several regions, keep Forced/Signs from the label, take English dialogue as the default, and pass dub on an en-US audio track")
     let noKey = ""
     try { await mk("").findEpisodes("1$s1$sub") } catch (e) { noKey = String(e) }
     eq([noKey, seen.every((h) => h === "Bearer ak_test")], ["Haifa CDN: add your API key in the extension settings", true], "auth: the key is sent trimmed as a bearer token, and a missing key says where to set it")
