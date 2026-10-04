@@ -2,7 +2,7 @@
   {
     "id": "aq-haifacdn",
     "name": "Haifa CDN",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "description": "Streams from the Haifa CDN private library. Needs an API key from the library owner. Dub streams carry every audio track; pick English in the player's audio menu.",
     "author": "aquaryuo",
     "type": "onlinestream-provider",

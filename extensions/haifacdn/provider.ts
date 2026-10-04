@@ -12,6 +12,13 @@ class Provider implements AnimeProvider {
         eng: "English", jpn: "Japanese", spa: "Spanish", por: "Portuguese", fre: "French", fra: "French", ger: "German", deu: "German",
         ita: "Italian", rus: "Russian", ara: "Arabic", chi: "Chinese", zho: "Chinese", kor: "Korean", ind: "Indonesian", may: "Malay",
         msa: "Malay", tha: "Thai", vie: "Vietnamese", fil: "Filipino", tgl: "Filipino", pol: "Polish", tur: "Turkish", hin: "Hindi",
+        en: "English", ja: "Japanese", es: "Spanish", pt: "Portuguese", fr: "French", de: "German", it: "Italian", ru: "Russian",
+        ar: "Arabic", zh: "Chinese", ko: "Korean", id: "Indonesian", ms: "Malay", th: "Thai", vi: "Vietnamese", tl: "Filipino",
+        pl: "Polish", tr: "Turkish", hi: "Hindi",
+    }
+    private regions: { [code: string]: string } = {
+        "419": "Latin America", es: "Spain", mx: "Mexico", br: "Brazil", pt: "Portugal", us: "US", gb: "UK", ca: "Canada", fr: "France",
+        sa: "Saudi Arabia", cn: "China", tw: "Taiwan", hk: "Hong Kong", de: "Germany", it: "Italy", ru: "Russia", jp: "Japan",
     }
 
     getSettings(): Settings {
@@ -95,7 +102,14 @@ class Provider implements AnimeProvider {
         let pick = tracks.findIndex((t) => !!t.default && eng(t))
         if (pick < 0) pick = tracks.findIndex((t) => !!t.default)
         if (pick < 0) pick = Math.max(0, tracks.findIndex(eng))
-        const subs = tracks.map((t, i) => ({ id: String(i), url: t.url as string, language: this.trackName(t), isDefault: i === pick }))
+        const variants: { [lang: string]: string[] } = {}
+        for (const t of tracks) {
+            const c = (t.language || "").toLowerCase().split(/[-_]/)
+            if (!c[1]) continue
+            const seen = (variants[c[0]] = variants[c[0]] || [])
+            if (seen.indexOf(c[1]) === -1) seen.push(c[1])
+        }
+        const subs = tracks.map((t, i) => ({ id: String(i), url: t.url as string, language: this.trackName(t, variants), isDefault: i === pick }))
         return {
             server: "Haifa CDN",
             headers: {},
@@ -103,10 +117,18 @@ class Provider implements AnimeProvider {
         }
     }
 
-    private trackName(t: Track): string {
+    private trackName(t: Track, variants: { [lang: string]: string[] }): string {
         const label = (t.label || "").trim()
-        const lang = this.langs[(t.language || "").toLowerCase()] || ""
+        const code = (t.language || "").toLowerCase().split(/[-_]/)
+        const lang = this.langs[code[0]] || ""
         if (!lang) return label || t.language || "Unknown"
+        if (code[1]) {
+            const extra: string[] = []
+            if ((variants[code[0]] || []).length > 1) extra.push(this.regions[code[1]] || code[1].toUpperCase())
+            const q = label.toLowerCase().match(/\b(forced|signs & songs|signs|songs|sdh|cc)\b/)
+            if (q) extra.push(({ forced: "Forced", "signs & songs": "Signs & Songs", signs: "Signs", songs: "Songs", sdh: "SDH", cc: "CC" } as { [k: string]: string })[q[1]])
+            return extra.length ? `${lang} (${extra.join(", ")})` : lang
+        }
         if (!label || /^subtitles?\s*\d*$/i.test(label) || label.toLowerCase() === lang.toLowerCase()) return lang
         if (label.toLowerCase().indexOf(lang.toLowerCase()) === 0) return label
         return `${lang} (${label.replace(/\s*\(([^()]*)\)$/, ", $1")})`
