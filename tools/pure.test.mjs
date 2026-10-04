@@ -75,17 +75,31 @@ console.log("haifacdn")
         "/episodes/en": { stream: "https://x/en.m3u8", audio: [{ label: "Japanese", language: "jpn" }, { label: "English 2.0", language: "eng" }], subtitles: [] },
     }
     const seen = []
-    const mk = (key) => load("haifacdn", {
-        $getUserPreference: (k) => (k === "apiKey" ? key : undefined),
-        fetch: (url, opts) => {
-            seen.push(opts.headers.Authorization)
-            const path = url.replace("https://cdn.lua.locker/v1", "")
-            if (path.startsWith("/series?") && path.includes("&offset=")) return Promise.resolve({ ok: true, status: 200, json: () => ({ total: 3, series: lib }) })
-            if (path.startsWith("/series?")) return Promise.resolve({ ok: true, status: 200, json: () => ({ series: lib }) })
-            const body = routes[path.split("?")[0]]
-            return Promise.resolve(body ? { ok: true, status: 200, json: () => body } : { ok: false, status: 404, json: () => ({ error: "not_found" }) })
-        },
-    })
+    const posts = []
+    const mk = (key, prefs = {}, mine = []) => {
+        const store = new Map()
+        const notes = []
+        const prov = load("haifacdn", {
+            $getUserPreference: (k) => (k === "apiKey" ? key : prefs[k]),
+            $store: { get: (k) => store.get(k), set: (k, v) => store.set(k, v), remove: (k) => store.delete(k), has: (k) => store.has(k) },
+            console: { log() {}, info() {}, warn: (m) => notes.push(JSON.parse(String(m).slice(9))), error() {} },
+            fetch: (url, opts) => {
+                seen.push(opts.headers.Authorization)
+                const path = url.replace("https://cdn.lua.locker/v1", "")
+                if (opts.method === "POST") {
+                    posts.push([path, JSON.parse(opts.body), opts.headers["Content-Type"]])
+                    return Promise.resolve({ ok: true, status: 201, json: () => ({ ok: true, duplicate: false, request: { title: "Skeleton Knight in Another World Season 3", already_in_library: false } }) })
+                }
+                if (path.startsWith("/requests?")) return Promise.resolve({ ok: true, status: 200, json: () => ({ requests: mine }) })
+                if (path.startsWith("/series?") && path.includes("&offset=")) return Promise.resolve({ ok: true, status: 200, json: () => ({ total: 3, series: lib }) })
+                if (path.startsWith("/series?")) return Promise.resolve({ ok: true, status: 200, json: () => ({ series: lib }) })
+                const body = routes[path.split("?")[0]]
+                return Promise.resolve(body ? { ok: true, status: 200, json: () => body } : { ok: false, status: 404, json: () => ({ error: "not_found" }) })
+            },
+        })
+        prov.notes = notes
+        return prov
+    }
     const p = mk(" ak_test ")
     const media = (id, english = "", romaji = "", synonyms = []) => ({ id, englishTitle: english, romajiTitle: romaji, synonyms, isAdult: false })
     const ids = async (m, dub, query = "skeleton") => (await p.search({ media: m, query, dub })).map((r) => r.id + ":" + r.subOrDub)
@@ -107,6 +121,14 @@ console.log("haifacdn")
     let noDub = ""
     try { await p.findEpisodeServer({ id: "ja$dub", number: 1, url: "" }, "Haifa CDN") } catch (e) { noDub = String(e) }
     eq([noDub, (await p.findEpisodeServer({ id: "en$dub", number: 1, url: "" }, "Haifa CDN")).videoSources[0].url], ["Haifa CDN: this episode has no English audio", "https://x/en.m3u8"], "server: dub needs an English audio track")
+    await ids(media(777777, "Skeleton Knight in Another World Season 3"), true)
+    const off = mk("ak_test", { requestMissing: "off" })
+    await off.search({ media: media(888888, "Nothing Here"), query: "", dub: false })
+    const asked = mk("ak_test", {}, [{ anilist_id: 999999 }])
+    await asked.search({ media: media(999999, "Already Asked"), query: "", dub: false })
+    eq([posts, p.notes.map((n) => n.lvl + " " + n.msg)],
+        [[["/request", { anilist_id: 777777, note: "Requested from Seanime" }, "application/json"]], ["info Haifa CDN: Skeleton Knight in Another World Season 3 isn't in the library yet - requested it"]],
+        "request: a show or season the library lacks is requested once per session as JSON with an info notice; dub-only and manual misses, a switched-off setting and a show this key already asked for send nothing")
     const loc = await p.findEpisodeServer({ id: "loc$dub", number: 1, url: "" }, "Haifa CDN")
     eq(loc.videoSources[0].subtitles.map((t) => t.language + (t.isDefault ? "*" : "")),
         ["English*", "Arabic", "English (Forced)", "Spanish (Latin America)", "Spanish (Spain, Signs & Songs)", "Portuguese", "German", "Klingon"],

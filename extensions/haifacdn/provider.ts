@@ -44,8 +44,9 @@ class Provider implements AnimeProvider {
             }
         }
         const audio = opts.dub ? "dub" : "sub"
-        return picks
-            .filter((p) => p.season <= Math.max(1, p.s.seasons || 1))
+        const fits = picks.filter((p) => p.season <= Math.max(1, p.s.seasons || 1))
+        if (fits.length === 0 && id) await this.requestMissing(media)
+        return fits
             .filter((p) => !opts.dub || (p.s.audio || []).some((a) => this.english(a)))
             .map((p) => ({
                 id: `${p.s.id}$s${p.season}$${audio}`,
@@ -65,6 +66,21 @@ class Provider implements AnimeProvider {
         const eps = ((season && season.episodes) || []).slice().sort((a, b) => a.episode - b.episode)
         if (eps.length === 0) throw this.fail("episodes", `Haifa CDN: season ${want} of this series isn't in the library yet`)
         return eps.map((e) => ({ id: `${e.id}$${audio}`, number: e.episode, url: e.stream, title: e.title }))
+    }
+
+    private async requestMissing(media: Media): Promise<void> {
+        const flag = `haifacdn:requested:${media.id}`
+        if (this.pref("requestMissing") === "off" || $store.get(flag)) return
+        $store.set(flag, true)
+        try {
+            const mine = (await this.api<{ requests?: { anilist_id?: number }[] }>("/requests?limit=100")).requests || []
+            if (mine.some((r) => r.anilist_id === media.id)) return
+            const res = await this.api<{ duplicate?: boolean; request?: { title?: string; already_in_library?: boolean } }>("/request", { anilist_id: media.id, note: "Requested from Seanime" })
+            const r = res.request || {}
+            const name = r.title || media.englishTitle || media.romajiTitle || `AniList ${media.id}`
+            if (r.already_in_library) this.notice("search", `Haifa CDN: the library has ${name}, but it could not be matched`, "warn")
+            else this.notice("search", `Haifa CDN: ${name} isn't in the library yet - ${res.duplicate ? "added a vote to its request" : "requested it"}`, "info")
+        } catch (_e) {}
     }
 
     private titles(media: Media): string[] {
@@ -148,12 +164,14 @@ class Provider implements AnimeProvider {
         return out
     }
 
-    private async api<T>(path: string): Promise<T> {
-        const key = this.apiKey()
+    private async api<T>(path: string, body?: object): Promise<T> {
+        const key = this.pref("apiKey")
         if (!key) throw this.fail("auth", "Haifa CDN: add your API key in the extension settings")
+        const headers: { [k: string]: string } = { Authorization: `Bearer ${key}`, Accept: "application/json" }
+        if (body) headers["Content-Type"] = "application/json"
         let res: FetchResponse
         try {
-            res = await fetch(this.base + path, { headers: { Authorization: `Bearer ${key}`, Accept: "application/json" } })
+            res = await fetch(this.base + path, body ? { method: "POST", headers, body: JSON.stringify(body) } : { headers })
         } catch (_e) {
             throw this.fail("network", "Haifa CDN: the library could not be reached")
         }
@@ -168,9 +186,9 @@ class Provider implements AnimeProvider {
         throw this.fail("api", `Haifa CDN: the library answered HTTP ${res.status}`)
     }
 
-    private apiKey(): string {
+    private pref(name: string): string {
         try {
-            const v = $getUserPreference("apiKey")
+            const v = $getUserPreference(name)
             if (typeof v === "string" && v.indexOf("{{") === -1) return v.trim()
         } catch (_e) {}
         return ""
@@ -178,6 +196,12 @@ class Provider implements AnimeProvider {
 
     private english(s: string): boolean {
         return /^(en|eng|english)\b/i.test((s || "").trim())
+    }
+
+    private notice(scope: string, message: string, lvl: "warn" | "info"): void {
+        try {
+            console.warn("SEHERRv1 " + JSON.stringify({ t: Date.now(), ext: "aq-haifacdn", scope: scope, msg: message.replace(/[\u2018\u2019]/g, "'").replace(/[^\x20-\x7e]/g, ""), lvl: lvl }))
+        } catch (_e) {}
     }
 
     private fail(scope: string, message: string): string {
