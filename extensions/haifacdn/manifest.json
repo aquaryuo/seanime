@@ -1,7 +1,7 @@
 {
   "id": "aq-haifacdn",
   "name": "Haifa CDN",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/gate/extensions/haifacdn/manifest.json",
   "language": "typescript",
   "type": "onlinestream-provider",
@@ -32,6 +32,22 @@
           {
             "value": "off",
             "label": "Off"
+          }
+        ]
+      },
+      {
+        "type": "select",
+        "name": "autoApprove",
+        "label": "Auto-approve those requests (starts the download without review)",
+        "default": "off",
+        "options": [
+          {
+            "value": "off",
+            "label": "Off"
+          },
+          {
+            "value": "on",
+            "label": "On"
           }
         ]
       }

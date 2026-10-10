@@ -1,25 +1,14 @@
 declare const console: { log(...args: any[]): void; info(...args: any[]): void; warn(...args: any[]): void; error(...args: any[]): void }
 
-type Series = { id: number; title: string; anilist_id?: number | null; audio?: string[]; seasons?: number }
-type Episode = { id: string; episode: number; title?: string; stream: string }
+type Series = { id: number; title: string; anilist_id?: number | null; audio?: string[] }
+type Episode = { id: string; episode: number; stream: string }
 type Season = { season: number; episodes?: Episode[] }
 type Track = { label?: string; language?: string; default?: boolean; url?: string }
 
 class Provider implements AnimeProvider {
     private base = "https://cdn.lua.locker/v1"
-    private libraryTtl = 600000
-    private langs: { [code: string]: string } = {
-        eng: "English", jpn: "Japanese", spa: "Spanish", por: "Portuguese", fre: "French", fra: "French", ger: "German", deu: "German",
-        ita: "Italian", rus: "Russian", ara: "Arabic", chi: "Chinese", zho: "Chinese", kor: "Korean", ind: "Indonesian", may: "Malay",
-        msa: "Malay", tha: "Thai", vie: "Vietnamese", fil: "Filipino", tgl: "Filipino", pol: "Polish", tur: "Turkish", hin: "Hindi",
-        en: "English", ja: "Japanese", es: "Spanish", pt: "Portuguese", fr: "French", de: "German", it: "Italian", ru: "Russian",
-        ar: "Arabic", zh: "Chinese", ko: "Korean", id: "Indonesian", ms: "Malay", th: "Thai", vi: "Vietnamese", tl: "Filipino",
-        pl: "Polish", tr: "Turkish", hi: "Hindi",
-    }
-    private regions: { [code: string]: string } = {
-        "419": "Latin America", es: "Spain", mx: "Mexico", br: "Brazil", pt: "Portugal", us: "US", gb: "UK", ca: "Canada", fr: "France",
-        sa: "Saudi Arabia", cn: "China", tw: "Taiwan", hk: "Hong Kong", de: "Germany", it: "Italy", ru: "Russia", jp: "Japan",
-    }
+    // ponytail: a series Haifa removes stays listed up to 6 h and then 404s in findEpisodes; search's live q fallback finds new ones
+    private libraryTtl = 6 * 3600000
 
     getSettings(): Settings {
         return { episodeServers: ["Haifa CDN"], supportsDub: true }
@@ -29,43 +18,50 @@ class Provider implements AnimeProvider {
         const media = opts.media || ({} as Media)
         const id = media.id > 0 ? media.id : 0
         const lib = id ? await this.library() : []
-        let picks: { s: Series; season: number }[] = lib.filter((s) => s.anilist_id === id).map((s) => ({ s, season: 1 }))
+        let picks = lib.filter((s) => s.anilist_id === id)
         if (picks.length === 0 && id) {
-            const season = this.seasonOf(media)
-            const names = this.titles(media).map((t) => this.baseTitle(t))
-            picks = lib.filter((s) => names.indexOf(this.baseTitle(s.title)) !== -1).map((s) => ({ s, season }))
+            const names = this.titles(media).map((t) => this.titleKey(t))
+            picks = lib.filter((s) => !s.anilist_id && names.indexOf(this.titleKey(s.title)) !== -1)
         }
         if (picks.length === 0 && opts.query) {
             const found = (await this.api<{ series?: Series[] }>(`/series?limit=100&q=${encodeURIComponent(opts.query)}`)).series || []
-            const season = id ? this.seasonOf(media) : 0
-            for (const s of found) {
-                if (id && s.anilist_id) continue
-                for (let n = 1; n <= Math.max(1, s.seasons || 1); n++) if (!season || n === season) picks.push({ s, season: n })
-            }
+            const season = Math.max(1, ...this.titles(media).map((t) => this.seasonOf(t)))
+            picks = found.filter((s) => !id || s.anilist_id === id || (!s.anilist_id && this.seasonOf(s.title) === season))
         }
+        if (picks.length === 0 && id) await this.requestMissing(media)
         const audio = opts.dub ? "dub" : "sub"
-        const fits = picks.filter((p) => p.season <= Math.max(1, p.s.seasons || 1))
-        if (fits.length === 0 && id) await this.requestMissing(media)
-        return fits
-            .filter((p) => !opts.dub || (p.s.audio || []).some((a) => this.english(a)))
-            .map((p) => ({
-                id: `${p.s.id}$s${p.season}$${audio}`,
-                title: p.s.title + ((p.s.seasons || 1) > 1 ? ` Season ${p.season}` : ""),
-                url: `${this.base}/series/${p.s.id}`,
-                subOrDub: (p.s.audio || []).some((a) => this.english(a)) ? "both" : "sub",
+        return picks
+            .filter((s) => !opts.dub || (s.audio || []).some((a) => this.english(a)))
+            .map((s) => ({
+                id: `${s.id}$${audio}`,
+                title: s.title,
+                url: `${this.base}/series/${s.id}`,
+                subOrDub: (s.audio || []).some((a) => this.english(a)) ? "both" : "sub",
             }))
     }
 
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {
         const parts = id.split("$")
-        const tag = parts.filter((x) => /^s\d+$/.test(x))[0]
-        const want = tag ? parseInt(tag.slice(1), 10) : 1
         const audio = parts.indexOf("dub") !== -1 ? "dub" : "sub"
         const s = await this.api<{ seasons_detail?: Season[] }>(`/series/${encodeURIComponent(parts[0])}`)
-        const season = (s.seasons_detail || []).filter((x) => x.season === want)[0]
-        const eps = ((season && season.episodes) || []).slice().sort((a, b) => a.episode - b.episode)
-        if (eps.length === 0) throw this.fail("episodes", `Haifa CDN: season ${want} of this series isn't in the library yet`)
-        return eps.map((e) => ({ id: `${e.id}$${audio}`, number: e.episode, url: e.stream, title: e.title }))
+        const all = s.seasons_detail || []
+        const tag = parts.filter((x) => /^s\d+$/.test(x))[0]
+        const want = tag ? parseInt(tag.slice(1), 10) : 0
+        const tagged = want ? all.filter((x) => x.season === want) : []
+        if (want >= 2 && tagged.length === 0) throw this.fail("episodes", "Haifa CDN: this match was saved by an older version of the extension - match the series again")
+        const main = tagged.length ? tagged : all.filter((x) => x.season > 0)
+        // ponytail: an entry whose files disagree on their season (seasons > 1) keeps the biggest group's numbers on a clash; the API calls that a data problem
+        const groups = (main.length ? main : all).slice().sort((a, b) => (b.episodes || []).length - (a.episodes || []).length)
+        const taken: { [n: number]: boolean } = {}
+        const eps: Episode[] = []
+        for (const g of groups) {
+            for (const e of g.episodes || []) {
+                if (taken[e.episode]) continue
+                taken[e.episode] = true
+                eps.push(e)
+            }
+        }
+        return eps.sort((a, b) => a.episode - b.episode).map((e) => ({ id: `${e.id}$${audio}`, number: e.episode, url: e.stream }))
     }
 
     private async requestMissing(media: Media): Promise<void> {
@@ -73,13 +69,22 @@ class Provider implements AnimeProvider {
         if (this.pref("requestMissing") === "off" || $store.get(flag)) return
         $store.set(flag, true)
         try {
-            const mine = (await this.api<{ requests?: { anilist_id?: number }[] }>("/requests?limit=100")).requests || []
-            if (mine.some((r) => r.anilist_id === media.id)) return
-            const res = await this.api<{ duplicate?: boolean; request?: { title?: string; already_in_library?: boolean } }>("/request", { anilist_id: media.id, note: "Requested from Seanime" })
+            const auto = this.pref("autoApprove") === "on"
+            const mine = (await this.api<{ requests?: { anilist_id?: number; status?: string }[] }>("/requests?limit=100")).requests || []
+            if (mine.some((r) => r.anilist_id === media.id && !(auto && r.status === "pending"))) return
+            const code = auto ? await this.api<{ code?: string }>("/autogen", {}).then((r) => r.code || "", () => "") : ""
+            const res = await this.api<{
+                duplicate?: boolean
+                request?: { title?: string; already_in_library?: boolean }
+                auto_approve?: { approved?: boolean; episodes_queued?: number; reason?: string | null }
+            }>("/request", { anilist_id: media.id, note: (code ? code + " " : "") + "Requested from Seanime" })
             const r = res.request || {}
+            const aa = res.auto_approve
+            if ((aa && aa.approved) || r.already_in_library) $store.remove("haifacdn:library")
             const name = r.title || media.englishTitle || media.romajiTitle || `AniList ${media.id}`
             if (r.already_in_library) this.notice("search", `Haifa CDN: the library has ${name}, but it could not be matched`, "warn")
-            else this.notice("search", `Haifa CDN: ${name} isn't in the library yet - ${res.duplicate ? "added a vote to its request" : "requested it"}`, "info")
+            else if (aa && aa.approved) this.notice("search", `Haifa CDN: ${name} isn't in the library yet - requested it and it was approved; ${aa.episodes_queued || 0} episodes are downloading`, "info")
+            else this.notice("search", `Haifa CDN: ${name} isn't in the library yet - ${res.duplicate ? "added a vote to its request" : "requested it"}${aa && aa.reason ? ` (held for review: ${aa.reason})` : ""}`, "info")
         } catch (_e) {}
     }
 
@@ -87,14 +92,15 @@ class Provider implements AnimeProvider {
         return [media.englishTitle || "", media.romajiTitle || ""].concat(media.synonyms || []).filter((t) => !!t)
     }
 
-    private seasonOf(media: Media): number {
-        for (const t of this.titles(media)) {
-            const m = t.match(/\bseason\s*(\d+)\b/i) || t.match(/\b(\d+)(?:st|nd|rd|th)\s+season\b/i) || t.match(/\bs(\d+)$/i)
-            if (m) return parseInt(m[1], 10)
-            const r = t.match(/\s(II|III|IV|V|VI)$/)
-            if (r) return ["II", "III", "IV", "V", "VI"].indexOf(r[1]) + 2
-        }
-        return 1
+    private seasonOf(t: string): number {
+        const m = t.match(/\bseason\s*(\d+)\b/i) || t.match(/\b(\d+)(?:st|nd|rd|th)\s+season\b/i) || t.match(/\bs(\d+)$/i)
+        if (m) return parseInt(m[1], 10)
+        const r = t.match(/\s(II|III|IV|V|VI)$/)
+        return r ? ["II", "III", "IV", "V", "VI"].indexOf(r[1]) + 2 : 1
+    }
+
+    private titleKey(t: string): string {
+        return `${this.baseTitle(t)}#${this.seasonOf(t)}`
     }
 
     private baseTitle(t: string): string {
@@ -114,40 +120,16 @@ class Provider implements AnimeProvider {
             throw this.fail("server", "Haifa CDN: this episode has no English audio")
         }
         const tracks = (e.subtitles || []).filter((t) => !!t.url)
-        const eng = (t: Track) => this.english(t.language || "") && !/forced|signs/i.test(t.label || "")
+        const eng = (t: Track) => this.english(t.language || "")
         let pick = tracks.findIndex((t) => !!t.default && eng(t))
         if (pick < 0) pick = tracks.findIndex((t) => !!t.default)
         if (pick < 0) pick = Math.max(0, tracks.findIndex(eng))
-        const variants: { [lang: string]: string[] } = {}
-        for (const t of tracks) {
-            const c = (t.language || "").toLowerCase().split(/[-_]/)
-            if (!c[1]) continue
-            const seen = (variants[c[0]] = variants[c[0]] || [])
-            if (seen.indexOf(c[1]) === -1) seen.push(c[1])
-        }
-        const subs = tracks.map((t, i) => ({ id: String(i), url: t.url as string, language: this.trackName(t, variants), isDefault: i === pick }))
+        const subs = tracks.map((t, i) => ({ id: String(i), url: t.url as string, language: (t.label || "").trim() || t.language || "Unknown", isDefault: i === pick }))
         return {
             server: "Haifa CDN",
             headers: {},
             videoSources: [{ url: e.stream, type: "m3u8", quality: "auto", subtitles: subs.filter((t) => t.isDefault).concat(subs.filter((t) => !t.isDefault)) }],
         }
-    }
-
-    private trackName(t: Track, variants: { [lang: string]: string[] }): string {
-        const label = (t.label || "").trim()
-        const code = (t.language || "").toLowerCase().split(/[-_]/)
-        const lang = this.langs[code[0]] || ""
-        if (!lang) return label || t.language || "Unknown"
-        if (code[1]) {
-            const extra: string[] = []
-            if ((variants[code[0]] || []).length > 1) extra.push(this.regions[code[1]] || code[1].toUpperCase())
-            const q = label.toLowerCase().match(/\b(forced|signs & songs|signs|songs|sdh|cc)\b/)
-            if (q) extra.push(({ forced: "Forced", "signs & songs": "Signs & Songs", signs: "Signs", songs: "Songs", sdh: "SDH", cc: "CC" } as { [k: string]: string })[q[1]])
-            return extra.length ? `${lang} (${extra.join(", ")})` : lang
-        }
-        if (!label || /^subtitles?\s*\d*$/i.test(label) || label.toLowerCase() === lang.toLowerCase()) return lang
-        if (label.toLowerCase().indexOf(lang.toLowerCase()) === 0) return label
-        return `${lang} (${label.replace(/\s*\(([^()]*)\)$/, ", $1")})`
     }
 
     private async library(): Promise<Series[]> {
@@ -157,7 +139,7 @@ class Provider implements AnimeProvider {
         for (let offset = 0; offset < 5000; offset += 100) {
             const page = await this.api<{ total?: number; series?: Series[] }>(`/series?limit=100&offset=${offset}`)
             const rows = page.series || []
-            for (const r of rows) out.push(r)
+            for (const r of rows) out.push({ id: r.id, title: r.title, anilist_id: r.anilist_id, audio: r.audio })
             if (rows.length < 100 || out.length >= (page.total || 0)) break
         }
         $store.set("haifacdn:library", { at: Date.now(), data: out })
@@ -173,7 +155,7 @@ class Provider implements AnimeProvider {
         try {
             res = await fetch(this.base + path, body ? { method: "POST", headers, body: JSON.stringify(body) } : { headers })
         } catch (_e) {
-            throw this.fail("network", "Haifa CDN: the library could not be reached")
+            throw this.fail("network", body ? "Haifa CDN: the request could not be sent" : "Haifa CDN: the library could not be reached")
         }
         if (res.ok) return res.json<T>()
         let code = ""
@@ -181,7 +163,6 @@ class Provider implements AnimeProvider {
             code = res.json<{ error?: string }>().error || ""
         } catch (_e) {}
         if (res.status === 401 || res.status === 403) throw this.fail("auth", `Haifa CDN: the API key was refused (${code || res.status}) - check it in the extension settings`)
-        if (res.status === 429) throw this.fail("api", "Haifa CDN: too many requests - try again in a minute")
         if (res.status === 404) throw this.fail("api", "Haifa CDN: not found in the library")
         throw this.fail("api", `Haifa CDN: the library answered HTTP ${res.status}`)
     }
