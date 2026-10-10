@@ -49,36 +49,46 @@ function load(name, overrides) {
 console.log("haifacdn")
 {
     const lib = [
-        { id: 1, title: "Skeleton Knight in Another World", anilist_id: 132474, seasons: 2, audio: ["Japanese", "English"] },
-        { id: 2, title: "Frieren: Beyond Journey’s End", anilist_id: 154587, seasons: 2, audio: ["Japanese"] },
-        { id: 3, title: "Skeleton Knight OVA", anilist_id: null, seasons: 1, audio: ["Japanese"] },
+        { id: 6, title: "That Time I Got Reincarnated as a Slime", anilist_id: 101280, audio: ["Japanese", "Spanish", "English"], description: "Lonely thirty-seven-year-old...", genres: ["Action"] },
+        { id: 7, title: "That Time I Got Reincarnated as a Slime Season 2", anilist_id: 108511, audio: ["Japanese", "Russian", "English"] },
+        { id: 8, title: "Frieren: Beyond Journey’s End", anilist_id: 154587, audio: ["Japanese"] },
+        { id: 3, title: "Skeleton Knight OVA", anilist_id: null, audio: ["Japanese"] },
+        { id: 9, title: "Skeleton Knight OVA 2nd Season", anilist_id: null, audio: ["Japanese", "English"] },
     ]
-    const ep = (id, n) => ({ id, episode: n, title: "E" + n, stream: `https://cdn.lua.locker/hls/${id}/master.m3u8` })
+    const ep = (id, n, title = "E" + n) => ({ id, episode: n, title, stream: `https://cdn.lua.locker/hls/${id}/master.m3u8` })
     const routes = {
-        "/series/1": { seasons_detail: [{ season: 0, episodes: [ep("sp", 1)] }, { season: 2, episodes: [ep("b1", 1)] }, { season: 1, episodes: [ep("a2", 2), ep("a1", 1)] }] },
-        "/series/3": { seasons_detail: [{ season: 1, episodes: [ep("o3", 3), ep("o2", 2)] }] },
-        "/episodes/ja": { stream: "https://x/ja.m3u8", audio: [{ label: "Japanese", language: "jpn" }], subtitles: [{ label: "Forced", language: "eng", url: "https://x/0.vtt" }, { label: "Latin American (CC)", language: "spa", default: true, url: "https://x/1.vtt" }, { label: "Subtitles 3", language: "eng", default: true, url: "https://x/2.vtt" }, { label: "Arabic (Saudi Arabia)", language: "ara", default: true, url: "https://x/3.vtt" }, { label: "Simplified", language: "chi", url: "https://x/4.vtt" }, { label: "Weird", language: "xyz", url: "https://x/5.vtt" }] },
-        "/episodes/loc": {
-            stream: "https://x/loc.m3u8",
-            audio: [{ label: "Japan", language: "ja-JP", default: true }, { label: "United States", language: "en-US" }, { label: "Latin America", language: "es-419" }, { label: "", language: "es-ES" }],
+        "/series/7": { id: 7, seasons_detail: [{ season: 2, episodes: [ep("b2", 2, "Slime S02E02"), ep("b1", 1, "That Time I Got Reincarnated as a Slime S02E01")] }] },
+        "/series/9": { id: 9, seasons_detail: [{ season: 0, episodes: [ep("sp", 4)] }, { season: 2, episodes: [ep("y1", 1)] }, { season: 1, episodes: [ep("x2", 2), ep("x1", 1), ep("x3", 3)] }] },
+        "/series/6": { id: 6, seasons_detail: [{ season: 1, episodes: [ep("a1", 1)] }] },
+        "/series/3": { id: 3, seasons_detail: [{ season: 0, episodes: [ep("o2", 2), ep("o1", 1)] }] },
+        "/series/2": { id: 2, seasons_detail: [] },
+        "/episodes/ja": {
+            stream: "https://x/ja.m3u8",
+            audio: [{ label: "Japanese", language: "jpn", default: true }],
             subtitles: [
-                { label: "Saudi Arabia", language: "ar-SA", default: true, url: "https://x/ar.ass" },
-                { label: "", language: "en-US", default: true, url: "https://x/en.ass" },
-                { label: "Forced", language: "en-US", url: "https://x/enf.ass" },
-                { label: "Latin America", language: "es-419", url: "https://x/es419.ass" },
-                { label: "Signs & Songs", language: "es-ES", url: "https://x/eses.ass" },
-                { label: "Brazil", language: "pt-BR", url: "https://x/ptbr.ass" },
-                { label: "", language: "de-DE", url: "https://x/de.ass" },
-                { label: "Klingon", language: "tlh-QO", url: "https://x/tlh.ass" },
+                { label: "Spanish (Latin America)", language: "spa", default: false, url: "https://x/3_spa.vtt" },
+                { label: "Spanish", language: "spa", default: false, url: "https://x/4_spa.vtt" },
+                { label: "English", language: "eng", default: false, url: "https://x/2_eng.vtt" },
+                { label: "", language: "fin", default: false, url: "https://x/5_fin.vtt" },
             ],
         },
-        "/episodes/en": { stream: "https://x/en.m3u8", audio: [{ label: "Japanese", language: "jpn" }, { label: "English 2.0", language: "eng" }], subtitles: [] },
+        "/episodes/es": { stream: "https://x/es.m3u8", audio: [{ label: "Japanese", language: "jpn" }], subtitles: [{ label: "English", language: "eng", url: "https://x/e.vtt" }, { label: "Spanish", language: "spa", default: true, url: "https://x/s.vtt" }] },
+        "/episodes/en": { stream: "https://x/en.m3u8", audio: [{ label: "Japanese", language: "jpn" }, { label: "English", language: "eng" }], subtitles: [] },
+    }
+    const answers = {
+        777777: { ok: true, duplicate: false, request: { title: "That Time I Got Reincarnated as a Slime Season 3", already_in_library: false } },
+        666661: { ok: true, duplicate: false, request: { title: "Held One" }, auto_approve: { approved: false, episodes_queued: 0, reason: "52 episodes is over the 30-episode auto-approve limit" } },
+        666662: { ok: true, duplicate: true, request: { title: "Approved One" }, auto_approve: { approved: true, episodes_queued: 12, reason: null } },
+        666663: { ok: true, duplicate: false, request: { title: "Next One" } },
+        666664: { ok: true, duplicate: true, request: { title: "Pending One" }, auto_approve: { approved: true, episodes_queued: 3, reason: null } },
     }
     const seen = []
-    const posts = []
     const mk = (key, prefs = {}, mine = []) => {
         const store = new Map()
         const notes = []
+        const posts = []
+        let codes = 0
+        let listings = 0
         const prov = load("haifacdn", {
             $getUserPreference: (k) => (k === "apiKey" ? key : prefs[k]),
             $store: { get: (k) => store.get(k), set: (k, v) => store.set(k, v), remove: (k) => store.delete(k), has: (k) => store.has(k) },
@@ -86,55 +96,104 @@ console.log("haifacdn")
             fetch: (url, opts) => {
                 seen.push(opts.headers.Authorization)
                 const path = url.replace("https://cdn.lua.locker/v1", "")
+                const ok = (body, status = 200) => Promise.resolve({ ok: true, status, headers: {}, json: () => body })
                 if (opts.method === "POST") {
-                    posts.push([path, JSON.parse(opts.body), opts.headers["Content-Type"]])
-                    return Promise.resolve({ ok: true, status: 201, json: () => ({ ok: true, duplicate: false, request: { title: "Skeleton Knight in Another World Season 3", already_in_library: false } }) })
+                    const body = JSON.parse(opts.body)
+                    posts.push([path, body, opts.headers["Content-Type"]])
+                    if (path === "/autogen") return ok({ ok: true, code: "aa_" + ++codes, max_episodes: 30, single_use: true }, 200)
+                    return ok(answers[body.anilist_id] || { ok: true, request: {} }, 201)
                 }
-                if (path.startsWith("/requests?")) return Promise.resolve({ ok: true, status: 200, json: () => ({ requests: mine }) })
-                if (path.startsWith("/series?") && path.includes("&offset=")) return Promise.resolve({ ok: true, status: 200, json: () => ({ total: 3, series: lib }) })
-                if (path.startsWith("/series?")) return Promise.resolve({ ok: true, status: 200, json: () => ({ series: lib }) })
+                if (path.startsWith("/requests?")) return ok({ requests: mine })
+                if (path.startsWith("/series?") && path.includes("&offset=")) {
+                    listings++
+                    return ok({ total: lib.length, limit: 100, offset: 0, series: lib })
+                }
+                if (path.startsWith("/series?")) {
+                    const q = decodeURIComponent((path.match(/[?&]q=([^&]*)/) || [])[1] || "").toLowerCase()
+                    return ok({ series: lib.filter((s) => s.title.toLowerCase().indexOf(q) !== -1) })
+                }
                 const body = routes[path.split("?")[0]]
-                return Promise.resolve(body ? { ok: true, status: 200, json: () => body } : { ok: false, status: 404, json: () => ({ error: "not_found" }) })
+                return body ? ok(body) : Promise.resolve({ ok: false, status: 404, headers: {}, json: () => ({ error: "not_found" }) })
             },
         })
         prov.notes = notes
+        prov.posts = posts
+        prov.store = store
+        prov.listings = () => listings
         return prov
     }
     const p = mk(" ak_test ")
     const media = (id, english = "", romaji = "", synonyms = []) => ({ id, englishTitle: english, romajiTitle: romaji, synonyms, isAdult: false })
-    const ids = async (m, dub, query = "skeleton") => (await p.search({ media: m, query, dub })).map((r) => r.id + ":" + r.subOrDub)
+    const ids = async (prov, m, dub, query = "") => (await prov.search({ media: m, query, dub })).map((r) => r.id + ":" + r.subOrDub)
     eq([
-        await ids(media(132474, "Skeleton Knight in Another World"), false),
-        await ids(media(185542, "Skeleton Knight in Another World Season 2", "Gaikotsu Kishi-sama, Tadaima Isekai e Odekakechuu II"), true),
-        await ids(media(182255, "Frieren: Beyond Journey's End Season 2", "Sousou no Frieren 2nd Season"), false),
-        await ids(media(182255, "Frieren: Beyond Journey's End Season 2", "Sousou no Frieren 2nd Season"), true),
-        await ids(media(777777, "Skeleton Knight in Another World Season 3"), false),
-        await ids(media(0), false),
-        await ids(media(5555, "Something Else"), false),
-    ], [["1$s1$sub:both"], ["1$s2$dub:both"], ["2$s2$sub:sub"], [], [], ["1$s1$sub:both", "1$s2$sub:both", "2$s1$sub:sub", "2$s2$sub:sub", "3$s1$sub:sub"], ["3$s1$sub:sub"]],
-        "search: the AniList id picks season 1, a sequel picks its season by title, dub needs English audio, a season the library lacks gives nothing, a manual query lists every season, and an unmapped query skips series mapped to other shows")
-    eq([(await p.findEpisodes("1$s1$dub")).map((e) => [e.number, e.id]), (await p.findEpisodes("1$s2$sub")).map((e) => [e.number, e.id]), (await p.findEpisodes("1$sub")).map((e) => e.id), (await p.findEpisodes("3$s1$sub")).map((e) => e.number)],
-        [[[1, "a1$dub"], [2, "a2$dub"]], [[1, "b1$sub"]], ["a1$sub", "a2$sub"], [2, 3]],
-        "episodes: only the picked season is listed with its own numbers, specials stay out, and an id without a season means season 1")
+        await ids(p, media(108511, "That Time I Got Reincarnated as a Slime Season 2", "Tensei shitara Slime Datta Ken 2nd Season"), false, "slime"),
+        await ids(p, media(101280, "That Time I Got Reincarnated as a Slime"), true, "slime"),
+        await ids(p, media(154587, "Frieren: Beyond Journey's End"), true, "frieren"),
+        await ids(p, media(200002, "Skeleton Knight OVA Season 2", "Gaikotsu Kishi OVA II"), true, "skeleton"),
+        await ids(p, media(200001, "Skeleton Knight OVA"), false, "skeleton"),
+        await ids(p, media(5555, "Something Else"), false, "skeleton"),
+        await ids(p, media(0), false, "skeleton"),
+    ], [["7$sub:both"], ["6$dub:both"], [], ["9$dub:both"], ["3$sub:sub"], ["3$sub:sub"], ["3$sub:sub", "9$sub:both"]],
+        "search: each season is its own entry picked by its AniList id, dub needs English audio, unmapped entries match on title and season, an unrelated query only offers unmapped entries of the same season, and a manual query lists every hit")
+    const quiet = mk("ak_test", { requestMissing: "off" })
+    const stale = mk("ak_test", { requestMissing: "off" })
+    stale.store.set("haifacdn:library", { at: Date.now(), data: [] })
+    eq([
+        await ids(quiet, media(5555, "Something Else"), false, "slime"),
+        await ids(quiet, media(0), false, "slime"),
+        await ids(quiet, media(300001, "Frieren: Beyond Journey's End"), false, ""),
+        await ids(stale, media(108511, "That Time I Got Reincarnated as a Slime Season 2"), false, "slime"),
+    ], [[], ["6$sub:both", "7$sub:both"], [], ["7$sub:both"]],
+        "search: entries mapped to another AniList id never match by query or title, a manual query keeps them, and a live query still finds this media's own id when the cached library predates it")
+    eq(Object.keys(p.store.get("haifacdn:library").data[0]), ["id", "title", "anilist_id", "audio"], "library: the cached listing keeps only the fields search reads")
+    eq([
+        (await p.findEpisodes("7$dub")).map((e) => [e.number, e.id, e.title || null]),
+        (await p.findEpisodes("9$sub")).map((e) => e.id),
+        (await p.findEpisodes("3$sub")).map((e) => e.number),
+        (await p.findEpisodes("7$s2$sub")).map((e) => e.id),
+        (await p.findEpisodes("7$s1$sub")).map((e) => e.id),
+        (await p.findEpisodes("9$s2$sub")).map((e) => e.id),
+        await p.findEpisodes("6$s2$sub").then(() => "loaded", (e) => String(e)),
+        await p.findEpisodes("2$sub"),
+    ], [[[1, "b1$dub", null], [2, "b2$dub", null]], ["x1$sub", "x2$sub", "x3$sub"], [1, 2], ["b1$sub", "b2$sub"], ["b1$sub", "b2$sub"], ["y1$sub"],
+        "Haifa CDN: this match was saved by an older version of the extension - match the series again", []],
+        "episodes: a sequel lists its episodes whatever season number its files carry, file-name titles are dropped, specials stay out unless they are all there is, a clashing season keeps the bigger group, an old season tag picks its group, an old tag the entry can't serve asks for a new match, and an entry with no files yet lists nothing")
     const srv = await p.findEpisodeServer({ id: "ja$sub", number: 1, url: "" }, "Haifa CDN")
-    eq([srv.videoSources[0].url, srv.videoSources[0].type, srv.videoSources[0].subtitles.map((s) => s.language + (s.isDefault ? "*" : "")), Object.keys(srv.headers).length], ["https://x/ja.m3u8", "m3u8", ["English*", "English (Forced)", "Spanish (Latin American, CC)", "Arabic (Saudi Arabia)", "Chinese (Simplified)", "Weird"], 0], "server: the master playlist plays as is with no headers; subtitles are named from their language code, and exactly one default is kept, preferring English dialogue")
+    eq([srv.videoSources[0].url, srv.videoSources[0].type, srv.videoSources[0].subtitles.map((s) => s.language + (s.isDefault ? "*" : "")), Object.keys(srv.headers).length],
+        ["https://x/ja.m3u8", "m3u8", ["English*", "Spanish (Latin America)", "Spanish", "fin"], 0],
+        "server: the master playlist plays as is with no headers; tracks are named by their label, a missing label falls back to the code, and English leads as the default when none is marked")
+    eq((await p.findEpisodeServer({ id: "es$sub", number: 1, url: "" }, "Haifa CDN")).videoSources[0].subtitles.map((s) => s.language + (s.isDefault ? "*" : "")), ["Spanish*", "English"], "server: a track the API marks default stays the default")
     let noDub = ""
     try { await p.findEpisodeServer({ id: "ja$dub", number: 1, url: "" }, "Haifa CDN") } catch (e) { noDub = String(e) }
     eq([noDub, (await p.findEpisodeServer({ id: "en$dub", number: 1, url: "" }, "Haifa CDN")).videoSources[0].url], ["Haifa CDN: this episode has no English audio", "https://x/en.m3u8"], "server: dub needs an English audio track")
-    await ids(media(777777, "Skeleton Knight in Another World Season 3"), true)
+
+    await ids(p, media(777777, "That Time I Got Reincarnated as a Slime Season 3"), false, "slime")
+    await ids(p, media(777777, "That Time I Got Reincarnated as a Slime Season 3"), true, "slime")
     const off = mk("ak_test", { requestMissing: "off" })
     await off.search({ media: media(888888, "Nothing Here"), query: "", dub: false })
     const asked = mk("ak_test", {}, [{ anilist_id: 999999 }])
     await asked.search({ media: media(999999, "Already Asked"), query: "", dub: false })
-    eq([posts, p.notes.map((n) => n.lvl + " " + n.msg)],
-        [[["/request", { anilist_id: 777777, note: "Requested from Seanime" }, "application/json"]], ["info Haifa CDN: Skeleton Knight in Another World Season 3 isn't in the library yet - requested it"]],
-        "request: a show or season the library lacks is requested once per session as JSON with an info notice; dub-only and manual misses, a switched-off setting and a show this key already asked for send nothing")
-    const loc = await p.findEpisodeServer({ id: "loc$dub", number: 1, url: "" }, "Haifa CDN")
-    eq(loc.videoSources[0].subtitles.map((t) => t.language + (t.isDefault ? "*" : "")),
-        ["English*", "Arabic", "English (Forced)", "Spanish (Latin America)", "Spanish (Spain, Signs & Songs)", "Portuguese", "German", "Klingon"],
-        "server: locale-coded tracks (en-US, es-419) are named by language, add the region only when one language comes in several regions, keep Forced/Signs from the label, take English dialogue as the default, and pass dub on an en-US audio track")
+    eq([p.posts, p.notes.map((n) => n.lvl + " " + n.msg), off.posts.length + asked.posts.length],
+        [[["/request", { anilist_id: 777777, note: "Requested from Seanime" }, "application/json"]], ["info Haifa CDN: That Time I Got Reincarnated as a Slime Season 3 isn't in the library yet - requested it"], 0],
+        "request: a season the library lacks is requested once per stored flag as JSON with an info notice; a switched-off setting and a show this key already asked for send nothing")
+
+    const auto = mk("ak_test", { autoApprove: "on" })
+    for (const id of [666661, 666662, 666663]) await auto.search({ media: media(id, "X" + id), query: "", dub: false })
+    eq([auto.posts.map((x) => x[0] + " " + (x[1].note || "")), auto.notes.map((n) => n.msg)], [
+        ["/autogen ", "/request aa_1 Requested from Seanime", "/autogen ", "/request aa_2 Requested from Seanime", "/autogen ", "/request aa_3 Requested from Seanime"],
+        [
+            "Haifa CDN: Held One isn't in the library yet - requested it (held for review: 52 episodes is over the 30-episode auto-approve limit)",
+            "Haifa CDN: Approved One isn't in the library yet - requested it and it was approved; 12 episodes are downloading",
+            "Haifa CDN: Next One isn't in the library yet - requested it",
+        ],
+    ], "request: auto-approve mints a fresh code for each request and puts it in the note")
+    eq(auto.listings(), 2, "request: an approval drops the cached library so the next search sees the new entry")
+    const pending = mk("ak_test", { autoApprove: "on" }, [{ anilist_id: 666664, status: "pending" }, { anilist_id: 666665, status: "approved" }])
+    for (const id of [666664, 666665]) await pending.search({ media: media(id, "X" + id), query: "", dub: false })
+    eq(pending.posts.map((x) => x[0] + " " + (x[1].anilist_id || "")), ["/autogen ", "/request 666664"], "request: with auto-approve on, this key's own pending request is sent again with a code; one already past review is left alone")
+
     let noKey = ""
-    try { await mk("").findEpisodes("1$s1$sub") } catch (e) { noKey = String(e) }
+    try { await mk("").findEpisodes("7$sub") } catch (e) { noKey = String(e) }
     eq([noKey, seen.every((h) => h === "Bearer ak_test")], ["Haifa CDN: add your API key in the extension settings", true], "auth: the key is sent trimmed as a bearer token, and a missing key says where to set it")
 }
 
