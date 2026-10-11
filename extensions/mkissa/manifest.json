@@ -1,0 +1,26 @@
+{
+  "id": "aq-mkissa",
+  "name": "MKissa",
+  "version": "0.1.0",
+  "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/mkissa/manifest.json",
+  "language": "typescript",
+  "type": "onlinestream-provider",
+  "description": "Only mkissa compatibility layer you'll ever need",
+  "author": "aquaryuo",
+  "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/mkissa/icon.png",
+  "website": "https://mkissa.to",
+  "lang": "en",
+  "payloadURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/mkissa/provider.ts",
+  "userConfig": {
+    "version": 1,
+    "requiresConfig": false,
+    "fields": [
+      {
+        "type": "text",
+        "name": "baseUrl",
+        "label": "Site domain",
+        "default": "https://mkissa.to"
+      }
+    ]
+  }
+}

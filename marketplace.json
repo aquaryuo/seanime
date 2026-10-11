@@ -52,6 +52,32 @@
     "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/anizone/manifest.json"
   },
   {
+    "id": "aq-kickassanime",
+    "name": "KickAssAnime",
+    "version": "0.1.0",
+    "description": "Only kickassanime compatibility layer you'll ever need. Dub streams carry both audio tracks — pick English in the player's audio menu once and Seanime remembers it for that series.",
+    "author": "aquaryuo",
+    "type": "onlinestream-provider",
+    "language": "typescript",
+    "lang": "en",
+    "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/kickassanime/icon.png",
+    "website": "https://kaa.lt",
+    "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/kickassanime/manifest.json"
+  },
+  {
+    "id": "aq-mkissa",
+    "name": "MKissa",
+    "version": "0.1.0",
+    "description": "Only mkissa compatibility layer you'll ever need",
+    "author": "aquaryuo",
+    "type": "onlinestream-provider",
+    "language": "typescript",
+    "lang": "en",
+    "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/mkissa/icon.png",
+    "website": "https://mkissa.to",
+    "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/mkissa/manifest.json"
+  },
+  {
     "id": "aq-aquatils",
     "name": "Aqua's Utils",
     "version": "1.0.31",

@@ -13,6 +13,8 @@ Since you're here anyway: these are [Seanime](https://seanime.rahim.app) extensi
 | `anikoto` | onlinestream provider | anikototv.to |
 | `anizone` | onlinestream provider | anizone.to |
 | `animelok` | onlinestream provider | animelok.live |
+| `kickassanime` | onlinestream provider | kaa.lt |
+| `mkissa` | onlinestream provider | mkissa.to; episode links stop behind a captcha after a few lookups from one IP |
 | `animepahe` | onlinestream provider | animepahe; cannot load anything without the solver below |
 | `aquatils` | plugin | downloads and supervises a Cloudflare solver, and surfaces errors other extensions report |
 | `seatags` | plugin | tags marketplace cards and adds filters |
