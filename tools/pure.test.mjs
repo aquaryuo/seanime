@@ -499,28 +499,27 @@ console.log("anizone")
     eq(p.decodeEntities("&#x41;&amp;&#66;"), "A&B", "entities: hex and decimal both decode")
     eq(p.decodeEntities("&#1114112;"), "&#1114112;", "entities: an out-of-range codepoint is left alone")
 
-    const seenMethods = []
-    const probe = load("anizone", {
-        fetch: (url, opts) => {
-            seenMethods.push((opts && opts.method) || "GET")
-            return Promise.resolve({ ok: false, status: 404, text: () => "" })
-        },
-    })
-    const trimmed = await probe.trimToExisting("abc123", 5, 2)
-    eq(seenMethods.length > 0, true, "probe: the tail probe actually ran")
-    eq(seenMethods.filter((m) => m !== "GET"), [], "probe: existence is checked with GET - HEAD never completes on this site")
-    eq(trimmed, { last: 2, sure: true }, "probe: an all-404 tail trims to the highest listed episode")
-
-    let probes = 0
-    const upTo = (last, other) => load("anizone", {
-        fetch: (url) => {
-            probes++
-            const status = other || (parseInt(url.split("/").pop(), 10) <= last ? 200 : 404)
-            return Promise.resolve({ ok: status === 200, status, text: () => "" })
-        },
-    })
-    eq([(await upTo(30).trimToExisting("abc123", 48, 24)).last, probes], [30, 12], "probe: a gap wider than the linear probes is bisected to the last real episode")
-    eq(await upTo(30, 429).trimToExisting("abc123", 24, 23), { last: 24, sure: false }, "probe: a rate-limited probe keeps the stated count and reports it as undecided")
+    const tail = (status, newest) => {
+        const hits = []
+        const t = load("anizone", {
+            fetch: (url, opts) => {
+                hits.push((opts && opts.method) || "GET")
+                if (opts && opts.method === "POST") {
+                    const html = `items: JSON.parse('${JSON.stringify((newest || []).map((n) => ({ slug: String(n) })))}')`
+                    return Promise.resolve(newest ? { ok: true, status: 200, json: () => ({ components: [{ effects: { html } }] }) } : { ok: false, status: 429 })
+                }
+                if (!status) return Promise.reject(new Error("timeout"))
+                return Promise.resolve({ ok: status === 200, status, text: () => "" })
+            },
+        })
+        const html = `<div wire:snapshot="{&quot;data&quot;:{&quot;slug&quot;:&quot;abc123&quot;}}" data-csrf="t"></div><span>1184 Episodes</span>`
+        return t.trimToExisting({ cookies: {} }, html, "abc123", 24).then((r) => [r, hits])
+    }
+    eq(await tail(200), [{ last: 1184, sure: true }, ["GET"]], "probe: a stated count that exists is trusted after one GET - HEAD never completes on this site")
+    eq(await tail(404, [1180, 1179, "s2"]), [{ last: 1180, sure: true }, ["GET", "POST"]], "probe: announced episodes that 404 are trimmed to the newest the site lists newest-first")
+    eq((await tail(0, [1180]))[0], { last: 1180, sure: true }, "probe: a probe that times out still asks for the newest episode")
+    eq((await tail(404))[0], { last: 1183, sure: false }, "probe: with no newest-first listing the 404 is dropped and the result is undecided")
+    eq((await tail(429))[0], { last: 1184, sure: false }, "probe: a rate-limited probe keeps the stated count and reports it as undecided")
 
     const store = (mem) => ({ get: (k) => mem[k], set: (k, v) => { mem[k] = v }, remove: (k) => { delete mem[k] }, has: (k) => k in mem })
     const site = (more, cursor, walk, o = {}) => {
@@ -546,12 +545,18 @@ console.log("anizone")
     eq((await site(true, "c1", { items: [{ slug: "11" }, { slug: "s6" }], nextCursor: null, hasMore: false }))[0], [1, 2, 10, 11], "episodes: the cursor walk finishes the listing, so the stated count is not used")
     eq((await site(true, "c1", null, { items: [1, 2, 3] })).slice(0, 2), [all, 2], "episodes: a gapless first page skips the cursor walk and only probes the tail")
     eq((await site(true, "c1", null, { items: [1, 10, 9, 8], sort: "release-desc", status: 429 }))[0], all, "episodes: a newest-first listing cut short is filled from episode 1")
-    eq(await site(true, "c1", null, { status: 429 }), [[1, 2, 10, 11, 12], 3, []], "episodes: a rate-limited listing keeps the stated count and is not cached")
+    eq(await site(true, "c1", null, { status: 429 }), [[1, 2, 10, 11, 12], 4, []], "episodes: a rate-limited listing keeps the stated count and is not cached")
 
     const listed = { "anizone:eps:abc123$al5$sub": { at: Date.now(), data: [{ number: 7 }] } }
     const gone = load("anizone", { $store: store(listed), fetch: () => Promise.resolve({ ok: false, status: 404, text: () => "" }) })
     const err = await gone.findEpisodeServer({ id: "abc123$7$al5$sub", number: 7, url: "" }, "Auto").catch((e) => e)
     eq([err, Object.keys(listed)], ["anizone: episode 7 is not on anizone yet - refresh the episode list", []], "server: a missing episode drops the cached list so a refresh refetches it")
+
+    const timeouts = []
+    const slow = load("anizone", { fetch: (url, opts) => { timeouts.push(opts.timeout); return Promise.reject(new Error("anizone.to did not answer in time")) } })
+    const slowErr = await slow.findEpisodes("abc123$sub").catch((e) => e)
+    await slow.trimToExisting({ cookies: {} }, "<span>9 Episodes</span>", "abc123", 1)
+    eq([timeouts, slowErr], [[60, 5], "anizone did not respond — the site is slow or down right now, retry in a moment"], "timeout: page loads outwait the host default and a caller's own timeout wins")
 
     const dub = await load("anizone", { fetch: () => Promise.resolve({ ok: false, status: 503, text: () => "" }) }).hasEnglishAudio("https://cdn.test/a/master.m3u8", "abc123", "1")
     eq(dub === undefined, true, "dub: a failed audio check is undecided, not a missing dub")
@@ -576,6 +581,16 @@ console.log("anizone")
     const find = (title) => cached.search({ media: { id: 0, romajiTitle: title }, query: title, dub: false }).then((r) => r.map((x) => x.id), () => "err")
     eq([await find("Foo"), await find("Foo"), gets], [["abc123$sub"], ["abc123$sub"], 1], "search: a repeated query is answered from the store, not refetched")
     eq([await find("Bar"), await find("Bar"), gets], ["err", "err", 3], "search: a page with no result markup is never cached")
+
+    const paced = async (status) => {
+        let n = 0
+        const s = load("anizone", { fetch: () => { n++; return Promise.resolve({ ok: status === 200, status, text: () => `items: JSON.parse('[{"slug":"abc123","main_title":"Foo"}]')` }) } })
+        const found = await s.search({ media: { id: 0, romajiTitle: "Foo", englishTitle: "Foo English" }, query: "Foo", dub: false }).then((r) => r.map((x) => x.id), (e) => e)
+        return [found, n, status === 429 ? await s.findEpisodes("abc123$sub").catch((e) => e) : ""]
+    }
+    const busy = "anizone: too many requests right now - wait a minute and retry"
+    eq(await paced(200), [["abc123$sub"], 1, ""], "search: a query that settles the pick stops the rest - anizone allows 60 requests a minute per IP")
+    eq(await paced(429), [busy, 1, busy], "rate limit: a 429 stops the search and the episode list with its own message")
 }
 
 console.log("animelok")

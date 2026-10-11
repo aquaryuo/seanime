@@ -10,7 +10,8 @@ class Provider implements AnimeProvider {
     private cacheTtl = 900000
     private srcCacheTtl = 300000
     private pageBudget = 10000
-    private probeBudget = 20000
+    private pageTimeout = 60
+    private busy = "anizone: too many requests right now - wait a minute and retry"
 
     getSettings(): Settings {
         return { episodeServers: ["Auto"], supportsDub: true }
@@ -22,9 +23,10 @@ class Provider implements AnimeProvider {
         const seen: { [key: string]: boolean } = {}
         let anyOk = false
         let anyShape = false
+        let limited = false
         const run = async (queries: string[]): Promise<void> => {
             for (const q of queries) {
-                if (cands.length >= 12) break
+                if (cands.length >= 12 || limited) break
                 if (!q) continue
                 const ck = `anizone:q:${q.toLowerCase()}`
                 let cards = this.readCache<Card[]>(ck, this.srcCacheTtl)
@@ -36,11 +38,13 @@ class Provider implements AnimeProvider {
                     try {
                         const res = await fetch(`${this.baseUrl}/anime?search=${encodeURIComponent(q)}`, {
                             headers: this.pageHeaders(),
+                            timeout: this.pageTimeout,
                         })
                         if (res.ok) {
                             anyOk = true
                             html = res.text()
                         }
+                        limited = res.status === 429
                     } catch (_e) {
                         html = ""
                     }
@@ -51,10 +55,12 @@ class Provider implements AnimeProvider {
                     }
                 }
                 this.addCards(cards, opts, seen, cands)
+                if (this.pickBest(cands, opts.media, sq.season, sq.part).length === 1) return
             }
         }
         await run(sq.primary)
         if (cands.length === 0) await run(sq.fallback)
+        if (limited) throw this.fail("search", this.busy)
         if (!anyOk) throw this.fail("search", "anizone: search failed (site unreachable)")
         if (!anyShape) throw this.fail("search", "anizone: search page layout not recognized")
         return this.pickBest(cands, opts.media, sq.season, sq.part)
@@ -262,7 +268,7 @@ class Provider implements AnimeProvider {
         let sure = true
         if (await this.walkPages(res, html, shortid, nums)) {
             const top = this.topOf(nums)
-            const trim = await this.trimToExisting(shortid, this.statedEpisodeCount(html), top)
+            const trim = await this.trimToExisting(res, html, shortid, top)
             sure = trim.sure
             for (let n = /sort&quot;:&quot;[a-z]+-desc/.test(html) ? 1 : top + 1; n <= trim.last; n++) nums[n] = true
         }
@@ -429,8 +435,27 @@ class Provider implements AnimeProvider {
         if (Object.keys(nums).length === this.topOf(nums)) return more
         const cm = /nextCursor:\s*'([^']+)'/.exec(html)
         let cursor = cm ? cm[1] : ""
+        const lw = this.lwSession(page, html, shortid)
+        const deadline = Date.now() + this.pageBudget
+        while (more && cursor && lw.csrf && lw.snapshot && Date.now() < deadline) {
+            let comp: any = null
+            try {
+                comp = await this.lwUpdate(lw, shortid, {}, [{ path: "", method: "loadPage", params: [cursor] }])
+            } catch (_e) {
+                break
+            }
+            const loaded = ((comp && comp.effects && comp.effects.dispatches) || []).filter((d: any) => d && d.name === "items-loaded")[0]
+            if (!loaded || !loaded.params || typeof comp.snapshot !== "string") break
+            lw.snapshot = comp.snapshot
+            this.addItemEps(loaded.params.items, nums)
+            cursor = loaded.params.nextCursor || ""
+            more = loaded.params.hasMore !== false
+        }
+        return more
+    }
+
+    private lwSession(page: FetchResponse, html: string, shortid: string): { csrf: string; snapshot: string; cookie: string } {
         const tm = /data-csrf="([^"]+)"/.exec(html)
-        const csrf = tm ? tm[1] : ""
         let snapshot = ""
         const re = /wire:snapshot="([^"]*)"/g
         let m: RegExpExecArray | null
@@ -439,51 +464,38 @@ class Provider implements AnimeProvider {
             if (s.indexOf(`"slug":"${shortid}"`) !== -1) snapshot = s
         }
         const jar = page.cookies || {}
-        const cookie = Object.keys(jar).map((k) => `${k}=${jar[k]}`).join("; ")
-        const deadline = Date.now() + this.pageBudget
-        while (more && cursor && csrf && snapshot && Date.now() < deadline) {
-            let comp: any = null
-            try {
-                const res = await fetch(`${this.baseUrl}/livewire/update`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json", "X-Livewire": "", Cookie: cookie, Referer: `${this.baseUrl}/anime/${shortid}`, Origin: this.baseUrl },
-                    body: JSON.stringify({ _token: csrf, components: [{ snapshot, updates: {}, calls: [{ path: "", method: "loadPage", params: [cursor] }] }] }),
-                })
-                if (!res.ok) break
-                comp = res.json().components[0]
-            } catch (_e) {
-                break
-            }
-            const loaded = ((comp && comp.effects && comp.effects.dispatches) || []).filter((d: any) => d && d.name === "items-loaded")[0]
-            if (!loaded || !loaded.params || typeof comp.snapshot !== "string") break
-            snapshot = comp.snapshot
-            this.addItemEps(loaded.params.items, nums)
-            cursor = loaded.params.nextCursor || ""
-            more = loaded.params.hasMore !== false
-        }
-        return more
+        return { csrf: tm ? tm[1] : "", snapshot, cookie: Object.keys(jar).map((k) => `${k}=${jar[k]}`).join("; ") }
     }
 
-    private async trimToExisting(shortid: string, stated: number, known: number): Promise<{ last: number; sure: boolean }> {
+    private async lwUpdate(lw: { csrf: string; snapshot: string; cookie: string }, shortid: string, updates: any, calls: any[], timeout?: number): Promise<any> {
+        const res = await fetch(`${this.baseUrl}/livewire/update`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-Livewire": "", Cookie: lw.cookie, Referer: `${this.baseUrl}/anime/${shortid}`, Origin: this.baseUrl },
+            body: JSON.stringify({ _token: lw.csrf, components: [{ snapshot: lw.snapshot, updates, calls }] }),
+            timeout,
+        })
+        return res.ok ? res.json().components[0] : null
+    }
+
+    private async trimToExisting(page: FetchResponse, html: string, shortid: string, known: number): Promise<{ last: number; sure: boolean }> {
+        const stated = this.statedEpisodeCount(html)
         if (stated <= known) return { last: known, sure: true }
-        const deadline = Date.now() + this.probeBudget
-        let lo = known
-        let hi = stated + 1
-        for (let i = 0; hi - lo > 1; i++) {
-            if (Date.now() > deadline) break
-            const n = i < 8 ? hi - 1 : Math.floor((lo + hi) / 2)
-            let status = 0
+        let status = 0
+        try {
+            status = (await fetch(`${this.baseUrl}/anime/${shortid}/${stated}`, { headers: this.pageHeaders(), timeout: 5 })).status
+        } catch (_e) {}
+        if (status === 200) return { last: stated, sure: true }
+        const lw = this.lwSession(page, html, shortid)
+        const nums: { [key: number]: boolean } = {}
+        if (lw.csrf && lw.snapshot) {
             try {
-                status = (await fetch(`${this.baseUrl}/anime/${shortid}/${n}`, { headers: this.pageHeaders() })).status
-            } catch (_e) {
-                break
-            }
-            if (status === 200 && i < 8) return { last: n, sure: true }
-            if (status === 200) lo = n
-            else if (status === 404) hi = n
-            else break
+                const comp = await this.lwUpdate(lw, shortid, { sort: "default-desc" }, [], this.pageTimeout)
+                this.addItemEps(this.itemsJson((comp && comp.effects && comp.effects.html) || ""), nums)
+            } catch (_e) {}
         }
-        return { last: hi - 1, sure: hi - lo <= 1 }
+        const newest = this.topOf(nums)
+        if (newest >= known) return { last: newest, sure: true }
+        return { last: status === 404 ? stated - 1 : stated, sure: false }
     }
 
     private statedEpisodeCount(html: string): number {
@@ -735,12 +747,15 @@ class Provider implements AnimeProvider {
     }
 
     private async guarded(scope: string, url: string, opts?: FetchOptions): Promise<FetchResponse> {
+        let res: FetchResponse
         try {
-            return await fetch(url, opts)
+            res = await fetch(url, { timeout: this.pageTimeout, ...opts })
         } catch (e) {
             this.reportError(scope, `transport failure: ${e instanceof Error ? e.message : String(e)}`)
-            throw "anizone could not be reached — check your connection or retry in a moment"
+            throw "anizone did not respond — the site is slow or down right now, retry in a moment"
         }
+        if (res.status === 429) throw this.fail(scope, this.busy)
+        return res
     }
 
     private readCache<T>(key: string, ttl: number): T | undefined {
