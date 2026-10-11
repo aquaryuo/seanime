@@ -618,7 +618,7 @@ console.log("error channel")
         'SEHERRv1 {,"ext":"aq-animelok","scope":"server","msg":"c"}', 'warn SEHERRv1 {,"ext":"aq-animelok","scope":"server","msg":"d","lvl":"info"}',
     ], "lvl: an error goes to console.error with no lvl field; a notice carries its level and goes to console.warn, so hosts that treat console.error as failure don't")
     const sites = (name) => { const src = fs.readFileSync(`${ROOT}/extensions/${name}/provider.ts`, "utf8"); return [(src.match(/, "warn"\)/g) || []).length, (src.match(/, "info"\)/g) || []).length] }
-    eq(["anikoto", "anizone", "animelok", "animepahe"].map(sites), [[3, 1], [0, 1], [0, 1], [0, 0]], "lvl: only the listed recovered and expected reports are relabelled")
+    eq(["anikoto", "anizone", "animelok", "animepahe", "kickassanime", "mkissa"].map(sites), [[3, 1], [0, 1], [0, 1], [0, 0], [0, 3], [0, 1]], "lvl: only the listed recovered and expected reports are relabelled")
 }
 
 console.log("aquatils (source invariants)")
@@ -1596,6 +1596,249 @@ console.log("aquatils (boot)")
     })
 }
 
+console.log("kickassanime")
+{
+    const busy = "kickassanime: too many requests right now - wait a minute and retry"
+    const store = (mem) => ({ get: (k) => mem[k], set: (k, v) => { mem[k] = v }, remove: (k) => { delete mem[k] }, has: (k) => k in mem })
+    const reply = (status, body) => Promise.resolve({ ok: status >= 200 && status < 300, status, text: () => (typeof body === "string" ? body : JSON.stringify(body)), json: () => (typeof body === "string" ? JSON.parse(body) : body) })
+    // A fake kaa.lt: routes are "METHOD path" prefixes, the player host reads as @player, anything unrouted is a 404.
+    const site = (routes, mem = {}) => {
+        const hits = []
+        const p = load("kickassanime", {
+            $store: store(mem),
+            fetch: (url, opts) => {
+                const key = `${(opts && opts.method) || "GET"} ${url.replace("https://kaa.lt", "").replace("https://krussdomi.com", "@player")}`
+                hits.push(opts && opts.body ? `${key} ${opts.body}` : key)
+                for (const k in routes) if (key.startsWith(k)) return reply(routes[k][0], routes[k][1])
+                return reply(404, "")
+            },
+        })
+        return { p, hits, mem }
+    }
+    const props = (manifest, subs) => JSON.stringify({
+        manifest: [0, manifest],
+        subtitles: [1, subs.map(([language, name, src]) => [0, { language: [0, language], name: [0, name], src: [0, src] }])],
+        title: [0, "Say &quot;hi&quot;"],
+    }).replace(/&/g, "&amp;").replace(/"/g, "&quot;")
+    const player = (manifest, subs) => `<astro-island uid="x" component-url="/_astro/VidstackPlayer.js" props="${props(manifest, subs)}" ssr client="only">`
+
+    const p = load("kickassanime")
+    const vid = p.parsePlayer(player("//hls.cdn.test/manifest/a/master.m3u8", [["ara", "Arabic", "https://subs.test/a.vtt"], ["eng", "English", "https:///subs.test/e.srt"], ["eng", "English [Signs & Songs]", "https://subs.test/s.vtt"]]))
+    eq(vid.m3u8, "https://hls.cdn.test/manifest/a/master.m3u8", "player: the props attribute is decoded once, so an escaped quote in a title cannot break it, and a protocol-relative manifest is made absolute")
+    eq(vid.subs.map((s) => [s.lang, s.origin]), [["ar", "https://subs.test/a.vtt"], ["en", "https://subs.test/e.srt"], ["en", "https://subs.test/s.vtt"]], "player: three-letter track codes fold to two letters and a https:/// link is repaired")
+    eq(p.buildSubs(vid.subs).map((s) => [s.language, s.isDefault]), [["English", true], ["Arabic", false], ["English [Signs & Songs]", false]], "subs: full English dialogue is the default ahead of an earlier track and of signs")
+    eq(p.parsePlayer(player("https:////bl.cdn.test/mpd/1/master.mpd", [])).m3u8, "", "player: a DASH manifest is not offered as a stream")
+
+    const card = (slug, title, title_en, type, year, locales) => ({ slug, title, title_en, type, year, locales, episode_count: 0 })
+    const frieren = {
+        maxPage: 1,
+        result: [
+            card("frieren-2d15", "Sousou no Frieren", "Frieren: Beyond Journey's End", "tv", 2023, ["ja-JP", "en-US"]),
+            card("frieren-mini-561b", "Sousou no Frieren: no Mahou", "Frieren Mini Anime", "ona", 2023, []),
+            card("frieren-s2-7dcd", "Sousou no Frieren 2nd Season", "Frieren: Beyond Journey's End Season 2", "tv", 2026, ["ja-JP", "en-US"]),
+        ],
+    }
+    const media = { id: 154587, romajiTitle: "Sousou no Frieren", englishTitle: "Frieren: Beyond Journey's End", synonyms: [], format: "TV", startDate: { year: 2023 } }
+    const s1 = site({ "POST /api/fsearch": [200, frieren] })
+    eq([await s1.p.search({ media, query: "Frieren", dub: false }), s1.hits], [[{ id: "frieren-2d15$ja-JP$sub", title: "Sousou no Frieren", url: "https://kaa.lt/frieren-2d15", subOrDub: "sub" }], ['POST /api/fsearch {"page":1,"query":"Sousou no Frieren"}']], "search: the first query settles the pick and stops the rest; the id carries the site locale and the audio")
+    const s2 = site({ "POST /api/fsearch": [200, frieren] })
+    const sequel = { ...media, id: 182255, romajiTitle: "Sousou no Frieren 2nd Season", englishTitle: "Frieren: Beyond Journey's End Season 2", startDate: { year: 2026 } }
+    eq((await s2.p.search({ media: sequel, query: "x", dub: false })).map((r) => r.id), ["frieren-s2-7dcd$ja-JP$sub"], "match: a sequel season takes its own entry")
+    const bare = site({ "POST /api/fsearch": [200, { result: [card("douluo-91c0", "Douluo Dalu", null, "ona", 2018, [])] }] })
+    eq(await bare.p.search({ media: { id: 1, romajiTitle: "Douluo Dalu", synonyms: [], startDate: { year: 2018 } }, query: "x", dub: false }), [], "search: an entry the site lists with no episodes is no match, not an error")
+    const donghua = site({ "POST /api/fsearch": [200, { result: [card("link-click-0e5d", "Shiguang Dailiren", "Link Click", "ona", 2021, ["zh-CN", "en-US"])] }] })
+    eq((await donghua.p.search({ media: { id: 2, romajiTitle: "Shiguang Dailiren", englishTitle: "Link Click", synonyms: [], startDate: { year: 2021 } }, query: "x", dub: false })).map((r) => r.id), ["link-click-0e5d$zh-CN$sub"], "search: a donghua's original Chinese audio is its sub")
+
+    const eps = (slugs) => ({ current_page: 1, pages: [{ number: 1, from: "01", to: String(slugs.length), eps: slugs.map((_, i) => i + 1) }], result: slugs.map((s, i) => ({ slug: s, episode_number: i + 1, episode_string: String(i + 1) })) })
+    const vidstream = { name: "VidStreaming", src: "https://krussdomi.com/cat-player/player?id=1&source=vidstream&ln=en-US" }
+    const dubSite = (servers) => site({ "POST /api/fsearch": [200, frieren], "GET /api/show/frieren-2d15/episodes?ep=1&lang=en-US": [200, eps(["aa", "bb"])], "GET /api/show/frieren-2d15/episode/ep-1-aa": [200, { servers }] })
+    const dead = dubSite([])
+    eq(await dead.p.search({ media, query: "x", dub: true }).catch((e) => e), "kickassanime: no dub for this title on kickassanime", "dub: a listed dub whose first episode has no stream is reported, not matched - the site lists dead en-US episodes")
+    const dub = dubSite([vidstream])
+    const dubRes = await dub.p.search({ media, query: "x", dub: true })
+    const dubEps = await dub.p.findEpisodes(dubRes[0].id)
+    eq([dubRes.map((r) => [r.id, r.subOrDub]), dubEps.length, dub.hits.length], [[["frieren-2d15$en-US$dub", "dub"]], 2, 3], "dub: a playable dub costs two checks, and the episode list they fetched is reused")
+
+    const limited = site({ "POST /api/fsearch": [429, ""] })
+    eq([await limited.p.search({ media, query: "x", dub: false }).catch((e) => e), limited.hits.length], [busy, 1], "rate limit: a 429 stops the search at once")
+    eq(await site({ "GET /api/show/": [429, ""] }).p.findEpisodes("op-0948$ja-JP$sub").catch((e) => e), busy, "rate limit: a 429 stops the episode list with the same message")
+
+    const many = {
+        current_page: 1,
+        pages: [{ number: 1, from: "01", to: "100", eps: [1, 2, 2.5, 3] }, { number: 2, from: "101", to: "102", eps: [101, 102] }],
+        result: [{ slug: "s1", episode_number: 1, title: "One" }, { slug: "s2", episode_number: 2 }, { slug: "s25", episode_number: 2.5 }, { slug: "s3", episode_number: 3 }],
+    }
+    const op = site({ "GET /api/show/op-0948/episodes?ep=1&lang=ja-JP": [200, many] })
+    const list = await op.p.findEpisodes("op-0948$ja-JP$sub")
+    eq(list.map((e) => [e.number, e.id]), [[1, "op-0948$1$s1$ja-JP$sub"], [2, "op-0948$2$s2$ja-JP$sub"], [3, "op-0948$3$s3$ja-JP$sub"], [101, "op-0948$101$$ja-JP$sub"], [102, "op-0948$102$$ja-JP$sub"]], "episodes: one request lists every page's numbers, x.5 recaps are dropped, and only the first page carries slugs")
+    await op.p.findEpisodes("op-0948$ja-JP$sub")
+    eq([op.hits.length, Object.keys(op.mem)], [1, ["kickassanime:eps:op-0948$ja-JP$sub"]], "episodes: the list is cached per show, locale and audio")
+
+    const html = player("https://hls.cdn.test/manifest/x/master.m3u8", [["eng", "English", "https://subst.test/e.vtt"]])
+    const srv = site({
+        "GET /api/show/op-0948/episodes?ep=101&lang=ja-JP": [200, { current_page: 2, pages: [], result: [{ slug: "z101", episode_number: 101 }] }],
+        "GET /api/show/op-0948/episode/ep-101-z101": [200, { servers: [{ name: "BirdStream", src: "https://krussdomi.com/cat-player/player?id=b&type=dash" }, { name: "CatStream", src: "https://krussdomi.com/cat-player/player?id=c" }] }],
+        "GET @player/cat-player/player?id=c": [200, html],
+    })
+    const ep101 = { id: "op-0948$101$$ja-JP$sub", number: 101, url: "" }
+    const got = await srv.p.findEpisodeServer(ep101, "Auto")
+    eq([got.server, got.headers, got.videoSources[0].url, got.videoSources[0].type, got.videoSources[0].subtitles.length, srv.hits], [
+        "Auto", { Origin: "https://krussdomi.com", Referer: "https://krussdomi.com/" }, "https://hls.cdn.test/manifest/x/master.m3u8", "m3u8", 1,
+        ["GET /api/show/op-0948/episodes?ep=101&lang=ja-JP", "GET /api/show/op-0948/episode/ep-101-z101", "GET @player/cat-player/player?id=c"],
+    ], "server: an episode past the first page resolves its slug, skips the DASH server unfetched, and plays HLS with the player's origin - segments 403 without it")
+    await srv.p.findEpisodeServer(ep101, "Auto")
+    eq(srv.hits.length, 3, "server: the source is cached")
+
+    const stale = site({ "GET /api/show/f/episodes?ep=1&lang=ja-JP": [200, { pages: [], result: [{ slug: "new", episode_number: 1 }] }], "GET /api/show/f/episode/ep-1-new": [200, { servers: [] }] })
+    const staleErr = await stale.p.findEpisodeServer({ id: "f$1$old$ja-JP$sub", number: 1, url: "" }, "Auto").catch((e) => e)
+    eq([staleErr, stale.hits.length], ["kickassanime: the site has no sub stream for episode 1", 3], "server: a replaced slug is re-resolved, and an episode with no servers says so")
+    const listed = { "kickassanime:eps:f$ja-JP$sub": { at: Date.now(), data: [{ number: 7 }] } }
+    const gone = site({ "GET /api/show/f/episodes?ep=7": [200, { pages: [], result: [] }] }, listed)
+    const goneErr = await gone.p.findEpisodeServer({ id: "f$7$old$ja-JP$sub", number: 7, url: "" }, "Auto").catch((e) => e)
+    eq([goneErr, Object.keys(listed)], ["kickassanime: episode 7 (sub) is not on kickassanime anymore - refresh the episode list", []], "server: a vanished episode drops the cached list so a refresh refetches it")
+
+    const down = site({ "POST /api/fsearch": [522, ""] })
+    const downErr = await down.p.search({ media: { id: 1, romajiTitle: "Sousou no Frieren", englishTitle: "Frieren" }, query: "Frieren", dub: false }).catch((e) => e)
+    eq([downErr, down.hits.length], ["kickassanime: search failed (site unreachable)", 1], "search: a failing site stops the search at its first answer instead of sending every query")
+    const moved = site({ "GET /api/show/f/episode/ep-1-s1": [200, { servers: [{ name: "VidStreaming", src: "https://krussdomi.com/cat-player/player?id=v" }] }], "GET @player/cat-player/player?id=v": [200, "<html>new player</html>"] })
+    eq(await moved.p.findEpisodeServer({ id: "f$1$s1$ja-JP$sub", number: 1, url: "" }, "Auto").catch((e) => e), "kickassanime: no playable stream for episode 1 - the player page was not recognized - the site changed its player; this extension needs an update", "server: a player page in a new shape says the extension needs an update, not to retry")
+
+    const out = []
+    const cap = load("kickassanime", { console: { log() {}, info() {}, warn: (s) => out.push("warn " + s), error: (s) => out.push(String(s)) } })
+    cap.fail("server", "c")
+    cap.fail("server", "d", "info")
+    eq(out.map((s) => s.replace(/"t":\d+/, "")), ['SEHERRv1 {,"ext":"aq-kickassanime","scope":"server","msg":"c"}', 'warn SEHERRv1 {,"ext":"aq-kickassanime","scope":"server","msg":"d","lvl":"info"}'], "lvl: an error goes to console.error, a notice to console.warn with its level")
+    const pref = (v) => load("kickassanime", { $getUserPreference: () => v }).baseUrl
+    eq([pref(undefined), pref("{{baseUrl}}"), pref(""), pref("https://kaa.mirror/")], ["https://kaa.lt", "https://kaa.lt", "https://kaa.lt", "https://kaa.mirror"], "config: unset, placeholder and empty fall back to the default; a mirror loses its trailing slash")
+}
+
+console.log("mkissa")
+{
+    const crypto = await import("crypto")
+    const p = load("mkissa")
+    const bytes = (b) => [...b]
+    const msg = Buffer.from("葬送のフリーレン — 1 sub " + "x".repeat(150))
+    const key = crypto.randomBytes(32)
+    const iv = crypto.randomBytes(12)
+    eq(p.sha256(bytes(msg)), bytes(crypto.createHash("sha256").update(msg).digest()), "crypto: sha256 matches node over a multi-block utf8 message")
+    eq(p.hmac(bytes(key), bytes(msg)), bytes(crypto.createHmac("sha256", key).update(msg).digest()), "crypto: hmac-sha256 matches node")
+    const c = crypto.createCipheriv("aes-256-gcm", key, iv)
+    const sealed = Buffer.concat([c.update(msg), c.final(), c.getAuthTag()])
+    eq(p.gcm(bytes(key), bytes(iv), bytes(msg), true), bytes(sealed), "crypto: aes-256-gcm encrypt matches node, tag included")
+    eq(p.gcm(bytes(key), bytes(iv), bytes(sealed.subarray(0, msg.length)), false), bytes(msg), "crypto: aes-256-gcm decrypt round-trips")
+    eq(p.unhex("1748485141"), "/ppiy", "sources: a -- link is hex with every byte xored by 56")
+
+    const store = (mem) => ({ get: (k) => mem[k], set: (k, v) => { mem[k] = JSON.parse(JSON.stringify(v)) }, remove: (k) => { delete mem[k] }, has: (k) => k in mem })
+    const json = (v, status = 200) => Promise.resolve({ ok: status < 300, status, json: () => v, text: () => JSON.stringify(v) })
+    const html = (s, status = 200) => Promise.resolve({ ok: status < 300, status, text: () => s, json: () => JSON.parse(s) })
+    const show = { _id: "ReHMC7TQnch3C6z8j", name: "Sousou no Frieren", englishName: "Frieren: Beyond Journey's End", aniListId: "154587", type: "TV", availableEpisodes: { sub: 4, dub: 1 }, availableEpisodesDetail: { sub: ["3", "2", "1", "0", "1.5"], dub: ["1"] } }
+    const frieren = { id: 154587, romajiTitle: "Sousou no Frieren", englishTitle: "Frieren: Beyond Journey's End", synonyms: [], isAdult: false, startDate: { year: 2023 } }
+
+    // A fake api.mkissa.net: show lookups, the bootstrap and a sealed episode answer, all checked with node's own crypto.
+    const site = (o = {}) => {
+        const mem = {}
+        const hits = []
+        const mask = Buffer.from(p.mask, "hex")
+        const wk = crypto.randomBytes(32)
+        const epoch = Math.floor(Date.now() / 604800000)
+        let crypt = o.crypt || 0
+        const s = load("mkissa", {
+            $store: store(mem),
+            fetch: (url, opts = {}) => {
+                const body = opts.body ? JSON.parse(opts.body) : null
+                hits.push(body ? (/episode\(/.test(body.query) ? "episode" : /shows\(/.test(body.query) ? "shows:" + body.variables.search.query : "show:" + body.variables._id) : url.replace(/\?.*$/, ""))
+                if (o.status) return json({}, o.status)
+                if (url.indexOf("/client-crypto/v1/bootstrap") !== -1) {
+                    const k1 = crypto.createHmac("sha256", mask).update("KoCGqjW:179").digest()
+                    const want = crypto.createHmac("sha256", k1).update(["179", "mkissa", "k7", epoch, "mkissa.to"].join("|")).digest("hex")
+                    if (opts.headers["x-aa-boot"] !== want) return json({ error: "invalid_boot_token" }, 403)
+                    return json({ epoch, switchAt: Date.now() + 86400000, partB: Buffer.from(wk.map((b, i) => b ^ mask[i])).toString("base64"), k: "k7" })
+                }
+                if (body && /episode\(/.test(body.query)) {
+                    if (o.errors) return json({ errors: [{ message: o.errors }], data: { episode: null } })
+                    if (crypt-- > 0) return json({ errors: [{ message: "AA_CRYPTO_STALE" }], data: { episode: null } })
+                    const t = Buffer.from(body.extensions.aaReq, "base64")
+                    const d = crypto.createDecipheriv("aes-256-gcm", wk, t.subarray(1, 13))
+                    d.setAuthTag(t.subarray(t.length - 16))
+                    const req = JSON.parse(Buffer.concat([d.update(t.subarray(13, t.length - 16)), d.final()]).toString())
+                    if (req.qh !== crypto.createHash("sha256").update(body.query).digest("hex") || req.k !== "k7" || req.buildId !== "179") return json({ errors: [{ message: "AA_CRYPTO_QUERY_MISMATCH" }] })
+                    const ivo = crypto.randomBytes(12)
+                    const e = crypto.createCipheriv("aes-256-gcm", wk, ivo)
+                    const out = JSON.stringify({ episode: { episodeString: body.variables.episodeString, sourceUrls: o.sources } })
+                    return json({ data: { _m: "b7", tobeparsed: Buffer.concat([Buffer.from([1]), ivo, e.update(out), e.final(), e.getAuthTag()]).toString("base64") } })
+                }
+                if (body && /shows\(/.test(body.query)) return json({ data: { shows: { edges: o.edges || [] } } })
+                if (body) return json({ data: { show: o.missing ? null : show } })
+                return o.page ? o.page(url, opts) : html("", 404)
+            },
+        })
+        return { s, hits, mem }
+    }
+
+    const a = site()
+    const found = await a.s.search({ media: frieren, query: "Frieren", dub: true })
+    eq([found, a.hits], [[{ id: "ReHMC7TQnch3C6z8j$dub", title: "Frieren: Beyond Journey's End", url: "https://mkissa.to/anime/ReHMC7TQnch3C6z8j", subOrDub: "both" }], ["show:154587"]], "search: the AniList id resolves in one request and the id carries the audio")
+    const eps = await a.s.findEpisodes("ReHMC7TQnch3C6z8j$sub")
+    eq([eps.map((e) => e.number), eps[0].id, eps[0].url, a.hits.length], [[1, 2, 3], "ReHMC7TQnch3C6z8j$sub$1", "https://mkissa.to/anime/ReHMC7TQnch3C6z8j/p-1-sub", 1], "episodes: listed from the show the search cached, recaps and episode 0 dropped, ascending")
+
+    const subOnly = site()
+    subOnly.s.gql = () => Promise.resolve({ show: Object.assign({}, show, { availableEpisodes: { sub: 4, dub: 0 } }) })
+    eq((await subOnly.s.search({ media: frieren, query: "", dub: true })).map((r) => [r.id, r.subOrDub]), [], "search: a dub request on a sub-only show finds nothing rather than passing the sub off as a dub")
+
+    const edges = [{ _id: "x1", name: "Sousou no Frieren: Mini", aniListId: "1", availableEpisodes: { sub: 1 } }, { _id: "x2", name: "Sousou no Frieren", aniListId: "154587", availableEpisodes: { sub: 28 } }]
+    const fb = site({ missing: true, edges })
+    eq([(await fb.s.search({ media: frieren, query: "", dub: false })).map((r) => r.id), fb.hits], [["x2$sub"], ["show:154587", "shows:Sousou no Frieren"]], "search: when the id lookup misses, a title search takes the candidate carrying the AniList id and stops there")
+    const titled = site({ edges: [{ _id: "x3", name: "Sousou no Frieren", availableEpisodes: { sub: 28 } }, { _id: "x4", name: "Some Other Show", availableEpisodes: { sub: 3 } }] })
+    eq((await titled.s.search({ media: Object.assign({}, frieren, { id: 0 }), query: "", dub: false })).map((r) => r.id), ["x3$sub"], "search: with no id the title score settles a single pick")
+
+    const mp4 = (url) => html(url.indexOf("www.mp4upload.com/embed-abc.html") !== -1 ? 'player.src({ type: "video/mp4", src: "https://a4.mp4upload.com:183/d/tok/video.mp4" })' : "", 200)
+    const srv = site({ sources: [{ sourceUrl: "https://streamwish.to/e/x", sourceName: "Sw", priority: 5.5 }, { sourceUrl: "https://mp4upload.com/embed-abc.html", sourceName: "Mp4", priority: 4 }], page: mp4 })
+    const got = await srv.s.findEpisodeServer({ id: "ReHMC7TQnch3C6z8j$sub$1", number: 1, url: "" }, "Auto")
+    eq([got, srv.hits], [{ server: "Auto", headers: { Referer: "https://www.mp4upload.com/" }, videoSources: [{ url: "https://a4.mp4upload.com:183/d/tok/video.mp4", type: "mp4", quality: "auto", subtitles: [] }] }, ["https://api.mkissa.net/client-crypto/v1/bootstrap", "episode", "https://www.mp4upload.com/embed-abc.html"]], "server: the sealed episode answer opens and mp4upload resolves with its referer, unsupported players skipped")
+    await srv.s.findEpisodeServer({ id: "ReHMC7TQnch3C6z8j$sub$1", number: 1, url: "" }, "Auto")
+    eq(srv.hits.slice(3), ["https://www.mp4upload.com/embed-abc.html"], "server: the boot key and the source list are reused from the store")
+
+    const clockPath = Buffer.from("/apivtwo/clock?id=7d24").map((b) => b ^ 56).toString("hex")
+    const own = site({
+        sources: [{ sourceUrl: "https://ok.ru/videoembed/1", sourceName: "Ok", priority: 3.5 }, { sourceUrl: "--" + clockPath, sourceName: "Default", priority: 8.5 }],
+        page: (url) => json(url === "https://filelotion.fyi/apivtwo/clock.json?id=7d24" ? { links: [{ link: "https://repackager.wixmp.com/v/,1080p,720p,/mp4/file.mp4.urlset/master.m3u8", hls: true, resolutionStr: "Hls", subtitles: [{ src: "https://s.test/signs.vtt", lang: "en", label: "English (Signs)" }, { src: "https://s.test/full.vtt", lang: "en", label: "English" }] }] } : {}, url.indexOf("clock.json") !== -1 ? 200 : 404),
+    })
+    const mine = await own.s.findEpisodeServer({ id: "ReHMC7TQnch3C6z8j$dub$1", number: 1, url: "" }, "Auto")
+    eq([mine.videoSources[0].type, mine.videoSources[0].subtitles.map((t) => [t.url, t.isDefault])], ["m3u8", [["https://s.test/full.vtt", true], ["https://s.test/signs.vtt", false]]], "server: the site's own upload goes first via the clock API and full English dialogue is the default track")
+
+    const hung = site({
+        sources: [{ sourceUrl: "--" + clockPath, sourceName: "Default", priority: 8.5 }, { sourceUrl: "https://mp4upload.com/embed-abc.html", sourceName: "Mp4", priority: 4 }],
+        page: (url) => (url.indexOf("clock.json") !== -1 ? new Promise((r) => setTimeout(() => r(json({ links: [] })), 300)) : mp4(url)),
+    })
+    hung.s.serverBudget = 150
+    const hungErr = await hung.s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto").catch((e) => e)
+    hung.s.serverBudget = 15000
+    const before = hung.hits.length
+    const after = await hung.s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto")
+    eq([hungErr, hung.hits.slice(before), after.videoSources[0].type], ["mkissa: episode 1 ran out of time on Default - retry to try Mp4", ["https://www.mp4upload.com/embed-abc.html"], "mp4"], "server: a host that eats the budget keeps the source list and goes last, so the retry costs no new lookup")
+
+    const ok = site({ sources: [{ sourceUrl: "https://ok.ru/videoembed/9", sourceName: "Ok" }], page: () => html(`<div data-options="{&quot;flashvars&quot;:{&quot;metadata&quot;:&quot;{\\&quot;ondemandHls\\&quot;:\\&quot;https://vd.okcdn.ru/x.m3u8\\&quot;}&quot;}}"></div>`) })
+    const okGot = await ok.s.findEpisodeServer({ id: "ReHMC7TQnch3C6z8j$sub$2", number: 2, url: "" }, "Auto")
+    eq([okGot.videoSources[0].url, okGot.headers.Referer], ["https://vd.okcdn.ru/x.m3u8", "https://ok.ru/"], "server: ok.ru metadata gives its HLS manifest")
+
+    const stale = site({ crypt: 1, sources: [{ sourceUrl: "https://mp4upload.com/embed-abc.html", sourceName: "Mp4" }], page: mp4 })
+    await stale.s.findEpisodeServer({ id: "ReHMC7TQnch3C6z8j$sub$1", number: 1, url: "" }, "Auto")
+    eq(stale.hits.slice(0, 4), ["https://api.mkissa.net/client-crypto/v1/bootstrap", "episode", "https://api.mkissa.net/client-crypto/v1/bootstrap", "episode"], "server: a stale crypto answer refetches the bootstrap and retries once")
+    const dead = site({ crypt: 9, sources: [] })
+    eq(await dead.s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto").catch((e) => e), "mkissa: the site changed its player handshake - this extension needs an update", "server: a second stale answer says the extension needs an update")
+
+    const busy = "mkissa: too many requests right now - wait a minute and retry"
+    eq(await site({ status: 429 }).s.search({ media: frieren, query: "", dub: false }).catch((e) => e), busy, "rate limit: an HTTP 429 stops the search at once")
+    const limited = site({ errors: "Too many requests, please try again in 2 seconds." })
+    eq([await limited.s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto").catch((e) => e), limited.hits.length], [busy, 2], "rate limit: the API's own throttle message is a 429 too, with no retry")
+    eq(await site({ errors: "NEED_CAPTCHA" }).s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto").catch((e) => e), p.captcha, "captcha: a captcha demand is reported, not mistaken for a missing episode")
+    eq(await site({ sources: [{ sourceUrl: "https://bysekoze.com/e/x", sourceName: "Fm-Hls" }] }).s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto").catch((e) => e), "mkissa: episode 1 only has players this extension cannot play (Fm-Hls)", "server: an episode with only unsupported players says which")
+
+    eq(load("mkissa").baseUrl, "https://mkissa.to", "config: mkissa falls back to the manifest default when nothing is set")
+    eq(load("mkissa", { $getUserPreference: () => "{{baseUrl}}" }).baseUrl, "https://mkissa.to", "config: mkissa rejects an unsubstituted placeholder")
+    eq(load("mkissa", { $getUserPreference: () => "https://mkissa.to/" }).baseUrl, "https://mkissa.to", "config: a trailing slash is stripped")
+}
+
 console.log("configuration")
 {
     const prefs = (map) => ({ $getUserPreference: (n) => map[n] })
@@ -1604,6 +1847,8 @@ console.log("configuration")
         animepahe: "https://animepahe.pw",
         anizone: "https://anizone.to",
         animelok: "https://animelok.live",
+        kickassanime: "https://kaa.lt",
+        mkissa: "https://mkissa.to",
     }
     for (const name in DEFAULTS) {
         eq(load(name).baseUrl, DEFAULTS[name], `config: ${name} falls back to the manifest default when nothing is set`)
