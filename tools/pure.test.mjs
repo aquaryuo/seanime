@@ -368,6 +368,9 @@ console.log("anizone")
     eq((await site(true, "c1", null, { items: [1, 2, 3] })).slice(0, 2), [all, 2], "episodes: a gapless first page skips the cursor walk and only probes the tail")
     eq((await site(true, "c1", null, { items: [1, 10, 9, 8], sort: "release-desc", status: 429 }))[0], all, "episodes: a newest-first listing cut short is filled from episode 1")
     eq(await site(true, "c1", null, { status: 429 }), [[1, 2, 10, 11, 12], 4, []], "episodes: a rate-limited listing keeps the stated count and is not cached")
+    const page = (html) => load("anizone", { fetch: () => Promise.resolve({ ok: true, status: 200, text: () => html, cookies: {} }) }).findEpisodes("abc123$sub").catch((e) => e)
+    eq(await page(`items: JSON.parse('[]'), nextCursor: null, hasMore: false`), [], "episodes: a series page whose episode list is empty has no episodes")
+    eq(await page("<p>checking your browser</p>"), "anizone: episode list not recognized - the site changed its layout", "episodes: a series page without the episode list markup fails instead of reading as no episodes")
 
     const listed = { "anizone:eps:abc123$al5$sub": { at: Date.now(), data: [{ number: 7 }] } }
     const gone = load("anizone", { $store: store(listed), fetch: () => Promise.resolve({ ok: false, status: 404, text: () => "" }) })

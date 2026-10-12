@@ -256,6 +256,7 @@ class Provider implements AnimeProvider {
             sure = trim.sure
             for (let n = /sort&quot;:&quot;[a-z]+-desc/.test(html) ? 1 : top + 1; n <= trim.last; n++) nums.add(n)
         }
+        if (nums.size === 0 && !this.itemsMarkup.test(html)) throw this.fail("episodes", "anizone: episode list not recognized - the site changed its layout")
         const episodes: EpisodeDetails[] = []
         for (const n of nums) episodes.push({ id: `${shortid}$${n}${id.slice(shortid.length)}`, number: n, url: `${this.baseUrl}/anime/${shortid}/${n}` })
         episodes.sort((a, b) => a.number - b.number)
