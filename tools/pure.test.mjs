@@ -669,6 +669,30 @@ console.log("mkissa")
     eq(load("mkissa", { $getUserPreference: () => "https://mkissa.to/" }).baseUrl, "https://mkissa.to", "config: a trailing slash is stripped")
 }
 
+console.log("shared helpers")
+{
+    // Payloads are single files and cannot import each other, so shared helpers are copied; this keeps the copies from drifting.
+    const body = (name, method) => {
+        const src = fs.readFileSync(`${ROOT}/extensions/${name}/provider.ts`, "utf8").replace(/\r\n/g, "\n")
+        const m = new RegExp(`^    (?:private |async )*${method}(?:<[^>]*>)?[(]`, "m").exec(src)
+        return m ? src.slice(m.index, src.indexOf("\n    }\n", m.index)) : null
+    }
+    const SAME = [
+        [["anikoto", "anizone", "kickassanime", "mkissa"], ["normTitle", "writeCache"]],
+        [["anikoto", "anizone", "kickassanime"], ["simNorm", "lev"]],
+        [["anikoto", "anizone", "mkissa"], ["isNonDialogue"]],
+        [["anikoto", "kickassanime", "mkissa"], ["cfg"]],
+        [["anizone", "kickassanime", "mkissa"], ["fail"]],
+        [["anizone", "kickassanime"], ["searchQueries", "firstWords", "norm", "matchTargets", "scoreTitles", "cardYear", "yearPenalty", "disambiguate", "byPart", "cardMax", "yearOf", "partOf", "bestTitle", "toInt", "displayName", "langName"]],
+    ]
+    const drift = []
+    for (const [names, methods] of SAME) for (const method of methods) {
+        const bodies = names.map((n) => body(n, method))
+        if (bodies.includes(null) || new Set(bodies).size !== 1) drift.push(`${method} (${names.join(", ")})`)
+    }
+    eq(drift, [], "shared helpers: methods copied between payloads stay identical")
+}
+
 console.log("configuration")
 {
     const prefs = (map) => ({ $getUserPreference: (n) => map[n] })

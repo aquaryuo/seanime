@@ -329,7 +329,6 @@ class Provider implements AnimeProvider {
     private firstWords(title: string, n: number): string {
         const base = (title || "").split(/[:~]/)[0]
         const cleaned = base.replace(/[\[\]【】「」『』(){}"'“”‘’]/g, " ").replace(/\s+/g, " ").trim()
-        if (!cleaned) return ""
         return cleaned.split(" ").slice(0, n).join(" ")
     }
 
@@ -375,13 +374,9 @@ class Provider implements AnimeProvider {
             if (!t) continue
             push(t, 1)
             push(t.split(/[:,;~]/)[0], 0.8)
-            try {
-                const nz = $scannerUtils.normalizeTitle(t)
-                if (nz) {
-                    push(nz.cleanBaseTitle, 1)
-                    push(nz.denoisedTitle, 1)
-                }
-            } catch (_e) {}
+            const nz = this.norm(t)
+            push(nz.cleanBaseTitle || "", 1)
+            push(nz.denoisedTitle || "", 1)
         }
         if (media.synonyms) for (const s of media.synonyms) push(s, 1)
         return out
@@ -431,18 +426,17 @@ class Provider implements AnimeProvider {
         }
         if (season < 2 && part < 2) return this.byPart(scored, part)
         return scored.filter((x) => {
-            const seasonOk = season < 2 || this.cardMax(x.c, (t) => this.seasonOf(t)) === season
+            const seasonOk = season < 2 || this.cardMax(x.c, (t) => this.norm(t).season || 0) === season
             const partOk = part < 2 || this.cardMax(x.c, (t) => this.partOf(t)) === part
             return seasonOk && partOk
         })
     }
 
     private byPart(list: Scored[], part: number): Scored[] {
-        if (part < 2) {
-            const main = list.filter((x) => this.cardMax(x.c, (t) => this.partOf(t)) < 2)
-            return main.length > 0 ? main : list
-        }
-        const pm = list.filter((x) => this.cardMax(x.c, (t) => this.partOf(t)) === part)
+        const pm = list.filter((x) => {
+            const p = this.cardMax(x.c, (t) => this.partOf(t))
+            return part < 2 ? p < 2 : p === part
+        })
         return pm.length > 0 ? pm : list
     }
 
@@ -455,20 +449,16 @@ class Provider implements AnimeProvider {
         return m ? parseInt(m[1] || "0", 10) : 0
     }
 
-    private seasonOf(title: string): number {
+    private norm(title: string): Partial<$scannerUtils.NormalizedTitle> {
         try {
-            const n = $scannerUtils.normalizeTitle(title)
-            if (n && n.season) return n.season
-        } catch (_e) {}
-        return 0
+            return $scannerUtils.normalizeTitle(title) || {}
+        } catch (_e) {
+            return {}
+        }
     }
 
     private partOf(title: string): number {
-        let p = 0
-        try {
-            const n = $scannerUtils.normalizeTitle(title)
-            if (n && n.part) p = n.part
-        } catch (_e) {}
+        let p = this.norm(title).part || 0
         const m = (title || "").match(/\b(?:part|cour)\s*(\d+)\b/i) || (title || "").match(/\bdai\s*(\d+)\s*bu\b/i)
         if (m) {
             const v = parseInt(m[1] || "0", 10)
@@ -520,7 +510,7 @@ class Provider implements AnimeProvider {
     }
 
     private toInt(v: any): number {
-        return Math.max(0, parseInt(String(v), 10) || 0)
+        return Math.max(0, parseInt(v, 10) || 0)
     }
 
     private json(res: FetchResponse): any {
@@ -590,9 +580,10 @@ class Provider implements AnimeProvider {
             "es-419": "Latin American Spanish", "pt-br": "Portuguese (Brazil)",
             "zh-hans": "Chinese (Simplified)", "zh-hant": "Chinese (Traditional)",
         }
-        if (map[code]) return map[code]
-        const base = code.split("-")[0]
-        return map[base] || code.toUpperCase()
+        const c = (code || "").toLowerCase()
+        if (map[c]) return map[c]
+        const base = c.split("-")[0]
+        return map[base] || c.toUpperCase()
     }
 
     private reportError(scope: string, message: string, lvl?: "warn" | "info"): void {
