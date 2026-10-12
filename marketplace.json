@@ -1,5 +1,31 @@
 [
   {
+    "id": "aq-animelok",
+    "name": "Animelok",
+    "version": "0.1.23",
+    "description": "Only animelok compatibility layer you'll ever need",
+    "author": "aquaryuo",
+    "type": "onlinestream-provider",
+    "language": "typescript",
+    "lang": "en",
+    "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/gate/extensions/animelok/icon.png",
+    "website": "https://animelok.live",
+    "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/gate/extensions/animelok/manifest.json"
+  },
+  {
+    "id": "aq-animepahe",
+    "name": "AnimePahe",
+    "version": "0.2.45",
+    "description": "Only animepahe compatibility layer you'll ever need",
+    "author": "aquaryuo",
+    "type": "onlinestream-provider",
+    "language": "typescript",
+    "lang": "en",
+    "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/gate/extensions/animepahe/icon.png",
+    "website": "https://animepahe.pw",
+    "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/gate/extensions/animepahe/manifest.json"
+  },
+  {
     "id": "aq-haifacdn",
     "name": "Haifa CDN",
     "version": "0.1.4",

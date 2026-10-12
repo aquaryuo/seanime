@@ -197,6 +197,84 @@ console.log("haifacdn")
     eq([noKey, seen.every((h) => h === "Bearer ak_test")], ["Haifa CDN: add your API key in the extension settings", true], "auth: the key is sent trimmed as a bearer token, and a missing key says where to set it")
 }
 
+console.log("animepahe")
+{
+    const p = load("animepahe")
+    eq(p.remoteHttps("https://cdn.example.com/a.m3u8"), true, "url: a normal remote host is allowed")
+    eq(p.remoteHttps("https://127.0.0.1/a.m3u8"), false, "url: loopback is rejected")
+    eq(p.remoteHttps("https://localhost:8191/a.m3u8"), false, "url: localhost is rejected")
+    eq(p.remoteHttps("https://box.local/a.m3u8"), false, "url: .local is rejected")
+    eq(p.remoteHttps("https://evil.com@127.0.0.1/a.m3u8"), false, "url: userinfo cannot smuggle loopback past the host check")
+    eq(p.remoteHttps("https://192.168.1.5:8080/a.m3u8"), false, "url: private IPv4 is rejected")
+
+    const ordinals = {
+        "Attack on Titan Season 2": { season: 2, part: 1 },
+        "Shingeki no Kyojin Season 2": { season: 2, part: 1 },
+        "Unrelated Show Season 2": { season: 2, part: 1 },
+        "Attack on Titan Season 3 Part 2": { season: 3, part: 2 },
+    }
+    const s = load("animepahe", {
+        $scannerUtils: { normalizeTitle: (t) => ordinals[t] || { season: 1, part: 1 }, buildSmartSearchTitles: () => null },
+    })
+    const opts = (q, romaji, english) => ({ query: q, dub: false, media: { id: 1, romajiTitle: romaji, englishTitle: english } })
+    const hit = (title) => ({ id: title, title, url: "", subOrDub: "both" })
+    const ids = (rs) => rs.map((r) => r.id)
+
+    eq(
+        ids(s.filterBySeason([hit("Attack on Titan Season 2"), hit("Unrelated Show Season 2"), hit("Attack on Titan")], opts("Attack on Titan Season 2", "Shingeki no Kyojin Season 2", "Attack on Titan Season 2"))),
+        ["Attack on Titan Season 2"],
+        "season: the other show's season 2 is dropped before the ordinal match",
+    )
+    eq(
+        ids(s.filterBySeason([hit("Unrelated Show Season 2"), hit("Attack on Titan")], opts("Attack on Titan Season 2", "Shingeki no Kyojin Season 2", "Attack on Titan Season 2"))),
+        ["Attack on Titan"],
+        "season: no ordinal-bearing entry falls back to the show, not to a stranger",
+    )
+    eq(
+        ids(s.filterBySeason([hit("Attack on Titan Season 3 Part 2"), hit("Attack on Titan Season 2")], opts("", "Attack on Titan Season 3 Part 2", ""))),
+        ["Attack on Titan Season 3 Part 2"],
+        "season: season and part are matched independently",
+    )
+    eq(
+        ids(s.filterBySeason([hit("Anything At All")], opts("Anything At All", "", ""))),
+        ["Anything At All"],
+        "season: a manual search with no media titles keeps every result",
+    )
+}
+
+console.log("animelok")
+{
+    const p = load("animelok")
+    eq(p.subCode("eng", ""), "en", "lang: a three letter code normalises")
+    eq(p.subCode("", "Spanish"), "es", "lang: a label-only track still resolves")
+    eq(p.subCode("en", "English"), "en", "lang: a two letter code passes through")
+    eq(p.trackScore("English", true, false, false) > p.trackScore("English (Signs & Songs)", true, true, true), true, "track: full dialogue beats a default signs track")
+}
+
+console.log("error channel")
+{
+    const out = []
+    const cap = { console: { log() {}, info() {}, warn: (s) => out.push("warn " + s), error: (s) => out.push(String(s)) } }
+    load("animelok", cap).fail("server", "c")
+    load("animelok", cap).fail("server", "d", "info")
+    eq(out.map((s) => s.replace(/"t":\d+/, "")), ['SEHERRv1 {,"ext":"aq-animelok","scope":"server","msg":"c"}', 'warn SEHERRv1 {,"ext":"aq-animelok","scope":"server","msg":"d","lvl":"info"}'], "lvl: an error goes to console.error with no lvl field; a notice carries its level and goes to console.warn")
+    const sites = (name) => { const src = fs.readFileSync(`${ROOT}/extensions/${name}/provider.ts`, "utf8"); return [(src.match(/, "warn"\)/g) || []).length, (src.match(/, "info"\)/g) || []).length] }
+    eq(["animelok", "animepahe"].map(sites), [[0, 1], [0, 0]], "lvl: only the listed recovered and expected reports are relabelled")
+}
+
+console.log("configuration")
+{
+    const prefs = (map) => ({ $getUserPreference: (n) => map[n] })
+    const DEFAULTS = { animepahe: "https://animepahe.pw", animelok: "https://animelok.live" }
+    for (const name in DEFAULTS) {
+        eq(load(name).baseUrl, DEFAULTS[name], `config: ${name} falls back to the manifest default when nothing is set`)
+        eq(load(name, prefs({ baseUrl: "{{baseUrl}}" })).baseUrl, DEFAULTS[name], `config: ${name} rejects an unsubstituted placeholder`)
+        eq(load(name, prefs({ baseUrl: "" })).baseUrl, DEFAULTS[name], `config: ${name} rejects an empty setting`)
+    }
+    eq(load("animelok", prefs({ baseUrl: "https://animelok.online" })).base, "https://animelok.live", "config: a legacy animelok domain is remapped once at construction")
+    eq(load("animepahe", prefs({ solverUrl: "localhost:8191" })).solverEndpoint(), "", "config: animepahe rejects a schemeless solver URL")
+}
+
 console.log("versions")
 {
     const v = await import("./bump.mjs")
