@@ -1,18 +1,7 @@
 {
-    "compilerOptions": {
-        "target": "ES2018",
-        "lib": [
-            "ES2018"
-        ],
-        "module": "commonjs",
-        "strict": true,
-        "noEmit": true,
-        "skipLibCheck": false,
-        "types": [],
-        "noUnusedLocals": true
-    },
+    "extends": "../../tsconfig.base.json",
     "include": [
         "provider.ts",
-        "d.ts/**/*.d.ts"
+        "../../d.ts/*.d.ts"
     ]
 }
