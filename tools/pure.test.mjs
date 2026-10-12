@@ -575,6 +575,7 @@ console.log("mkissa")
         let crypt = o.crypt || 0
         const s = load("mkissa", {
             $store: store(mem),
+            CryptoJS: { enc: { Base64: { stringify: (u) => Buffer.from(u).toString("base64") } } },
             fetch: (url, opts = {}) => {
                 const body = opts.body ? JSON.parse(opts.body) : null
                 hits.push(body ? (/episode\(/.test(body.query) ? "episode" : /shows\(/.test(body.query) ? "shows:" + body.variables.search.query : "show:" + body.variables._id) : url.replace(/\?.*$/, ""))

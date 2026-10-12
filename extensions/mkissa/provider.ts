@@ -41,6 +41,7 @@ const SHA_K = (
     "19a4c116 1e376c08 2748774c 34b0bcb5 391c0cb3 4ed8aa4a 5b9cca4f 682e6ff3 748f82ee 78a5636f 84c87814 8cc70208 90befffa a4506ceb bef9a3f7 c67178f2"
 ).split(" ").map((h) => parseInt(h, 16) | 0)
 const SHA_H = "6a09e667 bb67ae85 3c6ef372 a54ff53a 510e527f 9b05688c 1f83d9ab 5be0cd19".split(" ").map((h) => parseInt(h, 16) | 0)
+const SHOW_FIELDS = "_id name englishName nativeName altNames type aniListId malId airedStart availableEpisodes"
 const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 
 class Provider implements AnimeProvider {
@@ -66,20 +67,21 @@ class Provider implements AnimeProvider {
     async search(opts: SearchOptions): Promise<SearchResult[]> {
         const media = opts.media || ({} as Media)
         const al = media.id > 0 ? media.id : 0
+        const keep = (l: Show[]) => l.map((s) => this.result(s, opts.dub)).filter((r): r is SearchResult => !!r)
         if (al > 0) {
-            const r = await this.gql("search", "query($_id:String!){show(_id:$_id){" + this.showFields() + " availableEpisodesDetail}}", { _id: String(al) })
+            const r = await this.gql("search", "query($_id:String!){show(_id:$_id){" + SHOW_FIELDS + " availableEpisodesDetail}}", { _id: String(al) })
             const show: Show | null = r && r.show
             if (show && show._id && String(show.aniListId) === String(al)) {
                 this.writeCache(`mkissa:show:${show._id}`, show)
-                const hit = this.result(show, opts.dub)
-                return hit ? [hit] : []
+                return keep([show])
             }
         }
         const queries = this.uniq([media.romajiTitle || "", media.englishTitle || "", opts.query || ""]).slice(0, 3)
         const cands: Show[] = []
-        const seen: { [key: string]: boolean } = {}
+        const seen = new Set<string>()
+        let best: Show[] = []
         for (const q of queries) {
-            const r = await this.gql("search", "query($search:SearchInput,$limit:Int,$page:Int,$countryOrigin:VaildCountryOriginEnumType){shows(search:$search,limit:$limit,page:$page,countryOrigin:$countryOrigin){edges{" + this.showFields() + "}}}", {
+            const r = await this.gql("search", "query($search:SearchInput,$limit:Int,$page:Int,$countryOrigin:VaildCountryOriginEnumType){shows(search:$search,limit:$limit,page:$page,countryOrigin:$countryOrigin){edges{" + SHOW_FIELDS + "}}}", {
                 search: { query: q, allowAdult: media.isAdult === true, allowUnknown: false },
                 limit: 26,
                 page: 1,
@@ -87,22 +89,15 @@ class Provider implements AnimeProvider {
             })
             const edges: Show[] = (r && r.shows && r.shows.edges) || []
             for (const s of edges) {
-                if (!s || !s._id || seen["#" + s._id]) continue
-                seen["#" + s._id] = true
-                if ((al > 0 && String(s.aniListId) === String(al)) || (media.idMal && String(s.malId) === String(media.idMal))) {
-                    const hit = this.result(s, opts.dub)
-                    return hit ? [hit] : []
-                }
+                if (!s || !s._id || seen.has(s._id)) continue
+                seen.add(s._id)
+                if ((al > 0 && String(s.aniListId) === String(al)) || (media.idMal && String(s.malId) === String(media.idMal))) return keep([s])
                 cands.push(s)
             }
-            if (this.pickBest(cands, media).length === 1) break
+            best = this.pickBest(cands, media)
+            if (best.length === 1) break
         }
-        const out: SearchResult[] = []
-        for (const s of this.pickBest(cands, media)) {
-            const hit = this.result(s, opts.dub)
-            if (hit) out.push(hit)
-        }
-        return out
+        return keep(best)
     }
 
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {
@@ -118,16 +113,10 @@ class Provider implements AnimeProvider {
             this.writeCache(`mkissa:show:${showId}`, show)
         }
         const list = (show.availableEpisodesDetail && show.availableEpisodesDetail[audio]) || []
-        const episodes: EpisodeDetails[] = []
-        const seen: { [key: string]: boolean } = {}
-        for (const ep of list) {
-            const s = String(ep)
-            if (!/^\d+$/.test(s) || seen["#" + s] || parseInt(s, 10) < 1) continue
-            seen["#" + s] = true
-            episodes.push({ id: `${showId}$${audio}$${s}`, number: parseInt(s, 10), url: `${this.baseUrl}/anime/${showId}/p-${s}-${audio}` })
-        }
-        episodes.sort((a, b) => a.number - b.number)
-        return episodes
+        return Array.from(new Set(list.map(String)))
+            .filter((s) => /^\d+$/.test(s) && parseInt(s, 10) >= 1)
+            .map((s) => ({ id: `${showId}$${audio}$${s}`, number: parseInt(s, 10), url: `${this.baseUrl}/anime/${showId}/p-${s}-${audio}` }))
+            .sort((a, b) => a.number - b.number)
     }
 
     async findEpisodeServer(episode: EpisodeDetails, server: string): Promise<EpisodeServer> {
@@ -167,9 +156,7 @@ class Provider implements AnimeProvider {
             this.writeCache(ck, all)
             throw this.fail("server", `mkissa: episode ${ep} ran out of time${tried.length ? ` on ${tried.join(", ")}` : ""} - retry to try ${untried.join(", ")}`)
         }
-        try {
-            $store.remove(ck)
-        } catch (_e) {}
+        $store.remove(ck)
         const other = all.filter((s) => this.rank(s) < 0).map((s) => s.sourceName)
         throw this.fail("server", `mkissa: no playable source for episode ${ep} - ${tried.join(", ")} had no stream (removed or blocked)${other.length ? "; not supported: " + other.join(", ") : ""}`)
     }
@@ -228,10 +215,6 @@ class Provider implements AnimeProvider {
         const dub = (n.dub || 0) > 0
         if (!(wantDub ? dub : sub)) return undefined
         return { id: `${s._id}$${wantDub ? "dub" : "sub"}`, title: s.englishName || s.name || s._id, url: `${this.baseUrl}/anime/${s._id}`, subOrDub: sub && dub ? "both" : dub ? "dub" : "sub" }
-    }
-
-    private showFields(): string {
-        return "_id name englishName nativeName altNames type aniListId malId airedStart availableEpisodes"
     }
 
     private pickBest(cands: Show[], media: Media): Show[] {
@@ -299,19 +282,7 @@ class Provider implements AnimeProvider {
                 extensions.k = this.lane
                 extensions.aaReq = this.aaReq(boot, qh)
             }
-            let res: FetchResponse
-            try {
-                res = await fetch(`${this.api}/api`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json", "x-build-id": this.build, Origin: this.baseUrl, Referer: `${this.baseUrl}/`, "User-Agent": this.ua },
-                    body: JSON.stringify({ query, variables, extensions }),
-                    timeout: 10,
-                })
-            } catch (e) {
-                this.reportError(scope, `transport failure: ${e instanceof Error ? e.message : String(e)}`)
-                throw "mkissa: the site did not respond - retry in a moment"
-            }
-            if (res.status === 429) throw this.fail(scope, this.busy)
+            const res = await this.guarded(scope, `${this.api}/api`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query, variables, extensions }) })
             let body: any = null
             try {
                 body = res.json()
@@ -336,7 +307,18 @@ class Provider implements AnimeProvider {
             if (msgs.length && (!data || Object.keys(data).every((k) => data[k] === null))) throw this.fail(scope, `mkissa: the site API answered with an error (${msgs[0].slice(0, 120)})`)
             return data
         }
-        throw this.fail(scope, this.stale)
+    }
+
+    private async guarded(scope: string, url: string, opts: FetchOptions): Promise<FetchResponse> {
+        let res: FetchResponse
+        try {
+            res = await fetch(url, { ...opts, headers: { "x-build-id": this.build, Origin: this.baseUrl, Referer: `${this.baseUrl}/`, "User-Agent": this.ua, ...opts.headers }, timeout: 10 })
+        } catch (e) {
+            this.reportError(scope, `transport failure: ${e instanceof Error ? e.message : String(e)}`)
+            throw "mkissa: the site did not respond - retry in a moment"
+        }
+        if (res.status === 429) throw this.fail(scope, this.busy)
+        return res
     }
 
     private async boot(scope: string, fresh: boolean): Promise<Boot> {
@@ -354,17 +336,7 @@ class Provider implements AnimeProvider {
         const k1 = this.hmac(mask, this.utf8(this.bootPrefix + this.build))
         for (const epoch of now - cur * week < day && cur > 0 ? [cur - 1, cur] : [cur]) {
             const token = this.hex(this.hmac(k1, this.utf8([this.build, "mkissa", this.lane, epoch, host].join("|"))))
-            let res: FetchResponse
-            try {
-                res = await fetch(`${this.api}/client-crypto/v1/bootstrap?buildId=${this.build}&k=${this.lane}`, {
-                    headers: { "x-build-id": this.build, "x-aa-boot": token, Origin: this.baseUrl, Referer: `${this.baseUrl}/`, "User-Agent": this.ua },
-                    timeout: 10,
-                })
-            } catch (e) {
-                this.reportError(scope, `transport failure: ${e instanceof Error ? e.message : String(e)}`)
-                throw "mkissa: the site did not respond - retry in a moment"
-            }
-            if (res.status === 429) throw this.fail(scope, this.busy)
+            const res = await this.guarded(scope, `${this.api}/client-crypto/v1/bootstrap?buildId=${this.build}&k=${this.lane}`, { headers: { "x-aa-boot": token } })
             if (!res.ok) {
                 this.reportError(scope, `bootstrap for build ${this.build} answered ${res.status}`)
                 continue
@@ -385,7 +357,7 @@ class Provider implements AnimeProvider {
         const ts = Math.floor(Date.now() / 300000) * 300000
         const iv = this.sha256(this.utf8(`${boot.epoch}:${this.build}:${qh}:${ts}:${this.lane}`)).slice(0, 12)
         const plain = JSON.stringify({ v: 1, ts, epoch: boot.epoch, buildId: this.build, qh, k: this.lane })
-        return this.b64enc([1].concat(iv, this.gcm(this.unhexBytes(boot.key), iv, this.utf8(plain), true)))
+        return CryptoJS.enc.Base64.stringify(new Uint8Array([1].concat(iv, this.gcm(this.unhexBytes(boot.key), iv, this.utf8(plain), true))))
     }
 
     private open(boot: Boot, sealed: string): any {
@@ -532,15 +504,6 @@ class Provider implements AnimeProvider {
         return this.unhexBytes(h).map((b) => String.fromCharCode(b ^ 56)).join("")
     }
 
-    private b64enc(b: number[]): string {
-        let out = ""
-        for (let i = 0; i < b.length; i += 3) {
-            const n = (b[i] << 16) | ((b[i + 1] || 0) << 8) | (b[i + 2] || 0)
-            out += B64[(n >> 18) & 63] + B64[(n >> 12) & 63] + (i + 1 < b.length ? B64[(n >> 6) & 63] : "=") + (i + 2 < b.length ? B64[n & 63] : "=")
-        }
-        return out
-    }
-
     private b64dec(s: string): number[] {
         const out: number[] = []
         let acc = 0
@@ -570,12 +533,12 @@ class Provider implements AnimeProvider {
     private buildSubs(subs: Sub[]): VideoSubtitle[] {
         const out: VideoSubtitle[] = []
         const nonDialogue: boolean[] = []
-        const seen: { [key: string]: boolean } = {}
+        const seen = new Set<string>()
         let pick = 0
         let best = -1
         for (const s of subs) {
-            if (!/^https?:\/\//i.test(s.origin) || seen["#" + s.origin]) continue
-            seen["#" + s.origin] = true
+            if (!/^https?:\/\//i.test(s.origin) || seen.has(s.origin)) continue
+            seen.add(s.origin)
             const code = (s.lang || "en").toLowerCase()
             const label = (s.label || "").trim()
             const idx = out.length
@@ -606,15 +569,13 @@ class Provider implements AnimeProvider {
     }
 
     private reportError(scope: string, message: string, lvl?: "warn" | "info"): void {
-        try {
-            const line = "SEHERRv1 " + JSON.stringify({ t: Date.now(), ext: "aq-mkissa", scope: scope, msg: this.plain(message), lvl: lvl })
-            if (lvl) console.warn(line)
-            else console.error(line)
-        } catch (_e) {}
+        const line = "SEHERRv1 " + JSON.stringify({ t: Date.now(), ext: "aq-mkissa", scope: scope, msg: this.plain(message), lvl: lvl })
+        if (lvl) console.warn(line)
+        else console.error(line)
     }
 
     private plain(message: string): string {
-        return String(message === undefined || message === null ? "" : message)
+        return message
             .replace(/\u2026/g, "...")
             .replace(/[\u2014\u2013]/g, "-")
             .replace(/[\u2018\u2019]/g, "'")
@@ -622,7 +583,7 @@ class Provider implements AnimeProvider {
             .replace(/[\u00b7\u2022]/g, "-")
             .replace(/\s+/g, " ")
             .replace(/[^\x20-\x7e]/g, "?")
-            .replace(/^ +| +$/g, "")
+            .trim()
     }
 
     private fail(scope: string, message: string, lvl?: "warn" | "info"): string {
@@ -632,13 +593,7 @@ class Provider implements AnimeProvider {
 
     private readCache<T>(key: string, ttl: number): T | undefined {
         const entry = $store.get<{ at: number; data: T }>(key)
-        if (entry && entry.at > 0 && Date.now() - entry.at < ttl) return entry.data
-        if (entry !== undefined && entry !== null) {
-            try {
-                $store.remove(key)
-            } catch (_e) {}
-        }
-        return undefined
+        return entry && Date.now() - entry.at < ttl ? entry.data : undefined
     }
 
     private writeCache<T>(key: string, data: T): void {
