@@ -604,8 +604,10 @@ class Provider implements AnimeProvider {
     }
 
     private readCache<T>(key: string, ttl: number): T | undefined {
-        const entry = $store.get<{ at: number; data: T }>(key)
-        return entry && Date.now() - entry.at < ttl ? entry.data : undefined
+        const e = $store.get<{ at: number; data: T } | undefined>(key)
+        if (e && Date.now() - e.at < ttl) return e.data
+        if (e) $store.remove(key)
+        return undefined
     }
 
     private writeCache<T>(key: string, data: T): void {

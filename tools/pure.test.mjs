@@ -101,6 +101,32 @@ console.log("anikoto")
     const rlErr = await rl.findEpisodes("https://anikototv.to/watch/show-1$sub").catch((e) => e)
     eq([limited, rlErr], [1, "anikoto: too many requests right now - wait a minute and retry"], "episodes: a rate-limited site is asked once, not again through every mirror, and says so")
 
+    const r429 = (status, body) => Promise.resolve({ ok: status >= 200 && status < 300, status, headers: {}, text: () => (typeof body === "string" ? body : JSON.stringify(body)), json: () => (typeof body === "string" ? JSON.parse(body) : body) })
+    const kept = load("anikoto", {
+        fetch: (url) => {
+            if (url.indexOf("/ajax/server?get=L2") !== -1) return r429(429, "")
+            if (url.endsWith("master.m3u8")) return r429(200, "#EXTM3U\nseg-1.ts\n")
+            if (url.endsWith("seg-1.ts")) return r429(206, "G@\x00\x10")
+            return r429(404, "")
+        },
+    })
+    kept.serverListDoc = async () => null
+    kept.collectServers = () => [{ name: "HD-2", linkId: "L1" }, { name: "HD-1", linkId: "L2" }]
+    const keptSources = kept.fetchSources
+    kept.fetchSources = function (id) { return id === "L1" ? Promise.resolve({ origin: "https://c.cdn", file: "https://c.cdn/a/master.m3u8", embedAudio: "", tracks: [] }) : keptSources.call(this, id) }
+    eq(await kept.findEpisodeServer({ id: "1,2$sub", number: 1, url: "" }, "Auto").then((s) => s.videoSources[0].url, (e) => e), "https://c.cdn/a/master.m3u8", "server: a 429 on a later candidate keeps the playable server already found")
+
+    const found = load("anikoto", {
+        $scannerUtils: { normalizeTitle: () => null, buildSmartSearchTitles: () => ({ titles: ["Show A", "Show A Alt"] }) },
+        LoadDoc: () => (sel) => ({ length: () => (sel === "footer" ? 1 : 0), children: () => ({ length: () => 0 }) }),
+        fetch: (url) => (url.indexOf("keyword=Show%20A%20Alt") !== -1 ? r429(429, "") : r429(200, "<footer></footer>")),
+    })
+    found.parseSearchInto = function (doc, audio, wantDub, seen, results) {
+        if (results.length === 0) results.push({ id: "https://anikototv.to/watch/show-a$sub", title: "Show A", url: "https://anikototv.to/watch/show-a", subOrDub: "sub" })
+        return 1
+    }
+    eq(await found.search({ query: "Show A", dub: false, media: { id: 1, romajiTitle: "Show A", englishTitle: "", episodeCount: 12, format: "TV" } }).then((rs) => rs.map((r) => r.id), (e) => e), ["https://anikototv.to/watch/show-a$sub"], "search: a 429 on a later query keeps what the earlier queries found")
+
     eq(p.cleanLabel("English"), "English", "label: plain title is untouched")
     eq(p.cleanLabel("English (- (Crunchyroll))"), "English (Crunchyroll)", "label: keeps the group")
     eq(p.cleanLabel("German (- Deutsch)"), "German", "label: drops a bare native name")
@@ -416,6 +442,15 @@ console.log("anizone")
     const busy = "anizone: too many requests right now - wait a minute and retry"
     eq(await paced(200), [["abc123$sub"], 1, ""], "search: a query that settles the pick stops the rest - anizone allows 60 requests a minute per IP")
     eq(await paced(429), [busy, 1, busy], "rate limit: a 429 stops the search and the episode list with its own message")
+
+    eq(load("anizone", { $getUserPreference: () => { throw new Error("no config") } }).baseUrl, "https://anizone.to", "config: a host that throws for an unset preference still gets the default")
+    const legacy = load("anizone", { fetch: () => Promise.resolve({ ok: true, status: 200, cookies: {}, text: () => `items: JSON.parse('[{"slug":"1"},{"slug":"2"}]'), hasMore: false` }) })
+    eq((await legacy.findEpisodes("abc$al5")).map((e) => e.id), ["abc$1$al5$sub", "abc$2$al5$sub"], "episodes: an id saved by an older version without its audio is normalised")
+    const stale = {}
+    const evict = load("anizone", { $store: store(stale) })
+    stale.k = { at: 1, data: "old" }
+    eq([evict.readCache("k", 1000), Object.keys(stale)], [undefined, []], "cache: an expired entry is dropped when read")
+    eq(p.searchQueries({ media: { id: 0, romajiTitle: "Show Dai 2 Bu", englishTitle: "" }, query: "", dub: false }).part, 2, "search: a 'Dai N Bu' title asks for part N")
 }
 
 console.log("error channel")
@@ -681,8 +716,8 @@ console.log("shared helpers")
         [["anikoto", "anizone", "kickassanime", "mkissa"], ["normTitle", "writeCache"]],
         [["anikoto", "anizone", "kickassanime"], ["simNorm", "lev"]],
         [["anikoto", "anizone", "mkissa"], ["isNonDialogue"]],
-        [["anikoto", "kickassanime", "mkissa"], ["cfg"]],
-        [["anizone", "kickassanime", "mkissa"], ["fail"]],
+        [["anikoto", "anizone", "kickassanime", "mkissa"], ["cfg"]],
+        [["anizone", "kickassanime", "mkissa"], ["fail", "readCache"]],
         [["anizone", "kickassanime"], ["searchQueries", "firstWords", "norm", "matchTargets", "scoreTitles", "cardYear", "yearPenalty", "disambiguate", "byPart", "cardMax", "yearOf", "partOf", "bestTitle", "toInt", "displayName", "langName"]],
     ]
     const drift = []
