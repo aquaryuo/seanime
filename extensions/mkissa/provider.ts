@@ -144,11 +144,14 @@ class Provider implements AnimeProvider {
         const tried: string[] = []
         for (const s of cands) {
             if (Date.now() > deadline) break
-            tried.push(s.sourceName || "source")
+            const name = s.sourceName || "source"
+            tried.push(name)
             try {
                 const got = await this.resolve(s, Math.max(1, Math.min(10, Math.floor((deadline - Date.now()) / 1000))))
                 if (got) return got
-            } catch (_e) {}
+            } catch (e) {
+                this.reportError("server", `${name}: ${e instanceof Error ? e.message : String(e)}`, "warn")
+            }
             if (Date.now() > deadline) s.slow = true
         }
         const untried = cands.slice(tried.length).map((s) => s.sourceName || "source")
