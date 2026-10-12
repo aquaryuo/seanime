@@ -360,7 +360,7 @@ class Provider implements AnimeProvider {
         const ts = Math.floor(Date.now() / 300000) * 300000
         const iv = this.sha256(this.utf8(`${boot.epoch}:${this.build}:${qh}:${ts}:${this.lane}`)).slice(0, 12)
         const plain = JSON.stringify({ v: 1, ts, epoch: boot.epoch, buildId: this.build, qh, k: this.lane })
-        return CryptoJS.enc.Base64.stringify(new Uint8Array([1].concat(iv, this.gcm(this.unhexBytes(boot.key), iv, this.utf8(plain), true))))
+        return this.b64enc([1].concat(iv, this.gcm(this.unhexBytes(boot.key), iv, this.utf8(plain), true)))
     }
 
     private open(boot: Boot, sealed: string): any {
@@ -505,6 +505,15 @@ class Provider implements AnimeProvider {
 
     private unhex(h: string): string {
         return this.unhexBytes(h).map((b) => String.fromCharCode(b ^ 56)).join("")
+    }
+
+    private b64enc(b: number[]): string {
+        let out = ""
+        for (let i = 0; i < b.length; i += 3) {
+            const n = (b[i] << 16) | ((b[i + 1] || 0) << 8) | (b[i + 2] || 0)
+            out += B64[(n >> 18) & 63] + B64[(n >> 12) & 63] + (i + 1 < b.length ? B64[(n >> 6) & 63] : "=") + (i + 2 < b.length ? B64[n & 63] : "=")
+        }
+        return out
     }
 
     private b64dec(s: string): number[] {
