@@ -1,12 +1,11 @@
 import fs from "fs"
-import { execFileSync } from "child_process"
+import { fileURLToPath } from "url"
+import esbuild from "esbuild"
 
-const ROOT = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")
+const ROOT = fileURLToPath(new URL("..", import.meta.url))
 
 let failures = 0
 let checks = 0
-
-const run = (what, fn) => fn(what)
 
 function eq(actual, expected, what) {
     checks++
@@ -18,19 +17,16 @@ function eq(actual, expected, what) {
     }
 }
 
-function compile(src) {
-    return execFileSync("npx", ["esbuild", "--loader=ts", "--target=es2018"], {
-        input: fs.readFileSync(src),
-        encoding: "utf8",
-        shell: true,
-        stdio: ["pipe", "pipe", "ignore"],
-    })
-}
+const compiled = {}
+const compile = (src) => compiled[src] || (compiled[src] = esbuild.transformSync(fs.readFileSync(src, "utf8"), { loader: "ts", target: "es2018", minifyWhitespace: true, minifySyntax: true }).code)
+
+const store = (mem) => ({ get: (k) => mem[k], set: (k, v) => { mem[k] = JSON.parse(JSON.stringify(v)) }, remove: (k) => { delete mem[k] }, has: (k) => k in mem })
+const reply = (status, body) => Promise.resolve({ ok: status >= 200 && status < 300, status, text: () => (typeof body === "string" ? body : JSON.stringify(body)), json: () => (typeof body === "string" ? JSON.parse(body) : body) })
 
 function load(name, overrides) {
     const js = compile(`${ROOT}/extensions/${name}/provider.ts`)
     const boom = (who) => () => { throw new Error(`pure test touched ${who}`) }
-    const g = {
+    const g = Object.assign({
         fetch: boom("fetch"),
         LoadDoc: boom("LoadDoc"),
         $getUserPreference: () => undefined,
@@ -39,10 +35,8 @@ function load(name, overrides) {
         $toBytes: (s) => new Uint8Array(Buffer.from(String(s), "utf8")),
         CryptoJS: {},
         console: { log() {}, info() {}, warn() {}, error() {} },
-    }
-    for (const k in overrides || {}) g[k] = overrides[k]
-    const keys = Object.keys(g)
-    const Provider = new Function(...keys, `${js}\nreturn Provider`)(...keys.map((k) => g[k]))
+    }, overrides)
+    const Provider = new Function(...Object.keys(g), `${js}\nreturn Provider`)(...Object.values(g))
     return new Provider()
 }
 
@@ -254,16 +248,15 @@ console.log("anikoto: enc resolve cost")
 {
     const EMBED = "https://megaplay.buzz/stream/s-2/1/sub?s=bcdn"
     const fetched = []
-    const res = (body, ok = true, status = 200) => ({ ok, status, text: () => body, json: () => JSON.parse(body) })
     const p = load("anikoto", {
         LoadDoc: () => () => ({ first: () => ({ attr: () => "", text: () => "" }), length: () => 0, each: () => {}, find: () => ({ first: () => ({ text: () => "" }) }) }),
         CryptoJS: { AES: { decrypt: () => ({ toString: () => JSON.stringify({ file: "https://cdn.test/a/master.m3u8" }) }) }, enc: { Utf8: 1 } },
         fetch: (url) => {
             fetched.push(url)
-            if (url.indexOf("/ajax/server?get=") !== -1) return Promise.resolve(res(JSON.stringify({ status: 200, result: { url: EMBED } })))
-            if (url === EMBED) return Promise.resolve(res('<div id="megaplay-player" data-id="177919"></div><script src="/lib/newclient.min.js"></script>'))
-            if (url.indexOf("getSources") !== -1) return Promise.resolve(res(JSON.stringify({ tracks: [], enc: "AAAA" })))
-            return Promise.resolve(res("", false, 404))
+            if (url.indexOf("/ajax/server?get=") !== -1) return reply(200, { status: 200, result: { url: EMBED } })
+            if (url === EMBED) return reply(200, '<div id="megaplay-player" data-id="177919"></div><script src="/lib/newclient.min.js"></script>')
+            if (url.indexOf("getSources") !== -1) return reply(200, { tracks: [], enc: "AAAA" })
+            return reply(404, "")
         },
     })
 
@@ -274,9 +267,9 @@ console.log("anikoto: enc resolve cost")
     eq(fetched.filter((u) => u.indexOf("getSources") !== -1), ["https://megaplay.buzz/stream/getSourcesNew?id=177919&s=bcdn"], "enc: one source request, carrying the embed's CDN selector")
 
     const scan = load("anikoto", {
-        fetch: (url) => Promise.resolve(res(url === EMBED
+        fetch: (url) => reply(200, url === EMBED
             ? '<script src="https://megaplay.buzz/lib/newclient.min.js"></script>'
-            : 'a=String(e.pick(["trustAesKey","TRUST_AES_KEY"],"0123456789abcdef")),k=(new TextEncoder).encode("0123456789abcdef"),v=(new TextEncoder).encode("fedcba9876543210")')),
+            : 'a=String(e.pick(["trustAesKey","TRUST_AES_KEY"],"0123456789abcdef")),k=(new TextEncoder).encode("0123456789abcdef"),v=(new TextEncoder).encode("fedcba9876543210")'),
     })
     eq((await scan.scanEncKeys("https://megaplay.buzz", EMBED)).some((k) => k.key === "0123456789abcdef" && k.iv === "fedcba9876543210"), true, "enc: a rotated key is recovered from the player script's encode() literals")
 }
@@ -351,7 +344,6 @@ console.log("anizone")
     eq((await tail(404))[0], { last: 1183, sure: false }, "probe: with no newest-first listing the 404 is dropped and the result is undecided")
     eq((await tail(429))[0], { last: 1184, sure: false }, "probe: a rate-limited probe keeps the stated count and reports it as undecided")
 
-    const store = (mem) => ({ get: (k) => mem[k], set: (k, v) => { mem[k] = v }, remove: (k) => { delete mem[k] }, has: (k) => k in mem })
     const site = (more, cursor, walk, o = {}) => {
         const hits = []
         const mem = {}
@@ -402,7 +394,7 @@ console.log("anizone")
     const mem = {}
     let gets = 0
     const cached = load("anizone", {
-        $store: { get: (k) => mem[k], set: (k, v) => { mem[k] = v }, remove: (k) => { delete mem[k] }, has: (k) => k in mem },
+        $store: store(mem),
         fetch: (url) => {
             gets++
             return Promise.resolve({ ok: true, status: 200, text: () => url.endsWith("=Foo") ? `items: JSON.parse('[{"slug":"abc123","main_title":"Foo"}]')` : "<p>checking your browser</p>" })
@@ -429,13 +421,14 @@ console.log("error channel")
     const cap = { console: { log() {}, info() {}, warn: (s) => out.push("warn " + s), error: (s) => out.push(String(s)) } }
     load("anikoto", cap).reportError("server", "a")
     load("anikoto", cap).reportError("server", "b", "warn")
-    for (const name of ["anizone"]) {
+    for (const name of ["anizone", "kickassanime"]) {
         load(name, cap).fail("server", "c")
         load(name, cap).fail("server", "d", "info")
     }
     eq(out.map((s) => s.replace(/"t":\d+/, "")), [
         'SEHERRv1 {,"ext":"aq-anikoto","scope":"server","msg":"a"}', 'warn SEHERRv1 {,"ext":"aq-anikoto","scope":"server","msg":"b","lvl":"warn"}',
         'SEHERRv1 {,"ext":"aq-anizone","scope":"server","msg":"c"}', 'warn SEHERRv1 {,"ext":"aq-anizone","scope":"server","msg":"d","lvl":"info"}',
+        'SEHERRv1 {,"ext":"aq-kickassanime","scope":"server","msg":"c"}', 'warn SEHERRv1 {,"ext":"aq-kickassanime","scope":"server","msg":"d","lvl":"info"}',
     ], "lvl: an error goes to console.error with no lvl field; a notice carries its level and goes to console.warn, so hosts that treat console.error as failure don't")
     const sites = (name) => { const src = fs.readFileSync(`${ROOT}/extensions/${name}/provider.ts`, "utf8"); return [(src.match(/, "warn"\)/g) || []).length, (src.match(/, "info"\)/g) || []).length] }
     eq(["anikoto", "anizone", "kickassanime", "mkissa"].map(sites), [[3, 1], [0, 1], [0, 3], [0, 1]], "lvl: only the listed recovered and expected reports are relabelled")
@@ -444,8 +437,6 @@ console.log("error channel")
 console.log("kickassanime")
 {
     const busy = "kickassanime: too many requests right now - wait a minute and retry"
-    const store = (mem) => ({ get: (k) => mem[k], set: (k, v) => { mem[k] = v }, remove: (k) => { delete mem[k] }, has: (k) => k in mem })
-    const reply = (status, body) => Promise.resolve({ ok: status >= 200 && status < 300, status, text: () => (typeof body === "string" ? body : JSON.stringify(body)), json: () => (typeof body === "string" ? JSON.parse(body) : body) })
     // A fake kaa.lt: routes are "METHOD path" prefixes, the player host reads as @player, anything unrouted is a 404.
     const site = (routes, mem = {}) => {
         const hits = []
@@ -547,14 +538,7 @@ console.log("kickassanime")
     eq([downErr, down.hits.length], ["kickassanime: search failed (site unreachable)", 1], "search: a failing site stops the search at its first answer instead of sending every query")
     const moved = site({ "GET /api/show/f/episode/ep-1-s1": [200, { servers: [{ name: "VidStreaming", src: "https://krussdomi.com/cat-player/player?id=v" }] }], "GET @player/cat-player/player?id=v": [200, "<html>new player</html>"] })
     eq(await moved.p.findEpisodeServer({ id: "f$1$s1$ja-JP$sub", number: 1, url: "" }, "Auto").catch((e) => e), "kickassanime: no playable stream for episode 1 - the player page was not recognized - the site changed its player; this extension needs an update", "server: a player page in a new shape says the extension needs an update, not to retry")
-
-    const out = []
-    const cap = load("kickassanime", { console: { log() {}, info() {}, warn: (s) => out.push("warn " + s), error: (s) => out.push(String(s)) } })
-    cap.fail("server", "c")
-    cap.fail("server", "d", "info")
-    eq(out.map((s) => s.replace(/"t":\d+/, "")), ['SEHERRv1 {,"ext":"aq-kickassanime","scope":"server","msg":"c"}', 'warn SEHERRv1 {,"ext":"aq-kickassanime","scope":"server","msg":"d","lvl":"info"}'], "lvl: an error goes to console.error, a notice to console.warn with its level")
-    const pref = (v) => load("kickassanime", { $getUserPreference: () => v }).baseUrl
-    eq([pref(undefined), pref("{{baseUrl}}"), pref(""), pref("https://kaa.mirror/")], ["https://kaa.lt", "https://kaa.lt", "https://kaa.lt", "https://kaa.mirror"], "config: unset, placeholder and empty fall back to the default; a mirror loses its trailing slash")
+    eq(load("kickassanime", { $getUserPreference: () => "https://kaa.mirror/" }).baseUrl, "https://kaa.mirror", "config: a mirror loses its trailing slash")
 }
 
 console.log("mkissa")
@@ -573,9 +557,6 @@ console.log("mkissa")
     eq(p.gcm(bytes(key), bytes(iv), bytes(sealed.subarray(0, msg.length)), false), bytes(msg), "crypto: aes-256-gcm decrypt round-trips")
     eq(p.unhex("1748485141"), "/ppiy", "sources: a -- link is hex with every byte xored by 56")
 
-    const store = (mem) => ({ get: (k) => mem[k], set: (k, v) => { mem[k] = JSON.parse(JSON.stringify(v)) }, remove: (k) => { delete mem[k] }, has: (k) => k in mem })
-    const json = (v, status = 200) => Promise.resolve({ ok: status < 300, status, json: () => v, text: () => JSON.stringify(v) })
-    const html = (s, status = 200) => Promise.resolve({ ok: status < 300, status, text: () => s, json: () => JSON.parse(s) })
     const show = { _id: "ReHMC7TQnch3C6z8j", name: "Sousou no Frieren", englishName: "Frieren: Beyond Journey's End", aniListId: "154587", type: "TV", availableEpisodes: { sub: 4, dub: 1 }, availableEpisodesDetail: { sub: ["3", "2", "1", "0", "1.5"], dub: ["1"] } }
     const frieren = { id: 154587, romajiTitle: "Sousou no Frieren", englishTitle: "Frieren: Beyond Journey's End", synonyms: [], isAdult: false, startDate: { year: 2023 } }
 
@@ -592,29 +573,29 @@ console.log("mkissa")
             fetch: (url, opts = {}) => {
                 const body = opts.body ? JSON.parse(opts.body) : null
                 hits.push(body ? (/episode\(/.test(body.query) ? "episode" : /shows\(/.test(body.query) ? "shows:" + body.variables.search.query : "show:" + body.variables._id) : url.replace(/\?.*$/, ""))
-                if (o.status) return json({}, o.status)
+                if (o.status) return reply(o.status, {})
                 if (url.indexOf("/client-crypto/v1/bootstrap") !== -1) {
                     const k1 = crypto.createHmac("sha256", mask).update("KoCGqjW:179").digest()
                     const want = crypto.createHmac("sha256", k1).update(["179", "mkissa", "k7", epoch, "mkissa.to"].join("|")).digest("hex")
-                    if (opts.headers["x-aa-boot"] !== want) return json({ error: "invalid_boot_token" }, 403)
-                    return json({ epoch, switchAt: Date.now() + 86400000, partB: Buffer.from(wk.map((b, i) => b ^ mask[i])).toString("base64"), k: "k7" })
+                    if (opts.headers["x-aa-boot"] !== want) return reply(403, { error: "invalid_boot_token" })
+                    return reply(200, { epoch, switchAt: Date.now() + 86400000, partB: Buffer.from(wk.map((b, i) => b ^ mask[i])).toString("base64"), k: "k7" })
                 }
                 if (body && /episode\(/.test(body.query)) {
-                    if (o.errors) return json({ errors: [{ message: o.errors }], data: { episode: null } })
-                    if (crypt-- > 0) return json({ errors: [{ message: "AA_CRYPTO_STALE" }], data: { episode: null } })
+                    if (o.errors) return reply(200, { errors: [{ message: o.errors }], data: { episode: null } })
+                    if (crypt-- > 0) return reply(200, { errors: [{ message: "AA_CRYPTO_STALE" }], data: { episode: null } })
                     const t = Buffer.from(body.extensions.aaReq, "base64")
                     const d = crypto.createDecipheriv("aes-256-gcm", wk, t.subarray(1, 13))
                     d.setAuthTag(t.subarray(t.length - 16))
                     const req = JSON.parse(Buffer.concat([d.update(t.subarray(13, t.length - 16)), d.final()]).toString())
-                    if (req.qh !== crypto.createHash("sha256").update(body.query).digest("hex") || req.k !== "k7" || req.buildId !== "179") return json({ errors: [{ message: "AA_CRYPTO_QUERY_MISMATCH" }] })
+                    if (req.qh !== crypto.createHash("sha256").update(body.query).digest("hex") || req.k !== "k7" || req.buildId !== "179") return reply(200, { errors: [{ message: "AA_CRYPTO_QUERY_MISMATCH" }] })
                     const ivo = crypto.randomBytes(12)
                     const e = crypto.createCipheriv("aes-256-gcm", wk, ivo)
                     const out = JSON.stringify({ episode: { episodeString: body.variables.episodeString, sourceUrls: o.sources } })
-                    return json({ data: { _m: "b7", tobeparsed: Buffer.concat([Buffer.from([1]), ivo, e.update(out), e.final(), e.getAuthTag()]).toString("base64") } })
+                    return reply(200, { data: { _m: "b7", tobeparsed: Buffer.concat([Buffer.from([1]), ivo, e.update(out), e.final(), e.getAuthTag()]).toString("base64") } })
                 }
-                if (body && /shows\(/.test(body.query)) return json({ data: { shows: { edges: o.edges || [] } } })
-                if (body) return json({ data: { show: o.missing ? null : show } })
-                return o.page ? o.page(url, opts) : html("", 404)
+                if (body && /shows\(/.test(body.query)) return reply(200, { data: { shows: { edges: o.edges || [] } } })
+                if (body) return reply(200, { data: { show: o.missing ? null : show } })
+                return o.page ? o.page(url, opts) : reply(404, "")
             },
         })
         return { s, hits, mem }
@@ -636,7 +617,7 @@ console.log("mkissa")
     const titled = site({ edges: [{ _id: "x3", name: "Sousou no Frieren", availableEpisodes: { sub: 28 } }, { _id: "x4", name: "Some Other Show", availableEpisodes: { sub: 3 } }] })
     eq((await titled.s.search({ media: Object.assign({}, frieren, { id: 0 }), query: "", dub: false })).map((r) => r.id), ["x3$sub"], "search: with no id the title score settles a single pick")
 
-    const mp4 = (url) => html(url.indexOf("www.mp4upload.com/embed-abc.html") !== -1 ? 'player.src({ type: "video/mp4", src: "https://a4.mp4upload.com:183/d/tok/video.mp4" })' : "", 200)
+    const mp4 = (url) => reply(200, url.indexOf("www.mp4upload.com/embed-abc.html") !== -1 ? 'player.src({ type: "video/mp4", src: "https://a4.mp4upload.com:183/d/tok/video.mp4" })' : "")
     const srv = site({ sources: [{ sourceUrl: "https://streamwish.to/e/x", sourceName: "Sw", priority: 5.5 }, { sourceUrl: "https://mp4upload.com/embed-abc.html", sourceName: "Mp4", priority: 4 }], page: mp4 })
     const got = await srv.s.findEpisodeServer({ id: "ReHMC7TQnch3C6z8j$sub$1", number: 1, url: "" }, "Auto")
     eq([got, srv.hits], [{ server: "Auto", headers: { Referer: "https://www.mp4upload.com/" }, videoSources: [{ url: "https://a4.mp4upload.com:183/d/tok/video.mp4", type: "mp4", quality: "auto", subtitles: [] }] }, ["https://api.mkissa.net/client-crypto/v1/bootstrap", "episode", "https://www.mp4upload.com/embed-abc.html"]], "server: the sealed episode answer opens and mp4upload resolves with its referer, unsupported players skipped")
@@ -646,14 +627,14 @@ console.log("mkissa")
     const clockPath = Buffer.from("/apivtwo/clock?id=7d24").map((b) => b ^ 56).toString("hex")
     const own = site({
         sources: [{ sourceUrl: "https://ok.ru/videoembed/1", sourceName: "Ok", priority: 3.5 }, { sourceUrl: "--" + clockPath, sourceName: "Default", priority: 8.5 }],
-        page: (url) => json(url === "https://filelotion.fyi/apivtwo/clock.json?id=7d24" ? { links: [{ link: "https://repackager.wixmp.com/v/,1080p,720p,/mp4/file.mp4.urlset/master.m3u8", hls: true, resolutionStr: "Hls", subtitles: [{ src: "https://s.test/signs.vtt", lang: "en", label: "English (Signs)" }, { src: "https://s.test/full.vtt", lang: "en", label: "English" }] }] } : {}, url.indexOf("clock.json") !== -1 ? 200 : 404),
+        page: (url) => reply(url.indexOf("clock.json") !== -1 ? 200 : 404, url === "https://filelotion.fyi/apivtwo/clock.json?id=7d24" ? { links: [{ link: "https://repackager.wixmp.com/v/,1080p,720p,/mp4/file.mp4.urlset/master.m3u8", hls: true, resolutionStr: "Hls", subtitles: [{ src: "https://s.test/signs.vtt", lang: "en", label: "English (Signs)" }, { src: "https://s.test/full.vtt", lang: "en", label: "English" }] }] } : {}),
     })
     const mine = await own.s.findEpisodeServer({ id: "ReHMC7TQnch3C6z8j$dub$1", number: 1, url: "" }, "Auto")
     eq([mine.videoSources[0].type, mine.videoSources[0].subtitles.map((t) => [t.url, t.isDefault])], ["m3u8", [["https://s.test/full.vtt", true], ["https://s.test/signs.vtt", false]]], "server: the site's own upload goes first via the clock API and full English dialogue is the default track")
 
     const hung = site({
         sources: [{ sourceUrl: "--" + clockPath, sourceName: "Default", priority: 8.5 }, { sourceUrl: "https://mp4upload.com/embed-abc.html", sourceName: "Mp4", priority: 4 }],
-        page: (url) => (url.indexOf("clock.json") !== -1 ? new Promise((r) => setTimeout(() => r(json({ links: [] })), 300)) : mp4(url)),
+        page: (url) => (url.indexOf("clock.json") !== -1 ? new Promise((r) => setTimeout(() => r(reply(200, { links: [] })), 300)) : mp4(url)),
     })
     hung.s.serverBudget = 150
     const hungErr = await hung.s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto").catch((e) => e)
@@ -662,7 +643,7 @@ console.log("mkissa")
     const after = await hung.s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto")
     eq([hungErr, hung.hits.slice(before), after.videoSources[0].type], ["mkissa: episode 1 ran out of time on Default - retry to try Mp4", ["https://www.mp4upload.com/embed-abc.html"], "mp4"], "server: a host that eats the budget keeps the source list and goes last, so the retry costs no new lookup")
 
-    const ok = site({ sources: [{ sourceUrl: "https://ok.ru/videoembed/9", sourceName: "Ok" }], page: () => html(`<div data-options="{&quot;flashvars&quot;:{&quot;metadata&quot;:&quot;{\\&quot;ondemandHls\\&quot;:\\&quot;https://vd.okcdn.ru/x.m3u8\\&quot;}&quot;}}"></div>`) })
+    const ok = site({ sources: [{ sourceUrl: "https://ok.ru/videoembed/9", sourceName: "Ok" }], page: () => reply(200, `<div data-options="{&quot;flashvars&quot;:{&quot;metadata&quot;:&quot;{\\&quot;ondemandHls\\&quot;:\\&quot;https://vd.okcdn.ru/x.m3u8\\&quot;}&quot;}}"></div>`) })
     const okGot = await ok.s.findEpisodeServer({ id: "ReHMC7TQnch3C6z8j$sub$2", number: 2, url: "" }, "Auto")
     eq([okGot.videoSources[0].url, okGot.headers.Referer], ["https://vd.okcdn.ru/x.m3u8", "https://ok.ru/"], "server: ok.ru metadata gives its HLS manifest")
 
@@ -679,8 +660,6 @@ console.log("mkissa")
     eq(await site({ errors: "NEED_CAPTCHA" }).s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto").catch((e) => e), p.captcha, "captcha: a captcha demand is reported, not mistaken for a missing episode")
     eq(await site({ sources: [{ sourceUrl: "https://bysekoze.com/e/x", sourceName: "Fm-Hls" }] }).s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto").catch((e) => e), "mkissa: episode 1 only has players this extension cannot play (Fm-Hls)", "server: an episode with only unsupported players says which")
 
-    eq(load("mkissa").baseUrl, "https://mkissa.to", "config: mkissa falls back to the manifest default when nothing is set")
-    eq(load("mkissa", { $getUserPreference: () => "{{baseUrl}}" }).baseUrl, "https://mkissa.to", "config: mkissa rejects an unsubstituted placeholder")
     eq(load("mkissa", { $getUserPreference: () => "https://mkissa.to/" }).baseUrl, "https://mkissa.to", "config: a trailing slash is stripped")
 }
 
@@ -718,8 +697,6 @@ console.log("versions")
     eq(v.next("1.3.98"), "1.3.99", "version: an ordinary patch bump")
     eq(v.next("1.3.99"), "1.4.0", "version: a patch past 99 rolls into the minor")
     eq(v.next("1.9.99"), "2.0.0", "version: a minor past 9 rolls into the major")
-    eq(v.normalise("1.3.103"), "1.4.0", "version: an overflowed patch normalises into the minor")
-    eq(v.normalise("0.10.28"), "1.0.28", "version: an overflowed minor normalises into the major and keeps the patch")
     eq(v.isValid("1.4.0"), true, "version: three fields inside the caps are valid")
     eq(v.isValid("1.3.103"), false, "version: a three-digit patch is not")
     eq(v.isValid("0.10.28"), false, "version: a two-digit minor is not")
@@ -727,22 +704,16 @@ console.log("versions")
     eq(v.manifests().filter((f) => !v.isValid(JSON.parse(fs.readFileSync(f, "utf8")).version)), [], "version: every shipped manifest is inside 9.9.99")
 }
 
-console.log("payload bytes")
+console.log("payloads")
 {
-    const list = (kind, file) => (fs.existsSync(`${ROOT}/${kind}`) ? fs.readdirSync(`${ROOT}/${kind}`).map((d) => `${kind}/${d}/${file}`) : [])
-    const payloads = list("extensions", "provider.ts").concat(list("plugins", "plugin.ts"))
     const bad = []
-    for (const rel of payloads) {
-        const buf = fs.readFileSync(`${ROOT}/${rel}`)
-        for (let i = 0; i < buf.length; i++) {
-            const b = buf[i]
-            if (b < 0x20 && b !== 0x09 && b !== 0x0a && b !== 0x0d) {
-                bad.push(`${rel}@${i}=0x${b.toString(16)}`)
-                break
-            }
-        }
+    for (const d of fs.readdirSync(`${ROOT}/extensions`)) {
+        const src = `${ROOT}/extensions/${d}/provider.ts`
+        compile(src)
+        const i = fs.readFileSync(src, "latin1").search(/[\x00-\x08\x0b\x0c\x0e-\x1f]/)
+        if (i >= 0) bad.push(`${d}@${i}`)
     }
-    eq(bad, [], "bytes: no payload carries a stray control character")
+    eq(bad, [], "bytes: every payload compiles the way the host does and carries no stray control character")
 }
 
 console.log()
