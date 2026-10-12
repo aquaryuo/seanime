@@ -1,7 +1,7 @@
 {
   "id": "aq-anikoto",
   "name": "Anikoto",
-  "version": "1.4.8",
+  "version": "1.4.9",
   "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/anikoto/manifest.json",
   "language": "typescript",
   "type": "onlinestream-provider",
@@ -78,7 +78,7 @@
       {
         "type": "text",
         "name": "solverUrl",
-        "label": "[!] Solver endpoint — run it via Aqua's Utils",
+        "label": "[!] Solver endpoint — a FlareSolverr-compatible solver",
         "default": "http://127.0.0.1:8191/v1"
       }
     ]
