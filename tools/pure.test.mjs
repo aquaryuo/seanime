@@ -98,17 +98,17 @@ console.log("anikoto")
 
     let limited = 0
     const rl = load("anikoto", { LoadDoc: epDoc, fetch: () => { limited++; return Promise.resolve({ ok: false, status: 429, headers: {}, text: () => "" }) } })
-    await rl.findEpisodes("https://anikototv.to/watch/show-1$sub").catch(() => {})
-    eq(limited, 2, "episodes: a rate-limited site is not asked again through every mirror")
+    const rlErr = await rl.findEpisodes("https://anikototv.to/watch/show-1$sub").catch((e) => e)
+    eq([limited, rlErr], [1, "anikoto: too many requests right now - wait a minute and retry"], "episodes: a rate-limited site is asked once, not again through every mirror, and says so")
 
     eq(p.cleanLabel("English"), "English", "label: plain title is untouched")
     eq(p.cleanLabel("English (- (Crunchyroll))"), "English (Crunchyroll)", "label: keeps the group")
     eq(p.cleanLabel("German (- Deutsch)"), "German", "label: drops a bare native name")
     eq(p.cleanLabel("Spanish (- Espanol (LA))"), "Spanish (LA)", "label: keeps the region")
 
-    eq(p.fallbackCode("English"), "en", "lang: english maps to en")
-    eq(p.fallbackCode("Danish"), "da", "lang: danish maps to da")
-    eq(p.fallbackCode("Klingon"), "", "lang: an unknown language is not English")
+    eq(p.isEnglish("English"), true, "lang: english is English")
+    eq(p.isEnglish("Danish"), false, "lang: danish is not English")
+    eq(p.isEnglish("Klingon"), false, "lang: an unknown language is not English")
 
     eq(p.buildSubtitles([{ file: "https://c/ara.vtt", label: "Arabic" }, { file: "https://c/eng.vtt", label: "Eng_sub" }]).map((s) => s.url), ["https://c/eng.vtt", "https://c/ara.vtt"], "subs: the English track leads even when the site lists it second")
     eq(p.buildSubtitles([{ file: "https://c/es.vtt", label: "Spanish (English signs)" }, { file: "https://c/pt.vtt", label: "Portuguese" }])[0].url, "https://c/pt.vtt", "subs: a label naming another language before English is not English")
@@ -205,7 +205,7 @@ console.log("anikoto: time budget")
             return Promise.resolve({ ok: true, status: 200, text: () => "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nindex-f1.m3u8\n" })
         },
     })
-    const ok = await p.isPlayable({ server: "Auto", headers: {}, videoSources: [{ url: "https://c.cdn/a/master.m3u8", type: "m3u8", quality: "default", subtitles: [] }] })
+    const { ok } = await p.isPlayable({ server: "Auto", headers: {}, videoSources: [{ url: "https://c.cdn/a/master.m3u8", type: "m3u8", quality: "default", subtitles: [] }] })
     eq(ok, true, "budget: a stream whose master loaded is kept when the clock runs out before the variants are checked")
 
     const q = load("anikoto", {
@@ -215,7 +215,7 @@ console.log("anikoto: time budget")
             return Promise.reject(new Error("i/o timeout"))
         },
     })
-    eq(await q.isPlayable({ server: "Auto", headers: {}, videoSources: [{ url: "https://c.cdn/a/master.m3u8", type: "m3u8", quality: "default", subtitles: [] }] }), false, "budget: a stream whose first variant just failed is not kept because the clock ran out")
+    eq((await q.isPlayable({ server: "Auto", headers: {}, videoSources: [{ url: "https://c.cdn/a/master.m3u8", type: "m3u8", quality: "default", subtitles: [] }] })).ok, false, "budget: a stream whose first variant just failed is not kept because the clock ran out")
 
     const learned = []
     const lp = load("anikoto", {
@@ -236,8 +236,8 @@ console.log("anikoto: time budget")
                 return Promise.resolve({ ok: true, status: 200, text: () => body })
             },
         })
-        const ok = await wp.isPlayable({ server: "Auto", headers: {}, videoSources: [{ url: "https://c.cdn/a/master.m3u8", type: "m3u8", quality: "default", subtitles: [] }] })
-        return [ok, wp.wrapped, asked[2]]
+        const { ok, wrapped } = await wp.isPlayable({ server: "Auto", headers: {}, videoSources: [{ url: "https://c.cdn/a/master.m3u8", type: "m3u8", quality: "default", subtitles: [] }] })
+        return [ok, wrapped, asked[2]]
     }
     eq([await wrappedAs("seg-1.jpg", "�PNG\r\n\x1a\n"), await wrappedAs("/s/seg-1.jpg", "G@\x00\x10"), await wrappedAs("https://img.cdn/x.image?sig=1", "�PNG\r\n\x1a\n")],
         [[true, true, "https://c.cdn/a/v/seg-1.jpg"], [true, false, "https://c.cdn/s/seg-1.jpg"], [true, true, "https://img.cdn/x.image?sig=1"]],
@@ -431,7 +431,7 @@ console.log("error channel")
         'SEHERRv1 {,"ext":"aq-kickassanime","scope":"server","msg":"c"}', 'warn SEHERRv1 {,"ext":"aq-kickassanime","scope":"server","msg":"d","lvl":"info"}',
     ], "lvl: an error goes to console.error with no lvl field; a notice carries its level and goes to console.warn, so hosts that treat console.error as failure don't")
     const sites = (name) => { const src = fs.readFileSync(`${ROOT}/extensions/${name}/provider.ts`, "utf8"); return [(src.match(/, "warn"\)/g) || []).length, (src.match(/, "info"\)/g) || []).length] }
-    eq(["anikoto", "anizone", "kickassanime", "mkissa"].map(sites), [[3, 1], [0, 1], [0, 3], [0, 1]], "lvl: only the listed recovered and expected reports are relabelled")
+    eq(["anikoto", "anizone", "kickassanime", "mkissa"].map(sites), [[6, 1], [0, 1], [0, 3], [0, 1]], "lvl: only the listed recovered and expected reports are relabelled")
 }
 
 console.log("kickassanime")
