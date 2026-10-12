@@ -320,7 +320,7 @@ class Provider implements AnimeProvider {
         const seed = [opts.query, romaji, english].filter((s) => s)
         let season = 0
         let part = 0
-        if (!romaji && !english) add(primary, opts.query || "")
+        if (!romaji && !english) add(primary, opts.query)
         for (const s of [romaji, english]) {
             add(primary, s)
             add(primary, s.replace(/\s*\b(?:\d+(?:st|nd|rd|th)\s+season|season\s*\d+|part\s*\d+|cour\s*\d+)\b.*$/i, ""))
@@ -338,7 +338,7 @@ class Provider implements AnimeProvider {
         add(fallback, this.firstWords(english, 2))
         add(fallback, this.firstWords(romaji, 2))
         add(fallback, this.firstWords(english, 3))
-        return { primary: primary.slice(0, 4), fallback: fallback.slice(0, 4), season, part }
+        return { primary: primary.slice(0, 4), fallback, season, part }
     }
 
     private firstWords(title: string, n: number): string {
