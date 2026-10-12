@@ -569,7 +569,7 @@ class Provider implements AnimeProvider {
             for (const id of tried) $store.remove(`anikoto:src:${id}`)
             $store.remove(`anikoto:slist:${dataIds}`)
         } catch (_e) {}
-        const hint = this.solverEnabled() ? "" : "; if sources are Cloudflare-protected, enable the custom solver in settings (run it via Aqua's Utils)"
+        const hint = this.solverEnabled() ? "" : "; if sources are Cloudflare-protected, enable the custom solver in settings (a FlareSolverr-compatible solver)"
         throw this.fail("server", "no playable server found for this episode" + (lastReason ? ` — ${lastReason}` : hint))
     }
 
