@@ -158,7 +158,10 @@ class Provider implements AnimeProvider {
                     this.reportError("search", `${base} failed: ${this.why(e)}`, "warn")
                     break
                 }
-                if (limited) throw this.fail("search", this.busy)
+                if (limited) {
+                    if (cards > 0) break
+                    throw this.fail("search", this.busy)
+                }
                 if (pageDoc) {
                     cards += this.parseSearchInto(pageDoc, audio, wantDub, seen, results, evidence, wantCount, sq.part || 0)
                     if (this.resultListIsEmpty(pageDoc)) emptyList = true
@@ -532,7 +535,10 @@ class Provider implements AnimeProvider {
             try {
                 resolved = await this.resolveServer(c.linkId, c.name, audio)
             } catch (e) {
-                if (e === this.busy) throw e
+                if (e === this.busy) {
+                    if (playableNoSubs || wrappedFallback) break
+                    throw e
+                }
                 lastReason = String(e)
             }
             if (!resolved) continue

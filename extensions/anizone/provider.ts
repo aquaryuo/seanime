@@ -7,7 +7,7 @@ type Scored = { c: Cand; s: number; adj: number; ep: number }
 type Sub = { origin: string; lang: string; label: string; def: boolean; forced: boolean }
 
 class Provider implements AnimeProvider {
-    private baseUrl = this.cfg().replace(/\/+$/, "")
+    private baseUrl = this.cfg("baseUrl", "https://anizone.to").replace(/\/+$/, "")
     private headers = { Referer: `${this.baseUrl}/` }
     private itemsMarkup = /items:\s*(?:JSON\.parse\(|\[)/
     private cacheTtl = 900000
@@ -65,9 +65,12 @@ class Provider implements AnimeProvider {
         return this.pickBest(cands, opts.media, sq.season, sq.part)
     }
 
-    private cfg(): string {
-        const v = $getUserPreference("baseUrl")
-        return v && v.indexOf("{{") === -1 ? v : "https://anizone.to"
+    private cfg(name: string, fallback: string): string {
+        try {
+            const v = $getUserPreference(name)
+            if (typeof v === "string" && v && v.indexOf("{{") === -1) return v
+        } catch (_e) {}
+        return fallback
     }
 
     private pickBest(cands: Cand[], media: Media, season: number, part: number): SearchResult[] {
@@ -239,7 +242,9 @@ class Provider implements AnimeProvider {
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {
         const shortid = this.shortId(id)
         if (!shortid) return []
-        const cacheKey = `anizone:eps:${id}`
+        const al = /\$al(\d+)/.exec(id)
+        const tail = `${al && +al[1] > 0 ? `$al${al[1]}` : ""}$${this.audioOf(id)}`
+        const cacheKey = `anizone:eps:${shortid}${tail}`
         const cached = this.readCache<EpisodeDetails[]>(cacheKey, this.cacheTtl)
         if (cached) return cached
         const res = await this.guarded("episodes", `${this.baseUrl}/anime/${shortid}`)
@@ -258,7 +263,7 @@ class Provider implements AnimeProvider {
         }
         if (nums.size === 0 && !this.itemsMarkup.test(html)) throw this.fail("episodes", "anizone: episode list not recognized - the site changed its layout")
         const episodes: EpisodeDetails[] = []
-        for (const n of nums) episodes.push({ id: `${shortid}$${n}${id.slice(shortid.length)}`, number: n, url: `${this.baseUrl}/anime/${shortid}/${n}` })
+        for (const n of nums) episodes.push({ id: `${shortid}$${n}${tail}`, number: n, url: `${this.baseUrl}/anime/${shortid}/${n}` })
         episodes.sort((a, b) => a.number - b.number)
         if (episodes.length > 0 && sure) this.writeCache(cacheKey, episodes)
         return episodes
@@ -375,7 +380,7 @@ class Provider implements AnimeProvider {
             .filter((t: any) => t && typeof t.file === "string" && /^https?:\/\//i.test(t.file))
             .map((t: any): Sub => ({
                 origin: t.file,
-                lang: String(t.language || "en").toLowerCase(),
+                lang: String(t.language || "").toLowerCase() || "en",
                 label: String(t.title || ""),
                 def: t.default === true,
                 forced: t.forced === true || String(t.forced || "").toLowerCase() === "yes",
@@ -661,7 +666,9 @@ class Provider implements AnimeProvider {
 
     private readCache<T>(key: string, ttl: number): T | undefined {
         const e = $store.get<{ at: number; data: T } | undefined>(key)
-        return e && Date.now() - e.at < ttl ? e.data : undefined
+        if (e && Date.now() - e.at < ttl) return e.data
+        if (e) $store.remove(key)
+        return undefined
     }
 
     private writeCache<T>(key: string, data: T): void {
