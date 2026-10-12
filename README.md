@@ -9,3 +9,5 @@ This is the `gate` branch: [Seanime](https://seanime.rahim.app) extensions and p
 | payload | kind | what it is |
 | --- | --- | --- |
 | `haifacdn` | onlinestream provider | a private library; needs an API key from its owner |
+| `animelok` | onlinestream provider | animelok.live |
+| `animepahe` | onlinestream provider | animepahe; needs a FlareSolverr-compatible Cloudflare solver to load anything |
