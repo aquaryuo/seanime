@@ -434,7 +434,7 @@ console.log("error channel")
         'SEHERRv1 {,"ext":"aq-kickassanime","scope":"server","msg":"c"}', 'warn SEHERRv1 {,"ext":"aq-kickassanime","scope":"server","msg":"d","lvl":"info"}',
     ], "lvl: an error goes to console.error with no lvl field; a notice carries its level and goes to console.warn, so hosts that treat console.error as failure don't")
     const sites = (name) => { const src = fs.readFileSync(`${ROOT}/extensions/${name}/provider.ts`, "utf8"); return [(src.match(/, "warn"\)/g) || []).length, (src.match(/, "info"\)/g) || []).length] }
-    eq(["anikoto", "anizone", "kickassanime", "mkissa"].map(sites), [[6, 1], [0, 1], [0, 3], [0, 1]], "lvl: only the listed recovered and expected reports are relabelled")
+    eq(["anikoto", "anizone", "kickassanime", "mkissa"].map(sites), [[6, 1], [0, 1], [0, 3], [1, 1]], "lvl: only the listed recovered and expected reports are relabelled")
 }
 
 console.log("kickassanime")
