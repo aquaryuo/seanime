@@ -4,7 +4,7 @@ type Card = { sid: string; titles: string[]; type: string; year: number; eps: nu
 type Cand = { r: SearchResult; card: Card }
 type Target = { t: string; w: number }
 type Scored = { c: Cand; s: number; adj: number; ep: number }
-type Sub = { origin: string; lang: string; label?: string }
+type Sub = { origin: string; lang: string; label: string }
 type Source = { m3u8: string; origin: string; subs: Sub[] }
 
 class Provider implements AnimeProvider {
@@ -22,43 +22,36 @@ class Provider implements AnimeProvider {
     async search(opts: SearchOptions): Promise<SearchResult[]> {
         const sq = this.searchQueries(opts)
         const cands: Cand[] = []
-        const seen: { [key: string]: boolean } = {}
         let anyOk = false
         let anyShape = false
         let down = false
         const run = async (queries: string[]): Promise<void> => {
             for (const q of queries) {
-                if (!q) continue
                 const ck = `kickassanime:q:${q.toLowerCase()}`
                 let cards = this.readCache<Card[]>(ck, this.srcCacheTtl)
                 if (cards) {
                     anyOk = true
                     anyShape = true
                 } else {
-                    let res: FetchResponse | null = null
-                    try {
-                        res = await fetch(`${this.baseUrl}/api/fsearch`, {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json", Accept: "application/json", Referer: `${this.baseUrl}/` },
-                            body: JSON.stringify({ page: 1, query: q }),
-                        })
-                    } catch (_e) {
-                        res = null
-                    }
+                    const res = await fetch(`${this.baseUrl}/api/fsearch`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json", Accept: "application/json", Referer: `${this.baseUrl}/` },
+                        body: JSON.stringify({ page: 1, query: q }),
+                    }).catch(() => null)
                     if (res && res.status === 429) throw this.fail("search", this.busy)
                     if (!res || res.status >= 500) {
                         down = true
                         return
                     }
-                    const body = res && res.ok ? this.json(res) : null
-                    if (res && res.ok) anyOk = true
+                    const body = res.ok ? this.json(res) : null
+                    if (res.ok) anyOk = true
                     cards = this.parseCards(body)
                     if (body && Array.isArray(body.result)) {
                         anyShape = true
                         this.writeCache(ck, cards)
                     }
                 }
-                this.addCards(cards, opts, seen, cands)
+                this.addCards(cards, opts, cands)
                 if (this.pickBest(cands, opts.media, sq.season, sq.part).length === 1) return
             }
         }
@@ -70,21 +63,18 @@ class Provider implements AnimeProvider {
         const audio = opts.dub ? "dub" : "sub"
         const none = `kickassanime: no ${audio} for this title on kickassanime`
         const out: SearchResult[] = []
-        for (const r of picked) {
-            const card = this.candOf(cands, r).card
+        for (const { r, card } of picked) {
             const lang = this.localeOf(card.locales, audio)
-            if (lang) out.push({ id: `${card.sid}$${lang}$${audio}`, title: r.title, url: r.url, subOrDub: r.subOrDub })
+            if (lang) out.push({ ...r, id: `${card.sid}$${lang}$${audio}` })
         }
-        if (out.length === 0 && picked.some((r) => this.candOf(cands, r).card.locales.length > 0)) throw this.fail("search", none, "info")
+        if (out.length === 0 && picked.some((c) => c.card.locales.length > 0)) throw this.fail("search", none, "info")
         if (audio === "dub" && out.length === 1 && !(await this.firstEpisodePlays(out[0].id))) throw this.fail("search", none, "info")
         return out
     }
 
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {
-        const parts = id.split("$")
-        const show = parts[0] || ""
-        const audio = this.audioOf(id)
-        const lang = parts.length >= 3 ? parts[1] : audio === "dub" ? this.dubLocale : this.subLocales[0]
+        const [show = "", lang = "", a] = id.split("$")
+        const audio = a === "dub" ? "dub" : "sub"
         if (!/^[\w-]{1,160}$/.test(show) || !/^[a-z]{2}-[\w]{2,4}$/i.test(lang)) return []
         const cacheKey = `kickassanime:eps:${show}$${lang}$${audio}`
         const cached = this.readCache<EpisodeDetails[]>(cacheKey, this.cacheTtl)
@@ -99,14 +89,13 @@ class Provider implements AnimeProvider {
             const n = this.epNumber(e && e.episode_number)
             if (n > 0 && typeof e.slug === "string" && /^[\w-]{1,64}$/.test(e.slug)) known[n] = { slug: e.slug, title: typeof e.title === "string" ? e.title : "" }
         }
-        const nums: { [key: number]: boolean } = {}
+        const nums = new Set<number>()
         for (const p of body.pages) for (const v of (p && Array.isArray(p.eps) ? p.eps : [])) {
             const n = this.epNumber(v)
-            if (n > 0) nums[n] = true
+            if (n > 0) nums.add(n)
         }
         const episodes: EpisodeDetails[] = []
-        for (const k in nums) {
-            const n = parseInt(k, 10)
+        for (const n of nums) {
             const ep = known[n]
             const row: EpisodeDetails = {
                 id: `${show}$${n}$${ep ? ep.slug : ""}$${lang}$${audio}`,
@@ -122,25 +111,21 @@ class Provider implements AnimeProvider {
     }
 
     async findEpisodeServer(episode: EpisodeDetails, server: string): Promise<EpisodeServer> {
-        const parts = episode.id.split("$")
-        const show = parts[0] || ""
-        const n = parseInt(parts[1] || "", 10) || episode.number
-        const audio = this.audioOf(episode.id)
-        const lang = parts[3] || (audio === "dub" ? this.dubLocale : this.subLocales[0])
-        if (!/^[\w-]{1,160}$/.test(show) || !/^[\w-]{0,64}$/.test(parts[2] || "") || !/^[a-z]{2}-[\w]{2,4}$/i.test(lang)) throw this.fail("server", "kickassanime: unrecognized episode id - refresh the episode list")
+        const [show = "", num = "", slug = "", lang = "", a] = episode.id.split("$")
+        const n = parseInt(num, 10)
+        const audio = a === "dub" ? "dub" : "sub"
+        if (!/^[\w-]{1,160}$/.test(show) || !/^[\w-]{0,64}$/.test(slug) || !/^[a-z]{2}-[\w]{2,4}$/i.test(lang)) throw this.fail("server", "kickassanime: unrecognized episode id - refresh the episode list")
         const cacheKey = `kickassanime:src:${show}:${n}:${lang}`
         let src: Source | undefined | null = this.readCache<Source>(cacheKey, this.srcCacheTtl)
         if (!src || !src.m3u8) {
             const gone = `kickassanime: episode ${n} (${audio}) is not on kickassanime anymore - refresh the episode list`
-            let detail = parts[2] ? await this.episodeDetail(show, n, parts[2]) : null
+            let detail = slug ? await this.episodeDetail(show, n, slug) : null
             if (!detail) {
-                const slug = await this.slugFor(show, n, lang)
-                detail = slug ? await this.episodeDetail(show, n, slug) : null
+                const fresh = await this.slugFor(show, n, lang)
+                detail = fresh ? await this.episodeDetail(show, n, fresh) : null
             }
             if (!detail) {
-                try {
-                    $store.remove(`kickassanime:eps:${show}$${lang}$${audio}`)
-                } catch (_e) {}
+                $store.remove(`kickassanime:eps:${show}$${lang}$${audio}`)
                 throw this.fail("server", gone)
             }
             const servers = this.streamable(detail.servers)
@@ -221,11 +206,11 @@ class Provider implements AnimeProvider {
 
     private parsePlayer(html: string): { m3u8: string; subs: Sub[] } {
         const empty = { m3u8: "", subs: [] as Sub[] }
-        const m = /<astro-island\b[^>]*?\sprops="([^"]*)"/.exec(html || "")
-        if (!m) return empty
+        const attr = LoadDoc(html || "")("astro-island[props]").attr("props")
+        if (!attr) return empty
         let raw: any = null
         try {
-            raw = JSON.parse(this.decodeEntities(m[1] || ""))
+            raw = JSON.parse(attr)
         } catch (_e) {
             return empty
         }
@@ -293,15 +278,10 @@ class Provider implements AnimeProvider {
         return ""
     }
 
-    private candOf(cands: Cand[], r: SearchResult): Cand {
-        return cands.filter((c) => c.r === r)[0]
-    }
-
-    private addCards(cards: Card[], opts: SearchOptions, seen: { [key: string]: boolean }, out: Cand[]): void {
+    private addCards(cards: Card[], opts: SearchOptions, out: Cand[]): void {
         const target = opts.media.romajiTitle || opts.media.englishTitle || ""
         for (const c of cards) {
-            if (!c.sid || seen["#" + c.sid]) continue
-            seen["#" + c.sid] = true
+            if (out.some((x) => x.card.sid === c.sid)) continue
             out.push({ r: { id: c.sid, title: this.bestTitle(c.titles, target), url: `${this.baseUrl}/${c.sid}`, subOrDub: opts.dub ? "dub" : "sub" }, card: c })
         }
     }
@@ -309,29 +289,26 @@ class Provider implements AnimeProvider {
     private searchQueries(opts: SearchOptions): { primary: string[]; fallback: string[]; season: number; part: number } {
         const primary: string[] = []
         const fallback: string[] = []
-        const seen: { [key: string]: boolean } = {}
+        const seen = new Set<string>()
         const add = (list: string[], s: string): void => {
             const q = (s || "").trim()
             if (!q) return
             const key = q.toLowerCase()
-            if (seen["#" + key]) return
-            seen["#" + key] = true
+            if (seen.has(key)) return
+            seen.add(key)
             list.push(q)
         }
         const romaji = opts.media.romajiTitle || ""
         const english = opts.media.englishTitle || ""
+        const seed = [opts.query, romaji, english].filter((s) => s)
         let season = 0
         let part = 0
-        if (!romaji && !english) add(primary, opts.query || "")
+        if (!romaji && !english) add(primary, opts.query)
         for (const s of [romaji, english]) {
             add(primary, s)
             add(primary, s.replace(/\s*\b(?:\d+(?:st|nd|rd|th)\s+season|season\s*\d+|part\s*\d+|cour\s*\d+)\b.*$/i, ""))
         }
         try {
-            const seed: string[] = []
-            if (opts.query) seed.push(opts.query)
-            if (romaji) seed.push(romaji)
-            if (english) seed.push(english)
             const smart = $scannerUtils.buildSmartSearchTitles(seed)
             if (smart) {
                 season = smart.season || 0
@@ -339,15 +316,12 @@ class Provider implements AnimeProvider {
                 if (smart.titles) for (const t of smart.titles) add(primary, t)
             }
         } catch (_e) {}
-        if (part < 2) for (const s of [opts.query, romaji, english]) {
-            const pm = (s || "").match(/\b(?:part|cour)\s*(\d+)\b/i)
-            if (pm) part = Math.max(part, parseInt(pm[1], 10))
-        }
+        if (part < 2) part = Math.max(part, ...seed.map((s) => this.partOf(s)))
         add(fallback, this.firstWords(romaji, 1))
         add(fallback, this.firstWords(english, 2))
         add(fallback, this.firstWords(romaji, 2))
         add(fallback, this.firstWords(english, 3))
-        return { primary: primary.slice(0, 4), fallback: fallback.slice(0, 4), season, part }
+        return { primary: primary.slice(0, 4), fallback, season, part }
     }
 
     private firstWords(title: string, n: number): string {
@@ -357,10 +331,9 @@ class Provider implements AnimeProvider {
         return cleaned.split(" ").slice(0, n).join(" ")
     }
 
-    private pickBest(cands: Cand[], media: Media, season: number, part: number): SearchResult[] {
-        if (cands.length === 0) return []
+    private pickBest(cands: Cand[], media: Media, season: number, part: number): Cand[] {
         const targets = this.matchTargets(media)
-        if (targets.length === 0) return cands.map((c) => c.r)
+        if (targets.length === 0) return cands
         const year = (media.startDate && media.startDate.year) || 0
         const eps = media.episodeCount && media.episodeCount > 0 ? media.episodeCount : 0
         const format = media.format || ""
@@ -381,18 +354,18 @@ class Provider implements AnimeProvider {
         const picked = this.disambiguate(plausible, season, part, year, full)
         if (picked.length === 0) return []
         if (picked[0].adj >= 0.85 && (picked.length === 1 || picked[0].adj - picked[1].adj >= 0.12)) {
-            return [picked[0].c.r]
+            return [picked[0].c]
         }
-        return picked.map((x) => x.c.r)
+        return picked.map((x) => x.c)
     }
 
     private matchTargets(media: Media): Target[] {
         const out: Target[] = []
-        const seen: { [key: string]: boolean } = {}
+        const seen = new Set<string>()
         const push = (s: string, w: number): void => {
             const n = this.normTitle(s)
-            if (n.length >= 3 && !seen["#" + n]) {
-                seen["#" + n] = true
+            if (n.length >= 3 && !seen.has(n)) {
+                seen.add(n)
                 out.push({ t: n, w })
             }
         }
@@ -540,13 +513,12 @@ class Provider implements AnimeProvider {
     }
 
     private epNumber(v: any): number {
-        const n = typeof v === "number" ? v : Number(v)
+        const n = Number(v)
         return Number.isInteger(n) && n > 0 && n <= 100000 ? n : 0
     }
 
     private toInt(v: any): number {
-        const n = typeof v === "number" ? v : parseInt(String(v || "0"), 10)
-        return isNaN(n) || n < 0 ? 0 : Math.floor(n)
+        return Math.max(0, parseInt(String(v), 10) || 0)
     }
 
     private json(res: FetchResponse): any {
@@ -557,34 +529,22 @@ class Provider implements AnimeProvider {
         }
     }
 
-    private decodeEntities(s: string): string {
-        const named: { [key: string]: string } = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " }
-        return (s || "").replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m: string, e: string) => {
-            if (e.charAt(0) !== "#") return named[e.toLowerCase()] || m
-            const n = e.charAt(1).toLowerCase() === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10)
-            return n >= 0 && n <= 0x10ffff ? String.fromCodePoint(n) : m
-        })
-    }
-
     private isNonDialogue(label: string): boolean {
-        const l = label || ""
-        if (/\b(?:full|dialogu?e|dialog|main|complete)\b/i.test(l)) return false
-        return /\b(?:forced|forc[eé]s|signs?|songs?|karaoke|kfx|typeset(?:ting)?|commentary)\b/i.test(l) || /\bs\s*[&+\/]\s*s\b/i.test(l) || /\bop\s*[\/&+]\s*ed\b/i.test(l)
+        if (/\b(?:full|dialogu?e|dialog|main|complete)\b/i.test(label)) return false
+        return /\b(?:forced|forc[eé]s|signs?|songs?|karaoke|kfx|typeset(?:ting)?|commentary)\b/i.test(label) || /\bs\s*[&+\/]\s*s\b/i.test(label) || /\bop\s*[\/&+]\s*ed\b/i.test(label)
     }
 
-    private trackScore(label: string, isEnglish: boolean, def: boolean, nd: boolean): number {
-        const mtl = /\b(?:ai|mtl)\b/i.test(label || "")
-        const alt = /\b(?:sdh|cc|closed[\s-]?captions?|hearing[\s-]?impaired|dub[\s-]?titles?)\b/i.test(label || "")
-        const base = nd ? (isEnglish ? 3 : 0) : mtl ? (isEnglish ? 4 : 1) : alt ? (isEnglish ? 5 : 1) : isEnglish ? 6 : 2
-        return def ? base * 10 + 1 : base * 10
+    private trackScore(label: string, isEnglish: boolean, nd: boolean): number {
+        const mtl = /\b(?:ai|mtl)\b/i.test(label)
+        const alt = /\b(?:sdh|cc|closed[\s-]?captions?|hearing[\s-]?impaired|dub[\s-]?titles?)\b/i.test(label)
+        return nd ? (isEnglish ? 3 : 0) : mtl ? (isEnglish ? 4 : 1) : alt ? (isEnglish ? 5 : 1) : isEnglish ? 6 : 2
     }
 
     private displayName(code: string, label: string): string {
-        const c = (code || "en").toLowerCase()
-        const name = this.langName(c)
+        const name = this.langName(code)
         if (!label) return name
         if (!/[a-z]/.test(name)) return label
-        const base = this.langName(c.split("-")[0])
+        const base = this.langName(code.split("-")[0])
         if (label.toLowerCase().indexOf(base.toLowerCase()) !== -1) return label
         return `${name} - ${label}`
     }
@@ -592,19 +552,17 @@ class Provider implements AnimeProvider {
     private buildSubs(subs: Sub[]): VideoSubtitle[] {
         const out: VideoSubtitle[] = []
         const nonDialogue: boolean[] = []
-        const seen: { [key: string]: boolean } = {}
+        const seen = new Set<string>()
         let pick = 0
         let best = -1
         for (const s of subs) {
-            const origin = s.origin
-            if (!origin || seen["#" + origin]) continue
-            seen["#" + origin] = true
-            const code = (s.lang || "en").toLowerCase()
-            const label = (s.label || "").trim()
+            if (seen.has(s.origin)) continue
+            seen.add(s.origin)
+            const label = s.label.trim()
             const idx = out.length
-            out.push({ id: `${code}-${idx}`, url: origin, language: this.displayName(code, label), isDefault: false })
+            out.push({ id: `${s.lang}-${idx}`, url: s.origin, language: this.displayName(s.lang, label), isDefault: false })
             const nd = this.isNonDialogue(label)
-            const score = this.trackScore(label, code.split("-")[0] === "en", false, nd)
+            const score = this.trackScore(label, s.lang.split("-")[0] === "en", nd)
             nonDialogue.push(nd)
             if (score > best) {
                 best = score
@@ -630,35 +588,15 @@ class Provider implements AnimeProvider {
             "es-419": "Latin American Spanish", "pt-br": "Portuguese (Brazil)",
             "zh-hans": "Chinese (Simplified)", "zh-hant": "Chinese (Traditional)",
         }
-        const c = (code || "").toLowerCase()
-        if (map[c]) return map[c]
-        const base = c.split("-")[0]
-        return map[base] || c.toUpperCase()
-    }
-
-    private audioOf(id: string): string {
-        const m = (id || "").match(/\$(dub|sub)$/)
-        return m ? m[1] : "sub"
+        if (map[code]) return map[code]
+        const base = code.split("-")[0]
+        return map[base] || code.toUpperCase()
     }
 
     private reportError(scope: string, message: string, lvl?: "warn" | "info"): void {
-        try {
-            const line = "SEHERRv1 " + JSON.stringify({ t: Date.now(), ext: "aq-kickassanime", scope: scope, msg: this.plain(message), lvl: lvl })
-            if (lvl) console.warn(line)
-            else console.error(line)
-        } catch (_e) {}
-    }
-
-    private plain(message: string): string {
-        return String(message === undefined || message === null ? "" : message)
-            .replace(/…/g, "...")
-            .replace(/[—–]/g, "-")
-            .replace(/[‘’]/g, "'")
-            .replace(/[“”]/g, '"')
-            .replace(/[·•]/g, "-")
-            .replace(/\s+/g, " ")
-            .replace(/[^\x20-\x7e]/g, "?")
-            .replace(/^ +| +$/g, "")
+        const line = "SEHERRv1 " + JSON.stringify({ t: Date.now(), ext: "aq-kickassanime", scope: scope, msg: message.replace(/\s+/g, " ").replace(/[^\x20-\x7e]/g, "?").trim(), lvl: lvl })
+        if (lvl) console.warn(line)
+        else console.error(line)
     }
 
     private fail(scope: string, message: string, lvl?: "warn" | "info"): string {
@@ -679,14 +617,8 @@ class Provider implements AnimeProvider {
     }
 
     private readCache<T>(key: string, ttl: number): T | undefined {
-        const entry = $store.get<{ at: number; data: T }>(key)
-        if (entry && entry.at > 0 && Date.now() - entry.at < ttl) return entry.data
-        if (entry !== undefined && entry !== null) {
-            try {
-                $store.remove(key)
-            } catch (_e) {}
-        }
-        return undefined
+        const e = $store.get<{ at: number; data: T }>(key)
+        return e && Date.now() - e.at < ttl ? e.data : undefined
     }
 
     private writeCache<T>(key: string, data: T): void {

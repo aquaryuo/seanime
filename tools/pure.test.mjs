@@ -440,11 +440,13 @@ console.log("error channel")
 console.log("kickassanime")
 {
     const busy = "kickassanime: too many requests right now - wait a minute and retry"
+    const doc = (html) => () => ({ attr: () => { const m = /<astro-island\b[^>]*?\sprops="([^"]*)"/.exec(html); return m ? m[1].replace(/&quot;/g, '"').replace(/&amp;/g, "&") : undefined } })
     // A fake kaa.lt: routes are "METHOD path" prefixes, the player host reads as @player, anything unrouted is a 404.
     const site = (routes, mem = {}) => {
         const hits = []
         const p = load("kickassanime", {
             $store: store(mem),
+            LoadDoc: doc,
             fetch: (url, opts) => {
                 const key = `${(opts && opts.method) || "GET"} ${url.replace("https://kaa.lt", "").replace("https://krussdomi.com", "@player")}`
                 hits.push(opts && opts.body ? `${key} ${opts.body}` : key)
@@ -461,8 +463,8 @@ console.log("kickassanime")
     }).replace(/&/g, "&amp;").replace(/"/g, "&quot;")
     const player = (manifest, subs) => `<astro-island uid="x" component-url="/_astro/VidstackPlayer.js" props="${props(manifest, subs)}" ssr client="only">`
 
-    const p = load("kickassanime")
-    const vid = p.parsePlayer(player("//hls.cdn.test/manifest/a/master.m3u8", [["ara", "Arabic", "https://subs.test/a.vtt"], ["eng", "English", "https:///subs.test/e.srt"], ["eng", "English [Signs & Songs]", "https://subs.test/s.vtt"]]))
+    const p = load("kickassanime", { LoadDoc: doc })
+    const vid =p.parsePlayer(player("//hls.cdn.test/manifest/a/master.m3u8", [["ara", "Arabic", "https://subs.test/a.vtt"], ["eng", "English", "https:///subs.test/e.srt"], ["eng", "English [Signs & Songs]", "https://subs.test/s.vtt"]]))
     eq(vid.m3u8, "https://hls.cdn.test/manifest/a/master.m3u8", "player: the props attribute is decoded once, so an escaped quote in a title cannot break it, and a protocol-relative manifest is made absolute")
     eq(vid.subs.map((s) => [s.lang, s.origin]), [["ar", "https://subs.test/a.vtt"], ["en", "https://subs.test/e.srt"], ["en", "https://subs.test/s.vtt"]], "player: three-letter track codes fold to two letters and a https:/// link is repaired")
     eq(p.buildSubs(vid.subs).map((s) => [s.language, s.isDefault]), [["English", true], ["Arabic", false], ["English [Signs & Songs]", false]], "subs: full English dialogue is the default ahead of an earlier track and of signs")
