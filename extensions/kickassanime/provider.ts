@@ -11,6 +11,7 @@ class Provider implements AnimeProvider {
     private baseUrl = this.cfg("baseUrl", "https://kaa.lt").replace(/\/+$/, "")
     private cacheTtl = 900000
     private srcCacheTtl = 300000
+    private timeout = 20
     private busy = "kickassanime: too many requests right now - wait a minute and retry"
     private subLocales = ["ja-JP", "zh-CN", "ko-KR"]
     private dubLocale = "en-US"
@@ -37,6 +38,7 @@ class Provider implements AnimeProvider {
                         method: "POST",
                         headers: { "Content-Type": "application/json", Accept: "application/json", Referer: `${this.baseUrl}/` },
                         body: JSON.stringify({ page: 1, query: q }),
+                        timeout: this.timeout,
                     }).catch(() => null)
                     if (res && res.status === 429) throw this.fail("search", this.busy)
                     if (!res || res.status >= 500) {
@@ -607,7 +609,7 @@ class Provider implements AnimeProvider {
     private async guarded(scope: string, url: string, opts?: FetchOptions): Promise<FetchResponse> {
         let res: FetchResponse
         try {
-            res = await fetch(url, { headers: { Accept: "application/json", Referer: `${this.baseUrl}/` }, ...opts })
+            res = await fetch(url, { headers: { Accept: "application/json", Referer: `${this.baseUrl}/` }, timeout: this.timeout, ...opts })
         } catch (e) {
             this.reportError(scope, `transport failure: ${e instanceof Error ? e.message : String(e)}`)
             throw "kickassanime: the site did not respond - retry in a moment"
