@@ -2,7 +2,7 @@
   {
     "id": "aq-anikoto",
     "name": "Anikoto",
-    "version": "1.4.10",
+    "version": "1.4.11",
     "description": "Only anikoto compatibility layer you'll ever need",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
@@ -28,7 +28,7 @@
   {
     "id": "aq-kickassanime",
     "name": "KickAssAnime",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "description": "Only kickassanime compatibility layer you'll ever need. Dub streams carry both audio tracks — pick English in the player's audio menu once and Seanime remembers it for that series.",
     "author": "aquaryuo",
     "type": "onlinestream-provider",

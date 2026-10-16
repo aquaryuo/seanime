@@ -193,7 +193,7 @@ class Provider implements AnimeProvider {
     private async playable(list: any[]): Promise<Source | string> {
         let why = "no player answered"
         for (const s of list.slice(0, 2)) {
-            const res = await this.guarded("server", s.src, { headers: { Referer: `${this.baseUrl}/` } })
+            const res = await this.guarded("server", s.src.replace("/cat-player/vast?", "/cat-player/player?"), { headers: { Referer: `${this.baseUrl}/` } })
             if (!res.ok) {
                 why = `the player answered ${res.status}, retry in a moment`
                 continue
