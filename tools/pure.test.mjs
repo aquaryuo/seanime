@@ -136,7 +136,7 @@ console.log("anikoto")
     eq(p.isEnglish("Danish"), false, "lang: danish is not English")
     eq(p.isEnglish("Klingon"), false, "lang: an unknown language is not English")
 
-    eq(p.buildSubtitles([{ file: "https://c/ara.vtt", label: "Arabic" }, { file: "https://c/eng.vtt", label: "Eng_sub" }]).map((s) => s.url), ["https://c/eng.vtt", "https://c/ara.vtt"], "subs: the English track leads even when the site lists it second")
+    eq(p.buildSubtitles([{ file: "https://c/ara.vtt", label: "Arabic" }, { file: "https://c/eng.vtt", label: "Eng_sub" }]).map((s) => [s.url, s.isDefault]), [["https://c/eng.vtt", true], ["https://c/ara.vtt", false]], "subs: the English track leads and is the default even when the site lists it second")
     eq(p.buildSubtitles([{ file: "https://c/es.vtt", label: "Spanish (English signs)" }, { file: "https://c/pt.vtt", label: "Portuguese" }])[0].url, "https://c/pt.vtt", "subs: a label naming another language before English is not English")
     eq(p.buildSubtitles([{ file: "https://c/a.vtt", label: "  " }])[0].language, "English", "subs: a blank label is named English")
 
@@ -268,6 +268,10 @@ console.log("anikoto: time budget")
     eq([await wrappedAs("seg-1.jpg", "�PNG\r\n\x1a\n"), await wrappedAs("/s/seg-1.jpg", "G@\x00\x10"), await wrappedAs("https://img.cdn/x.image?sig=1", "�PNG\r\n\x1a\n")],
         [[true, true, "https://c.cdn/a/v/seg-1.jpg"], [true, false, "https://c.cdn/s/seg-1.jpg"], [true, true, "https://img.cdn/x.image?sig=1"]],
         "segments: a stream whose first segment is a PNG-wrapped TS is flagged, a plain TS is not, and the segment URL resolves relative, root-relative and absolute")
+    const heads = ["����\0\x10JF", "GIF89a\x01\0", "<html><h", "\0\0\0\x18styp", "\0\0��moof", "ID3\x04\0\0\0\0"]
+    eq((await Promise.all(heads.map((h) => wrappedAs("s.ts", h)))).map((r) => r[1]), [true, true, true, false, false, false],
+        "segments: JPEG, GIF and HTML heads are flagged as disguised; fMP4 boxes and ID3 packed audio are not")
+    eq((await wrappedAs("#EXT-X-KEY:METHOD=AES-128,URI=\"k\"\n#EXTINF:4.0,\ns.ts", "�PNG\r\n\x1a\n"))[1], false, "segments: encrypted streams are not probed")
 }
 
 console.log("anikoto: enc resolve cost")
@@ -553,7 +557,7 @@ console.log("kickassanime")
     const html = player("https://hls.cdn.test/manifest/x/master.m3u8", [["eng", "English", "https://subst.test/e.vtt"]])
     const srv = site({
         "GET /api/show/op-0948/episodes?ep=101&lang=ja-JP": [200, { current_page: 2, pages: [], result: [{ slug: "z101", episode_number: 101 }] }],
-        "GET /api/show/op-0948/episode/ep-101-z101": [200, { servers: [{ name: "BirdStream", src: "https://krussdomi.com/cat-player/player?id=b&type=dash" }, { name: "CatStream", src: "https://krussdomi.com/cat-player/player?id=c" }] }],
+        "GET /api/show/op-0948/episode/ep-101-z101": [200, { servers: [{ name: "BirdStream", src: "https://krussdomi.com/cat-player/player?id=b&type=dash" }, { name: "CatStream", src: "https://krussdomi.com/cat-player/vast?id=c" }] }],
         "GET @player/cat-player/player?id=c": [200, html],
     })
     const ep101 = { id: "op-0948$101$$ja-JP$sub", number: 101, url: "" }
@@ -561,7 +565,7 @@ console.log("kickassanime")
     eq([got.server, got.headers, got.videoSources[0].url, got.videoSources[0].type, got.videoSources[0].subtitles.length, srv.hits], [
         "Auto", { Origin: "https://krussdomi.com", Referer: "https://krussdomi.com/" }, "https://hls.cdn.test/manifest/x/master.m3u8", "m3u8", 1,
         ["GET /api/show/op-0948/episodes?ep=101&lang=ja-JP", "GET /api/show/op-0948/episode/ep-101-z101", "GET @player/cat-player/player?id=c"],
-    ], "server: an episode past the first page resolves its slug, skips the DASH server unfetched, and plays HLS with the player's origin - segments 403 without it")
+    ], "server: an episode past the first page resolves its slug, skips the DASH server unfetched, opens the player instead of its ad page, and plays HLS with the player's origin - segments 403 without it")
     await srv.p.findEpisodeServer(ep101, "Auto")
     eq(srv.hits.length, 3, "server: the source is cached")
 

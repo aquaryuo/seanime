@@ -721,12 +721,12 @@ class Provider implements AnimeProvider {
             if (body === undefined) return no
             if (/^https?:\/\/[^/]+\/anime\//.test(src.url)) this.rememberCdnHost(this.hostOf(src.url))
             const variants = this.variantLevelUrls(body, src.url)
-            if (variants.length === 0) return { ok: true, wrapped: await this.pngWrapped(body, src.url, server.headers) }
+            if (variants.length === 0) return { ok: true, wrapped: await this.disguised(body, src.url, server.headers) }
             for (const v of variants) {
                 if (this.outOfTime()) return { ok: v === variants[0], wrapped: false }
                 try {
                     const r = await fetch(v, { headers: server.headers })
-                    if (r.ok) return { ok: true, wrapped: await this.pngWrapped(r.text(), v, server.headers) }
+                    if (r.ok) return { ok: true, wrapped: await this.disguised(r.text(), v, server.headers) }
                 } catch (_e) {}
             }
             return no
@@ -909,13 +909,15 @@ class Provider implements AnimeProvider {
         return m ? m[1].toLowerCase() : ""
     }
 
-    private async pngWrapped(playlist: string, url: string, headers: { [k: string]: string }): Promise<boolean> {
+    private async disguised(playlist: string, url: string, headers: { [k: string]: string }): Promise<boolean> {
+        if (/#EXT-X-KEY:METHOD=(?!NONE)/.test(playlist)) return false
         const seg = playlist.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && l.charAt(0) !== "#")[0]
         if (!seg) return false
         const abs = /^https?:\/\//i.test(seg) ? seg : seg.charAt(0) === "/" ? this.originOf(url) + seg : url.replace(/[?#].*$/, "").replace(/[^/]*$/, "") + seg
         try {
             const r = await fetch(abs, { headers: Object.assign({ Range: "bytes=0-7" }, headers), timeout: this.timeLeft() })
-            return r.text().slice(1, 4) === "PNG"
+            const head = r.ok ? r.text().slice(0, 8) : ""
+            return head !== "" && !/^(?:G(?!IF8)|ID3|[\s\S]{1,4}(?:ftyp|styp|sidx|moof|emsg|prft))/.test(head)
         } catch (_e) {
             return false
         }
@@ -1018,6 +1020,7 @@ class Provider implements AnimeProvider {
             }
         }
 
+        collected[pick].isDefault = true
         const by = (nd: boolean) => collected.filter((_, i) => i !== pick && nonDialogue[i] === nd)
         return [collected[pick]].concat(by(false), by(true))
     }
