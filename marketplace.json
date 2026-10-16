@@ -41,7 +41,7 @@
   {
     "id": "aq-mkissa",
     "name": "MKissa",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "description": "Only mkissa compatibility layer you'll ever need",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
