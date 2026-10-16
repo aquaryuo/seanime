@@ -9,5 +9,3 @@ This is the `archive` branch: retired [Seanime](https://seanime.rahim.app) exten
 | `aquaprefs` | plugin | remembered player options; retired 2026-09-25 |
 | `aquatils` | plugin | downloaded and supervised a Cloudflare solver, and surfaced errors other extensions reported; retired 2026-10-12 |
 | `seatags` | plugin | tagged marketplace cards and added filters; retired 2026-10-12 |
-
-`REVIEW-BACKLOG.md` is the old review and remediation plan from the beta/stable channel days, kept for reference.
