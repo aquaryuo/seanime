@@ -614,6 +614,7 @@ console.log("mkissa")
         let crypt = o.crypt || 0
         const s = load("mkissa", {
             $store: store(mem),
+            $getUserPreference: (k) => (k === "captchaRelay" ? o.relay : undefined),
             CryptoJS: { enc: { Base64: { stringify: (u) => Buffer.from(u).toString("base64") } } },
             fetch: (url, opts = {}) => {
                 const body = opts.body ? JSON.parse(opts.body) : null
@@ -626,6 +627,7 @@ console.log("mkissa")
                     return reply(200, { epoch, switchAt: Date.now() + 86400000, partB: Buffer.from(wk.map((b, i) => b ^ mask[i])).toString("base64"), k: "k7" })
                 }
                 if (body && /episode\(/.test(body.query)) {
+                    if (o.gate && !(body.extensions.captcha && body.extensions.captcha.token === o.gate)) return reply(200, { errors: [{ message: body.extensions.captcha ? "CAPTCHA_INVALID" : "NEED_CAPTCHA" }], data: { episode: null } })
                     if (o.errors) return reply(200, { errors: [{ message: o.errors }], data: { episode: null } })
                     if (crypt-- > 0) return reply(200, { errors: [{ message: "AA_CRYPTO_STALE" }], data: { episode: null } })
                     const t = Buffer.from(body.extensions.aaReq, "base64")
@@ -703,6 +705,15 @@ console.log("mkissa")
     const limited = site({ errors: "Too many requests, please try again in 2 seconds." })
     eq([await limited.s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto").catch((e) => e), limited.hits.length], [busy, 2], "rate limit: the API's own throttle message is a 429 too, with no retry")
     eq(await site({ errors: "NEED_CAPTCHA" }).s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto").catch((e) => e), p.captcha, "captcha: a captcha demand is reported, not mistaken for a missing episode")
+    const relay = (token) => (url) => (url === "http://127.0.0.1:8192/token" ? reply(token ? 200 : 404, token ? { token, provider: "turnstile" } : {}) : mp4(url))
+    const relayed = site({ gate: "t1", relay: "http://127.0.0.1:8192/", sources: [{ sourceUrl: "https://mp4upload.com/embed-abc.html", sourceName: "Mp4" }], page: relay("t1") })
+    const pass = await relayed.s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto").then((r) => r.videoSources[0].type, (e) => e)
+    eq([pass, relayed.hits], ["mp4", ["https://api.mkissa.net/client-crypto/v1/bootstrap", "episode", "http://127.0.0.1:8192/token", "episode", "https://www.mp4upload.com/embed-abc.html"]], "captcha: a solved check from the relay is sent with one retry of the same lookup")
+    const askRelay = "mkissa: the site wants a captcha for episode links from this IP - complete the check on your captcha relay page at http://127.0.0.1:8192/ and retry"
+    const empty = site({ gate: "t1", relay: "http://127.0.0.1:8192", page: relay("") })
+    eq([await empty.s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto").catch((e) => e), empty.hits.length], [askRelay, 3], "captcha: with no solved check waiting, the user is pointed at the relay page")
+    const refused = site({ gate: "t1", relay: "http://127.0.0.1:8192", page: relay("old") })
+    eq([await refused.s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto").catch((e) => e), refused.hits.filter((h) => h === "episode").length], [askRelay, 2], "captcha: a rejected token fails once instead of looping")
     eq(await site({ sources: [{ sourceUrl: "https://bysekoze.com/e/x", sourceName: "Fm-Hls" }] }).s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto").catch((e) => e), "mkissa: episode 1 only has players this extension cannot play (Fm-Hls)", "server: an episode with only unsupported players says which")
 
     eq(load("mkissa", { $getUserPreference: () => "https://mkissa.to/" }).baseUrl, "https://mkissa.to", "config: a trailing slash is stripped")

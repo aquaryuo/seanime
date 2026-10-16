@@ -58,7 +58,8 @@ class Provider implements AnimeProvider {
     private ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
     private busy = "mkissa: too many requests right now - wait a minute and retry"
     private stale = "mkissa: the site changed its player handshake - this extension needs an update"
-    private captcha = "mkissa: the site wants a captcha for episode links from this IP right now - wait a while (or open an episode on mkissa.to once) and retry"
+    private captcha = "mkissa: the site wants a captcha for episode links from this IP right now - wait a while, open an episode on mkissa.to once, or set up the captcha relay in the extension settings, then retry"
+    private captchaRelayed = "mkissa: the site wants a captcha for episode links from this IP - complete the check on your captcha relay page at"
 
     getSettings(): Settings {
         return { episodeServers: ["Auto"], supportsDub: true }
@@ -276,9 +277,11 @@ class Provider implements AnimeProvider {
     }
 
     private async gql(scope: string, query: string, variables: any, sealed?: boolean): Promise<any> {
+        let captcha: { token: string; provider: string } | undefined
         for (let attempt = 0; attempt < 2; attempt++) {
             const qh = this.hex(this.sha256(this.utf8(query)))
             const extensions: any = { persistedQuery: { version: 1, sha256Hash: qh } }
+            if (captcha) extensions.captcha = captcha
             let boot: Boot | undefined
             if (sealed) {
                 boot = await this.boot(scope, attempt > 0)
@@ -293,7 +296,14 @@ class Provider implements AnimeProvider {
             if (!body || typeof body !== "object") throw this.fail(scope, `mkissa: the site API failed (status ${res.status})`)
             const msgs: string[] = (body.errors || []).map((e: any) => String((e && e.message) || ""))
             if (msgs.some((m) => /too many requests/i.test(m))) throw this.fail(scope, this.busy)
-            if (msgs.indexOf("NEED_CAPTCHA") !== -1) throw this.fail(scope, this.captcha)
+            if (msgs.indexOf("NEED_CAPTCHA") !== -1 || msgs.indexOf("CAPTCHA_INVALID") !== -1) {
+                const relay = this.cfg("captchaRelay", "").trim().replace(/\/+$/, "")
+                if (captcha || !/^https?:\/\/[^\s/]+/i.test(relay)) throw this.fail(scope, captcha ? `${this.captchaRelayed} ${relay}/ and retry` : this.captcha)
+                captcha = await this.relayToken(scope, relay)
+                if (!captcha) throw this.fail(scope, `${this.captchaRelayed} ${relay}/ and retry`)
+                attempt--
+                continue
+            }
             if (msgs.some((m) => /^AA_CRYPTO/.test(m))) {
                 if (attempt === 0) continue
                 throw this.fail(scope, this.stale)
@@ -322,6 +332,17 @@ class Provider implements AnimeProvider {
         }
         if (res.status === 429) throw this.fail(scope, this.busy)
         return res
+    }
+
+    private async relayToken(scope: string, relay: string): Promise<{ token: string; provider: string } | undefined> {
+        try {
+            const res = await fetch(`${relay}/token`, { noCloudflareBypass: true })
+            const j = res.ok ? res.json<any>() : null
+            if (j && typeof j.token === "string" && j.token) return { token: j.token, provider: typeof j.provider === "string" && j.provider ? j.provider : "turnstile" }
+        } catch (e) {
+            this.reportError(scope, `captcha relay at ${relay} did not answer: ${e instanceof Error ? e.message : String(e)}`)
+        }
+        return undefined
     }
 
     private async boot(scope: string, fresh: boolean): Promise<Boot> {

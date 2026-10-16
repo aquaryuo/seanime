@@ -1,7 +1,7 @@
 {
   "id": "aq-mkissa",
   "name": "MKissa",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/mkissa/manifest.json",
   "language": "typescript",
   "type": "onlinestream-provider",
@@ -20,6 +20,12 @@
         "name": "baseUrl",
         "label": "Site domain",
         "default": "https://mkissa.to"
+      },
+      {
+        "type": "text",
+        "name": "captchaRelay",
+        "label": "Captcha relay — address of captcha-relay.mjs, keep its page open in a browser on this machine (empty = off)",
+        "default": ""
       }
     ]
   }

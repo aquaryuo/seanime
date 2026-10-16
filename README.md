@@ -11,4 +11,4 @@ Since you're here anyway: these are the released [Seanime](https://seanime.rahim
 | `anikoto` | onlinestream provider | anikototv.to |
 | `anizone` | onlinestream provider | anizone.to |
 | `kickassanime` | onlinestream provider | kaa.lt |
-| `mkissa` | onlinestream provider | mkissa.to; episode links stop behind a captcha after a few lookups from one IP |
+| `mkissa` | onlinestream provider | mkissa.to; episode links stop behind a captcha after a few lookups from one IP, which `extensions/mkissa/captcha-relay.mjs` lets you clear from a browser tab |
