@@ -1,7 +1,7 @@
 {
   "id": "aq-animepahe",
   "name": "AnimePahe",
-  "version": "0.2.45",
+  "version": "0.2.46",
   "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/gate/extensions/animepahe/manifest.json",
   "language": "typescript",
   "type": "onlinestream-provider",
