@@ -25,6 +25,7 @@ class Provider implements AnimeProvider {
 
         const results: SearchResult[] = []
         const seen: { [key: string]: boolean } = {}
+        const paheIds: { [key: string]: string } = {}
         let blocked = false
         let lastErr = ""
 
@@ -54,6 +55,7 @@ class Provider implements AnimeProvider {
             for (const item of data) {
                 if (!item || !item.session || seen[item.session]) continue
                 seen[item.session] = true
+                paheIds[item.session] = String(item.id)
                 results.push({
                     id: `${item.session}$${audio}`,
                     title: item.title,
@@ -64,7 +66,30 @@ class Provider implements AnimeProvider {
         }
 
         if (results.length === 0 && lastErr) throw blocked ? `${this.blockedMessage()} (${lastErr})` : lastErr
-        return this.filterBySeason(results, opts)
+        const exactIds = await this.malPaheIds(opts.media.idMal)
+        const exact = results.filter((r) => exactIds.indexOf(paheIds[r.id.split("$")[0]]) !== -1)
+        return exact.length > 0 ? exact : this.filterBySeason(results, opts)
+    }
+
+    private async malPaheIds(idMal: number | undefined): Promise<string[]> {
+        if (!idMal) return []
+        const ck = `apahe:mal:${idMal}`
+        const cached = this.readCache<string[]>(ck, 86400000)
+        if (cached) return cached
+        if (this.readCache<boolean>("apahe:mal:wait", 60000)) return []
+        try {
+            const res = await fetch(`https://api.malsync.moe/mal/anime/${idMal}`)
+            if (res.status === 404) this.writeCache(ck, [])
+            else if (!res.ok) this.writeCache("apahe:mal:wait", true)
+            if (!res.ok) return []
+            const json = res.json<any>()
+            const ids = Object.keys((json && json.Sites && json.Sites.animepahe) || {})
+            this.writeCache(ck, ids)
+            return ids
+        } catch (_e) {
+            this.writeCache("apahe:mal:wait", true)
+            return []
+        }
     }
 
     private cfg(name: string, fallback: string): string {

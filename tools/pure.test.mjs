@@ -240,6 +240,86 @@ console.log("animepahe")
         ["Anything At All"],
         "season: a manual search with no media titles keeps every result",
     )
+
+    const paheData = [
+        { id: 4000, session: "s-wrong", title: "Frieren: Beyond Journey's End" },
+        { id: 77, session: "s-other", title: "Totally Unrelated Show" },
+        { id: 5319, session: "s-right", title: "Sousou no Frieren" },
+    ]
+    const reply = (body, status = 200) => Promise.resolve({ ok: status < 400, status, url: "", cookies: {}, headers: {}, contentType: "application/json", text: () => JSON.stringify(body), json: () => body })
+    const mkPahe = (mal, search = () => reply({ total: paheData.length, data: paheData })) => {
+        const store = new Map()
+        const hits = { mal: 0, search: 0 }
+        const prov = load("animepahe", {
+            $store: { get: (k) => store.get(k), set: (k, v) => store.set(k, v), remove: (k) => store.delete(k), has: (k) => store.has(k) },
+            fetch: (url) => {
+                if (url.indexOf("https://api.malsync.moe/mal/anime/") === 0) {
+                    hits.mal++
+                    return mal(url)
+                }
+                if (url.indexOf("/api?m=search&q=") !== -1) {
+                    hits.search++
+                    return search(url)
+                }
+                return reply({})
+            },
+        })
+        prov.hits = hits
+        return prov
+    }
+    const frieren = (idMal, dub = false, query = "") => ({ query, dub, media: { id: 154587, idMal, romajiTitle: "Sousou no Frieren", englishTitle: "Frieren: Beyond Journey's End" } })
+    const found = async (prov, o) => (await prov.search(o)).map((r) => r.id)
+    const synced = mkPahe((url) => reply(url.endsWith("/52991") ? { Sites: { animepahe: { 5319: { identifier: "5319", url: "https://animepahe.com/a/5319" } } } } : {}, url.endsWith("/52991") ? 200 : 404))
+    eq([
+        await found(synced, frieren(52991)),
+        await found(synced, frieren(52991, true)),
+        synced.hits.mal,
+    ], [["s-right$sub"], ["s-right$dub"], 1],
+        "id-first: MAL-Sync's AnimePahe id picks the exact entry over a closer-titled wrong one, and the mapping is cached per MAL id")
+    const fallback = ["s-wrong$sub", "s-right$sub"]
+    const down = mkPahe(() => Promise.reject(new Error("down")))
+    const limited = mkPahe(() => reply("<html>", 429))
+    const otherSites = mkPahe(() => reply({ Sites: { Zoro: { 1: { identifier: "1" } } } }))
+    const stranger = mkPahe(() => reply({ Sites: { animepahe: { 9: { identifier: "9" } } } }))
+    const noMal = mkPahe(() => reply({ Sites: { animepahe: { 5319: { identifier: "5319" } } } }))
+    eq([
+        await found(synced, frieren(11111)),
+        await found(down, frieren(52991)),
+        await found(limited, frieren(52991)),
+        await found(otherSites, frieren(52991)),
+        await found(stranger, frieren(52991)),
+        await found(noMal, frieren(undefined)),
+        await found(noMal, frieren(0)),
+        [down.hits.mal, limited.hits.mal, noMal.hits.mal, noMal.hits.search > 0],
+    ], [fallback, fallback, fallback, fallback, fallback, fallback, fallback, [1, 1, 0, true]],
+        "id-first: a MAL-Sync miss, failure, rate limit, missing AnimePahe entry or unmatched id keeps the title pick, and no MAL id means no MAL-Sync request")
+    eq([
+        await found(synced, frieren(11111)),
+        await found(synced, frieren(22222)),
+        await found(limited, frieren(5114)),
+        await found(down, frieren(52991)),
+        [synced.hits.mal, limited.hits.mal, down.hits.mal],
+    ], [fallback, fallback, fallback, fallback, [3, 1, 1]],
+        "id-first: a MAL-Sync 404 is remembered for that MAL id only, and a rate limit or failure pauses MAL-Sync for the next searches")
+    const mapped = (...ids) => () => reply({ Sites: { animepahe: Object.fromEntries(ids.map((i) => [i, { identifier: String(i) }])) } })
+    const twice = mkPahe(mapped(5319))
+    const both = mkPahe(mapped(77, 5319))
+    eq([
+        await found(twice, frieren(52991, false, "Sousou no Frieren")),
+        await found(twice, frieren(52991, false, "Frieren: Beyond Journey's End")),
+        twice.hits.mal,
+        await found(both, frieren(52991)),
+    ], [["s-right$sub"], ["s-right$sub"], 1, ["s-other$sub", "s-right$sub"]],
+        "id-first: auto-match's romaji then English searches share one MAL-Sync request, and every mapped entry is returned in search order")
+    const thrown = (prov) => prov.search(frieren(52991)).then(() => "returned", () => "threw")
+    const blockedPahe = mkPahe(mapped(5319), () => reply("Just a moment...", 403))
+    const changedPahe = mkPahe(mapped(5319), () => reply({ total: 3 }))
+    eq([
+        await thrown(blockedPahe),
+        await thrown(changedPahe),
+        [blockedPahe.hits.search > 0, changedPahe.hits.search > 0, blockedPahe.hits.mal, changedPahe.hits.mal],
+    ], ["threw", "threw", [true, true, 0, 0]],
+        "id-first: a blocked or changed search API throws without starting a MAL-Sync request")
 }
 
 console.log("animelok")
