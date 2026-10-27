@@ -127,6 +127,17 @@ class Provider implements AnimeProvider {
         const sCached = this.readCache<SearchResult[]>(sKey, 60000)
         if (sCached && sCached.length > 0) return sCached
 
+        const al = opts.media.id > 0 && wantCount > 0 ? String(opts.media.id) : ""
+        const mpKey = `anikoto:mp:${audio}:${al}`
+        const first = this.mpUrl(al, 1, audio)
+        let mpHit = al ? this.readCache<number>(mpKey, 600000) : 0
+        if (mpHit === undefined) {
+            const hit = await this.mpHas(first)
+            mpHit = hit ? 1 : 0
+            if (hit !== undefined) this.writeCache(mpKey, mpHit)
+        }
+        if (mpHit) return [{ id: this.withMeta(`mp:${al}`, audio, wantCount, 0), title: opts.media.englishTitle || opts.media.romajiTitle || first, url: first, subOrDub: audio }]
+
         for (const base of this.candidateBases()) {
             if (this.outOfTime()) break
             this.baseUrl = base
@@ -418,6 +429,16 @@ class Provider implements AnimeProvider {
         const cached = this.readCache<EpisodeDetails[]>(cacheKey)
         if (cached && cached.length > 0) return cached
 
+        const al = (parsed.base.match(/^mp:(\d+)$/) || [])[1]
+        if (al) {
+            const last = await this.mpLast(al, audio, parsed.epCount)
+            if (last < 1) throw this.fail("episodes", `MegaPlay lists no ${audio} episodes for this title`)
+            const list: EpisodeDetails[] = []
+            for (let n = 1; n <= last; n++) list.push({ id: this.withMeta(`mp:${al}:${n}`, audio, 0, 0), number: n, url: this.mpUrl(al, n, audio) })
+            this.writeCache(cacheKey, list)
+            return list
+        }
+
         const bases = this.candidateBases()
         const idOrigin = this.normBase(this.originOf(idUrl))
         if (bases.indexOf(idOrigin) === -1) bases.push(idOrigin)
@@ -513,13 +534,16 @@ class Provider implements AnimeProvider {
         const parsed = this.splitMeta(episode.id)
         const dataIds = parsed.base
         const audio = parsed.audio
+        const mp = /^mp:(\d+):(\d+)$/.exec(dataIds)
+        const mpUrl = mp ? this.mpUrl(mp[1], parseInt(mp[2], 10), audio) : ""
 
-        const $ = await this.serverListDoc(dataIds)
         const groups = audio === "dub" ? ["dub"] : ["sub", "hsub"]
         const KNOWN_SERVERS = ["HD-2", "HD-1", "Vidstream-2"]
-        const candidates = this.collectServers($, groups)
-            .filter((c) => KNOWN_SERVERS.indexOf(c.name) !== -1)
-            .sort((a, b) => KNOWN_SERVERS.indexOf(a.name) - KNOWN_SERVERS.indexOf(b.name))
+        const candidates = mp
+            ? [{ name: "Vidstream-2", linkId: mpUrl }, { name: "HD-1", linkId: `${mpUrl}?s=tcdn` }]
+            : this.collectServers(await this.serverListDoc(dataIds), groups)
+                  .filter((c) => KNOWN_SERVERS.indexOf(c.name) !== -1)
+                  .sort((a, b) => KNOWN_SERVERS.indexOf(a.name) - KNOWN_SERVERS.indexOf(b.name))
         if (candidates.length === 0) throw this.fail("server", audio === "dub" ? "no dub is available for this episode" : "no server available for this episode")
 
         const wantSubs = this.loadSubtitles !== "disabled"
@@ -941,13 +965,16 @@ class Provider implements AnimeProvider {
         const cachedSrc = this.readCache<Sources>(cacheKey, this.serverCacheTtl)
         if (cachedSrc) return cachedSrc
 
-        const psRes = await this.fetchRetry(`${this.baseUrl}/ajax/server?get=${encodeURIComponent(linkId)}`, {
-            headers: this.ajaxHeaders(),
-        })
-        if (psRes.status === 429) throw this.fail("server", this.busy)
-        if (!psRes.ok) return undefined
-        const ps = this.parseJson<{ status: number; result: { url: string } }>(psRes.text())
-        let embedUrl = ps && ps.result ? ps.result.url : undefined
+        let embedUrl = linkId.indexOf("https://") === 0 ? linkId : undefined
+        if (!embedUrl) {
+            const psRes = await this.fetchRetry(`${this.baseUrl}/ajax/server?get=${encodeURIComponent(linkId)}`, {
+                headers: this.ajaxHeaders(),
+            })
+            if (psRes.status === 429) throw this.fail("server", this.busy)
+            if (!psRes.ok) return undefined
+            const ps = this.parseJson<{ status: number; result: { url: string } }>(psRes.text())
+            embedUrl = ps && ps.result ? ps.result.url : undefined
+        }
         if (!embedUrl) return undefined
         const cdn = (embedUrl.match(/[?&]s=([\w-]+)/) || [])[1] || ""
 
@@ -980,6 +1007,33 @@ class Provider implements AnimeProvider {
         const result = { origin, file, embedAudio: this.embedAudioOf(embedUrl), tracks: Array.isArray(data.tracks) ? data.tracks : undefined }
         if (file) this.writeCache(cacheKey, result)
         return result
+    }
+
+    private mpUrl(al: string, ep: number, audio: string): string {
+        return `https://megaplay.buzz/stream/ani/${al}/${ep}/${audio}`
+    }
+
+    private async mpHas(url: string): Promise<boolean | undefined> {
+        try {
+            const res = await fetch(url, { headers: { Referer: `${this.baseUrl}/` }, timeout: this.timeLeft() })
+            return res.ok ? /data-id="[^"]+"/.test(res.text()) : undefined
+        } catch (_e) {
+            return undefined
+        }
+    }
+
+    private async mpLast(al: string, audio: string, total: number): Promise<number> {
+        let lo = 0
+        let hi = 0
+        const probe = async (n: number): Promise<void> => {
+            const hit = this.outOfTime() ? undefined : await this.mpHas(this.mpUrl(al, n, audio))
+            if (hit === undefined) throw this.fail("episodes", "MegaPlay did not answer the episode check - retry in a moment")
+            if (hit) lo = n
+            else hi = n
+        }
+        if (total > 0) await probe(total)
+        while (hi - lo > 1) await probe(Math.floor((lo + hi) / 2))
+        return lo
     }
 
     private embedAudioOf(u: string): string {

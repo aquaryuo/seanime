@@ -334,6 +334,58 @@ console.log("anikoto: search matching")
     eq(sk.length === 2 && sk[0] !== sk[1], true, "search cache: sibling seasons with the same queries do not share a cached result")
 }
 
+console.log("anikoto: megaplay by AniList id")
+{
+    // A fake MegaPlay with `aired` episodes per AniList id: a player page carries data-id, anything past it is MegaPlay's error page.
+    const mega = (aired, down) => {
+        const hits = []
+        const p = load("anikoto", {
+            $store: store({}),
+            LoadDoc: () => () => ({ first: () => ({ attr: () => "" }), length: () => 0 }),
+            fetch: (url) => {
+                hits.push(url.replace("https://megaplay.buzz", ""))
+                const m = /\/stream\/ani\/\d+\/(\d+)\//.exec(url)
+                if (m) return down ? Promise.reject(new Error("i/o timeout")) : reply(200, +m[1] <= aired ? `<div id="megaplay-player" data-id="f${m[1]}"></div>` : "<title>Error - MegaPlay</title>")
+                if (url.indexOf("getSources") !== -1) return reply(200, { sources: [{ file: "https://c.cdn/anime/a/master.m3u8" }], tracks: [{ file: "https://c.cdn/anime/a/eng.vtt", label: "English" }] })
+                if (url.endsWith("master.m3u8")) return reply(200, "#EXTM3U\nseg-1.ts\n")
+                if (url.endsWith("seg-1.ts")) return reply(206, "G@\x00\x10")
+                return reply(404, "")
+            },
+        })
+        return { p, hits }
+    }
+    const media = { id: 7, romajiTitle: "Show", englishTitle: "Show EN", format: "TV", episodeCount: 12 }
+    const probes = (n) => n.map((e) => `/stream/ani/7/${e}/sub`)
+
+    const a = mega(12)
+    eq([await a.p.search({ query: "Show", dub: true, media }), a.hits], [[{ id: "mp:7$dub$ec12$pt0", title: "Show EN", url: "https://megaplay.buzz/stream/ani/7/1/dub", subOrDub: "dub" }], ["/stream/ani/7/1/dub"]], "megaplay: an AniList id MegaPlay knows answers the search in one request, with no site search")
+    eq([(await a.p.search({ query: "Shou", dub: true, media }))[0].id, a.hits.length], ["mp:7$dub$ec12$pt0", 1], "megaplay: a second search for the same id under another query reuses the MegaPlay answer")
+    const done = await a.p.findEpisodes("mp:7$sub$ec12$pt0")
+    eq([done.length, done[11].id, done[11].url, a.hits.slice(1)], [12, "mp:7:12$sub", "https://megaplay.buzz/stream/ani/7/12/sub", probes([12])], "megaplay: a finished show costs one check of its last episode")
+
+    const airing = mega(4)
+    eq([(await airing.p.findEpisodes("mp:7$sub$ec12$pt0")).map((e) => e.number), airing.hits], [[1, 2, 3, 4], probes([12, 6, 3, 4, 5])], "megaplay: an airing show is cut to its aired episodes by bisecting below the planned count")
+    const long = mega(1180)
+    await long.p.search({ query: "Show", dub: false, media: { ...media, episodeCount: -1 } }).catch((e) => e)
+    eq([long.hits.some((h) => h.indexOf("/stream/ani/") === 0), long.hits.some((h) => h.indexOf("anikototv.to/filter?keyword=") !== -1)], [false, true], "megaplay: a title with no tracker count skips MegaPlay and uses the site search")
+    eq(await mega(0).p.findEpisodes("mp:7$sub$ec1$pt0").catch((e) => e), "MegaPlay lists no sub episodes for this title", "megaplay: an id whose episodes are gone fails clearly instead of listing nothing")
+    const gone = mega(12, true)
+    eq([await gone.p.findEpisodes("mp:7$sub$ec12$pt0").catch((e) => e), gone.hits.length], ["MegaPlay did not answer the episode check - retry in a moment", 1], "megaplay: an unreachable MegaPlay fails the list after one unretried check instead of guessing a count")
+
+    for (const [what, site] of [["does not know", mega(0)], ["cannot be reached for", mega(0, true)]]) {
+        const ask = () => site.p.search({ query: "Show", dub: false, media }).catch((e) => e)
+        await ask()
+        const first = site.hits.slice()
+        await ask()
+        const mp = (h) => h.filter((u) => u.indexOf("/stream/ani/") === 0).length
+        eq([first[0], mp(first), first.some((h) => h.indexOf("anikototv.to/filter?keyword=") !== -1), mp(site.hits.slice(first.length))], ["/stream/ani/7/1/sub", 1, true, what === "does not know" ? 0 : 1], `megaplay: a title MegaPlay ${what} falls back to the site search after one unretried check; only a real miss is remembered`)
+    }
+
+    const s = mega(12)
+    const got = await s.p.findEpisodeServer({ id: "mp:7:3$sub", number: 3, url: "" }, "Auto")
+    eq([got.videoSources[0].url, got.headers.Referer, got.videoSources[0].subtitles.length, s.hits.slice(0, 2), s.hits.some((h) => h.indexOf("anikoto") !== -1 || h.indexOf("s=tcdn") !== -1)], ["https://c.cdn/anime/a/master.m3u8", "https://megaplay.buzz/", 1, ["/stream/ani/7/3/sub", "/stream/getSourcesNew?id=f3"], false], "megaplay: an episode plays straight from its MegaPlay player via Vidstream-2 first, never touching the site's server list or HD-1")
+}
+
 console.log("anizone")
 {
     const p = load("anizone")
