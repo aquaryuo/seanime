@@ -15,7 +15,7 @@
   {
     "id": "aq-animepahe",
     "name": "AnimePahe",
-    "version": "0.2.45",
+    "version": "0.2.46",
     "description": "Only animepahe compatibility layer you'll ever need",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
