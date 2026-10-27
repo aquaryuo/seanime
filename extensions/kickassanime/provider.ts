@@ -11,6 +11,7 @@ class Provider implements AnimeProvider {
     private baseUrl = this.cfg("baseUrl", "https://kaa.lt").replace(/\/+$/, "")
     private cacheTtl = 900000
     private srcCacheTtl = 300000
+    private malCacheTtl = 21600000
     private timeout = 20
     private busy = "kickassanime: too many requests right now - wait a minute and retry"
     private subLocales = ["ja-JP", "zh-CN", "ko-KR"]
@@ -57,11 +58,17 @@ class Provider implements AnimeProvider {
                 if (this.pickBest(cands, opts.media, sq.season, sq.part).length === 1) return
             }
         }
-        await run(sq.primary)
-        if (cands.length === 0 && !down) await run(sq.fallback)
-        if (!anyOk || (down && cands.length === 0)) throw this.fail("search", "kickassanime: search failed (site unreachable)")
-        if (!anyShape) throw this.fail("search", "kickassanime: search answer not recognized - the site changed its API")
-        const picked = this.pickBest(cands, opts.media, sq.season, sq.part)
+        const found = await this.malSyncCard(opts.media.idMal || 0)
+        const known = found && !this.formatConflict(opts.media.format || "", found.type) && this.scoreTitles(found.titles, this.matchTargets(opts.media)) >= 0.5 ? found : null
+        if (known) {
+            this.addCards([known], opts, cands)
+        } else {
+            await run(sq.primary)
+            if (cands.length === 0 && !down) await run(sq.fallback)
+            if (!anyOk || (down && cands.length === 0)) throw this.fail("search", "kickassanime: search failed (site unreachable)")
+            if (!anyShape) throw this.fail("search", "kickassanime: search answer not recognized - the site changed its API")
+        }
+        const picked = known ? cands : this.pickBest(cands, opts.media, sq.season, sq.part)
         const audio = opts.dub ? "dub" : "sub"
         const none = `kickassanime: no ${audio} for this title on kickassanime`
         const out: SearchResult[] = []
@@ -272,6 +279,36 @@ class Provider implements AnimeProvider {
             out.push({ sid: it.slug, titles, type: String(it.type || ""), year: this.toInt(it.year), eps: this.toInt(it.episode_count), locales })
         }
         return out
+    }
+
+    private async malSyncCard(malId: number): Promise<Card | null> {
+        if (!(malId > 0)) return null
+        const ck = `kickassanime:mal:${malId}`
+        let slugs = this.readCache<string[]>(ck, this.malCacheTtl)
+        if (!slugs) {
+            if (this.readCache<boolean>("kickassanime:mal:off", this.srcCacheTtl)) return null
+            const res = await fetch(`https://api.malsync.moe/mal/anime/${malId}`, { headers: { Accept: "application/json" }, timeout: this.timeout }).catch(() => null)
+            if (!res || res.status === 429 || res.status >= 500) this.writeCache("kickassanime:mal:off", true)
+            const body = res && res.ok ? this.json(res) : null
+            if (!body || typeof body !== "object") return null
+            const sites = body.Sites && body.Sites.KickAssAnime
+            slugs = []
+            for (const k in sites || {}) {
+                const id = sites[k] && sites[k].identifier
+                if (typeof id === "string" && /^[\w-]{1,160}$/.test(id) && slugs.indexOf(id) === -1) slugs.push(id)
+            }
+            this.writeCache(ck, slugs)
+        }
+        if (slugs.length !== 1) return null
+        const sk = `kickassanime:show:${slugs[0]}`
+        const hit = this.readCache<Card>(sk, this.srcCacheTtl)
+        if (hit) return hit
+        const res = await fetch(`${this.baseUrl}/api/show/${slugs[0]}`, { headers: { Accept: "application/json", Referer: `${this.baseUrl}/` }, timeout: this.timeout }).catch(() => null)
+        if (res && res.status === 429) throw this.fail("search", this.busy)
+        if (!res || res.status >= 500) throw this.fail("search", "kickassanime: search failed (site unreachable)")
+        const card = (res.ok && this.parseCards({ result: [this.json(res)] })[0]) || null
+        if (card) this.writeCache(sk, card)
+        return card
     }
 
     private localeOf(locales: string[], audio: string): string {
