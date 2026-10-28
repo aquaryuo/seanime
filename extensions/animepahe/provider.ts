@@ -25,7 +25,6 @@ class Provider implements AnimeProvider {
 
         const results: SearchResult[] = []
         const seen: { [key: string]: boolean } = {}
-        const paheIds: { [key: string]: string } = {}
         let blocked = false
         let lastErr = ""
 
@@ -55,7 +54,6 @@ class Provider implements AnimeProvider {
             for (const item of data) {
                 if (!item || !item.session || seen[item.session]) continue
                 seen[item.session] = true
-                paheIds[item.session] = String(item.id)
                 results.push({
                     id: `${item.session}$${audio}`,
                     title: item.title,
@@ -66,30 +64,33 @@ class Provider implements AnimeProvider {
         }
 
         if (results.length === 0 && lastErr) throw blocked ? `${this.blockedMessage()} (${lastErr})` : lastErr
-        const exactIds = await this.malPaheIds(opts.media.idMal)
-        const exact = results.filter((r) => exactIds.indexOf(paheIds[r.id.split("$")[0]]) !== -1)
-        return exact.length > 0 ? exact : this.filterBySeason(results, opts)
+        const pick = this.filterBySeason(results, opts)
+        const sure = await this.byPageIds(pick.concat(results.filter((r) => pick.indexOf(r) === -1)), opts.media)
+        return sure ? [sure] : pick
     }
 
-    private async malPaheIds(idMal: number | undefined): Promise<string[]> {
-        if (!idMal) return []
-        const ck = `apahe:mal:${idMal}`
-        const cached = this.readCache<string[]>(ck, 86400000)
-        if (cached) return cached
-        if (this.readCache<boolean>("apahe:mal:wait", 60000)) return []
-        try {
-            const res = await fetch(`https://api.malsync.moe/mal/anime/${idMal}`)
-            if (res.status === 404) this.writeCache(ck, [])
-            else if (!res.ok) this.writeCache("apahe:mal:wait", true)
-            if (!res.ok) return []
-            const json = res.json<any>()
-            const ids = Object.keys((json && json.Sites && json.Sites.animepahe) || {})
-            this.writeCache(ck, ids)
-            return ids
-        } catch (_e) {
-            this.writeCache("apahe:mal:wait", true)
-            return []
+    private async byPageIds(order: SearchResult[], media: Media): Promise<SearchResult | undefined> {
+        const want = [media.id > 0 ? `anilist:${media.id}` : "", media.idMal ? `myanimelist:${media.idMal}` : ""].filter((w) => w)
+        if (want.length === 0) return undefined
+        for (const r of order.slice(0, 3)) {
+            const ck = `apahe:ids:${r.id.split("$")[0]}`
+            let ids = this.readCache<string[]>(ck, this.baseTtl)
+            if (!ids) {
+                let html = ""
+                try {
+                    html = await this.getText(r.url, { Referer: `${this.baseUrl}/` }, (b) => b.indexOf("</title>") !== -1)
+                } catch (_e) {
+                    return undefined
+                }
+                ids = []
+                const re = /<meta name="(anilist|myanimelist)" content="(\d+)"/g
+                let m: RegExpExecArray | null
+                while ((m = re.exec(html))) ids.push(`${m[1]}:${m[2]}`)
+                this.writeCache(ck, ids)
+            }
+            if (ids.some((i) => want.indexOf(i) !== -1)) return r
         }
+        return undefined
     }
 
     private cfg(name: string, fallback: string): string {
