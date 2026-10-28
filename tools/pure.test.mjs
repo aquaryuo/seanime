@@ -591,52 +591,18 @@ console.log("kickassanime")
     const dubEps = await dub.p.findEpisodes(dubRes[0].id)
     eq([dubRes.map((r) => [r.id, r.subOrDub]), dubEps.length, dub.hits.length], [[["frieren-2d15$en-US$dub", "dub"]], 2, 3], "dub: a playable dub costs two checks, and the episode list they fetched is reused")
 
-    const MS = "GET https://api.malsync.moe/mal/anime/52991"
-    const malSync = (...ids) => [200, { id: 52991, title: "Sousou no Frieren", Sites: { KickAssAnime: Object.fromEntries(ids.map((id) => [id, { identifier: id, page: "KickAssAnime", url: `https://www2.kickassanime.ro/anime/${id}` }])), animepahe: { x: { identifier: "x", url: "https://animepahe.ru/anime/x" } } } }]
-    const kaaShow = [200, { slug: "sousou-no-frieren-2d15", title: "Sousou no Frieren", title_en: "Frieren: Beyond Journey's End", title_original: "x", type: "tv", year: 2023, locales: ["ja-JP", "en-US"], start_date: "2023-09-29T00:00:00.000Z", watch_uri: "/sousou-no-frieren-2d15/ep-1-aa83b7" }]
-    const byMal = { ...media, idMal: 52991 }
-    const ms = site({ [MS]: malSync("sousou-no-frieren-2d15"), "GET /api/show/sousou-no-frieren-2d15": kaaShow, "POST /api/fsearch": [200, frieren] })
-    eq([await ms.p.search({ media: byMal, query: "x", dub: false }), ms.hits], [[{ id: "sousou-no-frieren-2d15$ja-JP$sub", title: "Sousou no Frieren", url: "https://kaa.lt/sousou-no-frieren-2d15", subOrDub: "sub" }], [MS, "GET /api/show/sousou-no-frieren-2d15"]], "mal: a MAL id that MAL-Sync maps to one show goes straight to it by its identifier, whatever the link looks like, with no title search")
-    await ms.p.search({ media: byMal, query: "x", dub: false })
-    eq(ms.hits.length, 2, "mal: the show is kept for a while, so a repeat search sends nothing")
-    delete ms.mem["kickassanime:show:sousou-no-frieren-2d15"]
-    await ms.p.search({ media: byMal, query: "x", dub: false })
-    eq(ms.hits.slice(2), ["GET /api/show/sousou-no-frieren-2d15"], "mal: the MAL-Sync answer outlives the show, so a later search only asks the site")
-    const fallsBack = async (malAnswer, showAnswer) => {
-        const f = site({ [MS]: malAnswer, "GET /api/show/sousou-no-frieren-2d15": showAnswer || [404, ""], "POST /api/fsearch": [200, frieren] })
-        const ids = await f.p.search({ media: { ...media, idMal: 52991 }, query: "x", dub: false }).then((r) => r.map((x) => x.id), (e) => e)
-        const kept = f.mem["kickassanime:mal:52991"]
-        return [ids, f.hits.map((h) => h.split(" ").slice(0, 2).join(" ")), kept ? kept.data : null]
-    }
-    const viaShow = [MS, "GET /api/show/sousou-no-frieren-2d15", "POST /api/fsearch"]
+    const twins = { result: [card("fb-one-1111", "Fruits Basket", null, "tv", 2019, ["ja-JP"]), card("fb-two-2222", "Fruits Basket", null, "tv", 2019, ["ja-JP"])] }
+    const fb = { id: 3, romajiTitle: "Fruits Basket", synonyms: [], format: "TV", startDate: { year: 2019, month: 4, day: 6 } }
+    const shown = (slug, start) => [200, { slug, title: "Fruits Basket", type: "tv", year: 2019, locales: ["ja-JP"], start_date: start }]
+    const dated = site({ "POST /api/fsearch": [200, twins], "GET /api/show/fb-one-1111": shown("fb-one-1111", "2019-01-11T00:00:00.000Z"), "GET /api/show/fb-two-2222": shown("fb-two-2222", "2019-04-06T00:00:00.000Z") })
+    const datedIds = async (m) => (await dated.p.search({ media: m, query: "x", dub: false })).map((r) => r.id)
+    eq([await datedIds(fb), await datedIds(fb), dated.hits.filter((h) => h.startsWith("GET /api/show/"))], [["fb-two-2222$ja-JP$sub"], ["fb-two-2222$ja-JP$sub"], ["GET /api/show/fb-one-1111", "GET /api/show/fb-two-2222"]], "date: two entries the titles cannot split are settled by the site's exact start date, and the dates are kept")
+    const undated = site({ "POST /api/fsearch": [200, twins], "GET /api/show/": [500, ""] })
     eq([
-        await fallsBack(malSync("sousou-no-frieren-2d15", "sousou-no-frieren-dub-1a2b")),
-        await fallsBack([200, { id: 52991, Sites: { animepahe: {} } }]),
-        await fallsBack([429, "error code: 1015"]),
-        await fallsBack(malSync("sousou-no-frieren-2d15")),
-        await fallsBack(malSync("../etc")),
-        await fallsBack(malSync("sousou-no-frieren-2d15"), [200, { ...kaaShow[1], slug: "rick-and-morty-season-4-uncensored-d891", title: "Rick and Morty Season 4", title_en: "Rick and Morty Season 4 (Uncensored)", year: 2019, locales: ["en-US"] }]),
-        await fallsBack(malSync("sousou-no-frieren-2d15"), [200, { ...kaaShow[1], type: "movie" }]),
-    ], [
-        [["frieren-2d15$ja-JP$sub"], [MS, "POST /api/fsearch"], ["sousou-no-frieren-2d15", "sousou-no-frieren-dub-1a2b"]],
-        [["frieren-2d15$ja-JP$sub"], [MS, "POST /api/fsearch"], []],
-        [["frieren-2d15$ja-JP$sub"], [MS, "POST /api/fsearch"], null],
-        [["frieren-2d15$ja-JP$sub"], viaShow, ["sousou-no-frieren-2d15"]],
-        [["frieren-2d15$ja-JP$sub"], [MS, "POST /api/fsearch"], []],
-        [["frieren-2d15$ja-JP$sub"], viaShow, ["sousou-no-frieren-2d15"]],
-        [["frieren-2d15$ja-JP$sub"], viaShow, ["sousou-no-frieren-2d15"]],
-    ], "mal: several entries, none, a throttled MAL-Sync (not kept), a show the site no longer has, an identifier that is not a slug, a show whose titles do not match, or a movie for a TV entry all fall back to the title search")
-    eq(await fallsBack(malSync("sousou-no-frieren-2d15"), [503, ""]), ["kickassanime: search failed (site unreachable)", [MS, "GET /api/show/sousou-no-frieren-2d15"], ["sousou-no-frieren-2d15"]], "mal: a show lookup the site cannot answer stops the search instead of searching the same dead site")
-    const malOff = site({ "GET https://api.malsync.moe/": [429, { error: "error code: 1015" }], "POST /api/fsearch": [200, frieren] })
-    for (const idMal of [52991, 52991, 1]) await malOff.p.search({ media: { ...media, idMal }, query: "x", dub: false })
-    eq([malOff.hits.map((h) => h.split(" ").slice(0, 2).join(" ")), "kickassanime:mal:off" in malOff.mem, "kickassanime:mal:52991" in malOff.mem], [[MS, "POST /api/fsearch"], true, false], "mal: a throttled MAL-Sync is left alone for a while for every title, and no answer is kept for the title")
-    malOff.mem["kickassanime:mal:off"].at = 0
-    await malOff.p.search({ media: byMal, query: "x", dub: false })
-    eq(malOff.hits.slice(2), [MS], "mal: MAL-Sync is asked again once the pause runs out")
-    const malBusy = site({ [MS]: malSync("sousou-no-frieren-2d15"), "GET /api/show/": [429, ""] })
-    eq([await malBusy.p.search({ media: byMal, query: "x", dub: false }).catch((e) => e), malBusy.hits.length], [busy, 2], "mal: a 429 on the show lookup stops the search with the busy message")
-    const malDub = site({ [MS]: malSync("sousou-no-frieren-2d15"), "GET /api/show/sousou-no-frieren-2d15/episodes?ep=1&lang=en-US": [200, eps(["aa"])], "GET /api/show/sousou-no-frieren-2d15/episode/ep-1-aa": [200, { servers: [] }], "GET /api/show/sousou-no-frieren-2d15": kaaShow })
-    eq(await malDub.p.search({ media: byMal, query: "x", dub: true }).catch((e) => e), "kickassanime: no dub for this title on kickassanime", "mal: a show found through MAL-Sync still has its dub checked")
+        (await undated.p.search({ media: { ...fb, startDate: { year: 2019 } }, query: "x", dub: false })).length,
+        (await undated.p.search({ media: fb, query: "x", dub: false })).length,
+        undated.hits.filter((h) => h.startsWith("GET /api/show/")).length,
+    ], [2, 2, 1], "date: no full start date asks nothing, and a show lookup that fails keeps every candidate")
 
     const limited = site({ "POST /api/fsearch": [429, ""] })
     eq([await limited.p.search({ media, query: "x", dub: false }).catch((e) => e), limited.hits.length], [busy, 1], "rate limit: a 429 stops the search at once")
