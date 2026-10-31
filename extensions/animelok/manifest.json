@@ -1,14 +1,14 @@
 {
   "id": "aq-animelok",
   "name": "Animelok",
-  "version": "0.1.23",
+  "version": "0.1.24",
   "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/gate/extensions/animelok/manifest.json",
   "language": "typescript",
   "type": "onlinestream-provider",
   "description": "Only animelok compatibility layer you'll ever need",
   "author": "aquaryuo",
   "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/gate/extensions/animelok/icon.png",
-  "website": "https://animelok.live",
+  "website": "https://animelok.cc",
   "lang": "en",
   "payloadURI": "https://raw.githubusercontent.com/aquaryuo/seanime/gate/extensions/animelok/provider.ts",
   "userConfig": {
@@ -19,7 +19,7 @@
         "type": "text",
         "name": "baseUrl",
         "label": "Site domain",
-        "default": "https://animelok.live"
+        "default": "https://animelok.cc"
       }
     ]
   }
