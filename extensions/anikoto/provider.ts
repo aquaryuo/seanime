@@ -127,16 +127,18 @@ class Provider implements AnimeProvider {
         const sCached = this.readCache<SearchResult[]>(sKey, 60000)
         if (sCached && sCached.length > 0) return sCached
 
-        const al = opts.media.id > 0 && wantCount > 0 ? String(opts.media.id) : ""
-        const mpKey = `anikoto:mp:${audio}:${al}`
-        const first = this.mpUrl(al, 1, audio)
-        let mpHit = al ? this.readCache<number>(mpKey, 600000) : 0
-        if (mpHit === undefined) {
-            const hit = await this.mpHas(first)
-            mpHit = hit ? 1 : 0
-            if (hit !== undefined) this.writeCache(mpKey, mpHit)
+        for (const key of [opts.media.id > 0 ? String(opts.media.id) : "", opts.media.idMal && opts.media.idMal > 0 ? `m${opts.media.idMal}` : ""]) {
+            if (!key) continue
+            const mpKey = `anikoto:mp:${audio}:${key}`
+            const first = this.mpUrl(key, 1, audio)
+            let mpHit = this.readCache<number>(mpKey, 600000)
+            if (mpHit === undefined) {
+                const hit = await this.mpHas(first)
+                mpHit = hit ? 1 : 0
+                if (hit !== undefined) this.writeCache(mpKey, mpHit)
+            }
+            if (mpHit) return [{ id: this.withMeta(`mp:${key}`, audio, wantCount, 0), title: opts.media.englishTitle || opts.media.romajiTitle || first, url: first, subOrDub: audio }]
         }
-        if (mpHit) return [{ id: this.withMeta(`mp:${al}`, audio, wantCount, 0), title: opts.media.englishTitle || opts.media.romajiTitle || first, url: first, subOrDub: audio }]
 
         for (const base of this.candidateBases()) {
             if (this.outOfTime()) break
@@ -429,9 +431,9 @@ class Provider implements AnimeProvider {
         const cached = this.readCache<EpisodeDetails[]>(cacheKey)
         if (cached && cached.length > 0) return cached
 
-        const al = (parsed.base.match(/^mp:(\d+)$/) || [])[1]
+        const al = (parsed.base.match(/^mp:(m?\d+)$/) || [])[1]
         if (al) {
-            const last = await this.mpLast(al, audio, parsed.epCount)
+            const last = await this.mpLast(al, audio, parsed.epCount > 0 ? parsed.epCount : await this.alCount(al))
             if (last < 1) throw this.fail("episodes", `MegaPlay lists no ${audio} episodes for this title`)
             const list: EpisodeDetails[] = []
             for (let n = 1; n <= last; n++) list.push({ id: this.withMeta(`mp:${al}:${n}`, audio, 0, 0), number: n, url: this.mpUrl(al, n, audio) })
@@ -534,7 +536,7 @@ class Provider implements AnimeProvider {
         const parsed = this.splitMeta(episode.id)
         const dataIds = parsed.base
         const audio = parsed.audio
-        const mp = /^mp:(\d+):(\d+)$/.exec(dataIds)
+        const mp = /^mp:(m?\d+):(\d+)$/.exec(dataIds)
         const mpUrl = mp ? this.mpUrl(mp[1], parseInt(mp[2], 10), audio) : ""
 
         const groups = audio === "dub" ? ["dub"] : ["sub", "hsub"]
@@ -1009,8 +1011,31 @@ class Provider implements AnimeProvider {
         return result
     }
 
-    private mpUrl(al: string, ep: number, audio: string): string {
-        return `https://megaplay.buzz/stream/ani/${al}/${ep}/${audio}`
+    private mpUrl(key: string, ep: number, audio: string): string {
+        return `https://megaplay.buzz/stream/${key[0] === "m" ? `mal/${key.slice(1)}` : `ani/${key}`}/${ep}/${audio}`
+    }
+
+    private async alCount(key: string): Promise<number> {
+        const ck = `anikoto:alcount:${key}`
+        const cached = this.readCache<number>(ck, 1800000)
+        if (cached !== undefined) return cached
+        try {
+            const res = await fetch("https://graphql.anilist.co", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Accept: "application/json" },
+                body: JSON.stringify({ query: `query($id:Int){Media(${key[0] === "m" ? "idMal" : "id"}:$id,type:ANIME){episodes nextAiringEpisode{episode}}}`, variables: { id: parseInt(key.replace(/^m/, ""), 10) } }),
+                timeout: this.timeLeft(),
+            })
+            const body = res.ok ? res.json<any>() : null
+            const m = body && body.data && body.data.Media
+            if (!m) return 0
+            const next = m.nextAiringEpisode && m.nextAiringEpisode.episode > 1 ? m.nextAiringEpisode.episode - 1 : 0
+            const n = next || (m.episodes > 0 ? m.episodes : 0)
+            this.writeCache(ck, n)
+            return n
+        } catch (_e) {
+            return 0
+        }
     }
 
     private async mpHas(url: string): Promise<boolean | undefined> {
@@ -1032,6 +1057,7 @@ class Provider implements AnimeProvider {
             else hi = n
         }
         if (total > 0) await probe(total)
+        else for (let n = 1; !hi && n <= 4096; n *= 2) await probe(n)
         while (hi - lo > 1) await probe(Math.floor((lo + hi) / 2))
         return lo
     }
