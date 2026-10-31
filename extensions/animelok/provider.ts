@@ -41,8 +41,7 @@ class Provider implements AnimeProvider {
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {
         const meta = this.decode(id)
         if (meta.anilistId <= 0) return []
-        let count = await this.probeEpisodeCount(meta.anilistId)
-        if (count <= 0) count = meta.num
+        const count = (await this.probeEpisodeCount(meta.anilistId, meta.num)) || meta.num
         if (count <= 0) return []
         const episodes: EpisodeDetails[] = []
         for (let n = 1; n <= count; n++) {
@@ -88,7 +87,7 @@ class Provider implements AnimeProvider {
         } catch (e) {
             return { status: "fail", origin: "", hash: "", why: this.net(e) }
         }
-        if (res.status === 404) return { status: "notfound", origin: "", hash: "", why: "" }
+        if (res.status === 404) return { status: "badshape", origin: "", hash: "", why: "" }
         if (!res.ok) return { status: "fail", origin: "", hash: "", why: `answered HTTP ${res.status}` }
         let data: { servers?: LokServer[] } | undefined
         try {
@@ -146,27 +145,36 @@ class Provider implements AnimeProvider {
         return `could not be reached (${m.slice(0, 120)})`
     }
 
-    private async probeEpisodeCount(anilistId: number): Promise<number> {
-        const cacheKey = `animelok:epcount:${anilistId}`
+    private async dubHash(anilistId: number, ep: number): Promise<string> {
+        const e = await this.probe(anilistId, ep)
+        if (e.status === "ok") return e.hash
+        if (e.status === "notfound") return ""
+        throw this.fail("episodes", `animelok: counting episodes failed - the site ${e.why || "answered in a shape this extension does not understand"}`)
+    }
+
+    private async probeEpisodeCount(anilistId: number, max: number): Promise<number> {
+        const cacheKey = `animelok:epcount:${anilistId}:${max}`
         const cached = this.readCache<number>(cacheKey, this.cacheTtl)
         if (cached !== undefined && cached > 0) return cached
-        const first = await this.probe(anilistId, 1)
-        if (first.status !== "ok") return 0
-        let lo = 1
-        let hi = 2
-        for (; hi <= 2048; hi *= 2) {
-            const v = await this.probe(anilistId, hi)
-            if (v.status === "notfound") break
-            if (v.status !== "ok") return lo
-            lo = hi
+        const first = await this.dubHash(anilistId, 1)
+        if (!first) return 0
+        const has = async (ep: number) => {
+            const h = await this.dubHash(anilistId, ep)
+            return h !== "" && h !== first
         }
-        if (hi > 2048) return lo
+        let lo = 1
+        let hi = max + 1
+        if (max <= 0) {
+            for (hi = 2; hi <= 2048 && (await has(hi)); hi *= 2) lo = hi
+            if (hi > 2048) hi = lo + 1
+        } else if (max > 1) {
+            if (await has(max)) lo = max
+            else hi = max
+        }
         while (hi - lo > 1) {
             const mid = Math.floor((lo + hi) / 2)
-            const v = await this.probe(anilistId, mid)
-            if (v.status === "ok") lo = mid
-            else if (v.status === "notfound") hi = mid
-            else return lo
+            if (await has(mid)) lo = mid
+            else hi = mid
         }
         this.writeCache(cacheKey, lo)
         return lo

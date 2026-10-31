@@ -2,8 +2,8 @@
   {
     "id": "aq-animelok",
     "name": "Animelok",
-    "version": "0.1.24",
-    "description": "Only animelok compatibility layer you'll ever need",
+    "version": "0.1.25",
+    "description": "Only animelok compatibility layer you'll ever need. Dub streams carry every audio track (Japanese, English, Hindi, Tamil, Telugu and more) — pick yours in the player's audio menu.",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
     "language": "typescript",

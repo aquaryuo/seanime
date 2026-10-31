@@ -293,15 +293,17 @@ console.log("animepahe")
 console.log("animelok")
 {
     const reply = (body, status = 200) => Promise.resolve({ ok: status < 400, status, url: "", cookies: {}, headers: {}, text: () => JSON.stringify(body), json: () => body })
-    const servers = (al, ep, salt) => ({ success: true, anilistId: al, epNum: ep, servers: [
+    const servers = (al, ep, salt, h = ep) => ({ success: true, anilistId: al, epNum: ep, servers: [
         { source: "reanime", server: "HD-1", type: "sub", url: "https://flixcloud.cc/video/f1" },
-        ...(salt ? [{ source: "animesalt", server: "Multi-1", type: "dub", languages: ["hindi"], url: `https://ravok.buzz/video/h${ep}` }, { source: "animesalt", server: "Multi-2", type: "dub", url: "https://anime.streamindia.co.in/abyss?u=1" }] : []),
+        ...(salt ? [{ source: "animesalt", server: "Multi-1", type: "dub", languages: ["hindi"], url: `https://ravok.buzz/video/h${h}` }, { source: "animesalt", server: "Multi-2", type: "dub", url: "https://anime.streamindia.co.in/abyss?u=1" }] : []),
         { source: "megaplay", server: "MegaPlay", type: "sub", url: `https://megaplay.buzz/stream/ani/${al}/${ep}/sub` },
     ] })
     const mkLok = (o = {}) => {
         const store = new Map()
         const hits = []
+        const logs = []
         const prov = load("animelok", {
+            console: { log() {}, info() {}, warn: (s) => logs.push("warn " + s), error: (s) => logs.push("error " + s) },
             $store: { get: (k) => store.get(k), set: (k, v) => store.set(k, v), remove: (k) => store.delete(k), has: (k) => store.has(k) },
             fetch: (url, init) => {
                 hits.push(url.replace(/^https:\/\/[^/]+/, ""))
@@ -310,13 +312,16 @@ console.log("animelok")
                     if (o.down) return Promise.reject(new Error(`Get "${url}": dial tcp: lookup animelok.cc: no such host`))
                     if (o.status) return reply({}, o.status)
                     if (o.shape) return reply({ success: true })
-                    return reply(servers(+api[1], +api[2], +api[2] <= (o.eps || 13)))
+                    if (o.bad && o.bad.includes(+api[2])) return reply({}, 502)
+                    return reply(servers(+api[1], +api[2], +api[2] <= (o.eps ?? 13), o.movie ? 1 : +api[2]))
                 }
                 if (/\/player\/index\.php\?data=h\d+&do=getVideo$/.test(url) && init && init.method === "POST") return reply(o.noLink ? { hls: true } : { hls: true, securedLink: "https://ravok.buzz/cdn/hls/x/master.m3u8?md5=a&expires=1" })
                 return reply({}, 404)
             },
         })
         prov.hits = hits
+        prov.logs = logs
+        prov.store = store
         return prov
     }
     const solo = (dub, query = "") => ({ query, dub, media: { id: 151807, englishTitle: "Solo Leveling", episodeCount: 12 } })
@@ -325,19 +330,43 @@ console.log("animelok")
     eq([await subOnly.search(solo(false)), subOnly.hits.length], [[], 0], "lok: a sub search finds nothing without asking the site, since only the multi-language dub plays")
     const lok = mkLok()
     eq((await lok.search(solo(true))).map((r) => [r.id, r.subOrDub]), [["151807$dub$12", "dub"]], "lok: an episode 1 with a ravok source is a dub result keyed by AniList id")
-    eq((await lok.findEpisodes("151807$dub$12")).map((e) => e.number).slice(-2), [12, 13], "lok: the episode count comes from probing the site, not the AniList count")
+    eq((await lok.findEpisodes("151807$dub$12")).map((e) => e.number).slice(-2), [11, 12], "lok: the site's answers past the AniList count (a sequel's episodes) are not listed")
+    eq([...lok.store.keys()].filter((k) => k.indexOf("epcount") !== -1), ["animelok:epcount:151807:12"], "lok: the episode count is cached per AniList count")
+    eq([(await mkLok({ eps: 8 }).findEpisodes("151807$dub$12")).length, (await mkLok().findEpisodes("151807$dub$0")).length], [8, 13], "lok: a dub behind the AniList count, or a show with no count, is counted by probing the site")
+    const movie = mkLok({ movie: true, eps: 5000 })
+    eq([(await movie.findEpisodes("21519$dub$1")).length, (await movie.findEpisodes("21519$dub$0")).length], [1, 1], "lok: a movie the site answers for at every episode number lists once")
+    eq(await mkLok({ eps: 0 }).search(solo(true)), [], "lok: a show whose episode 1 has only flixcloud and MegaPlay is not a match")
     const srv = await lok.findEpisodeServer({ id: "151807$dub$5", number: 5, url: "" }, "Auto")
     eq([srv.videoSources[0].url, srv.headers.Referer, lok.hits.filter((h) => h.indexOf("getVideo") !== -1)], ["https://ravok.buzz/cdn/hls/x/master.m3u8?md5=a&expires=1", "https://ravok.buzz/", ["/player/index.php?data=h5&do=getVideo"]], "lok: the server asks the ravok player for its secured link and plays it with the player's referer")
+    const hitsBefore = lok.hits.length
+    await lok.findEpisodeServer({ id: "151807$dub$5", number: 5, url: "" }, "Auto")
+    eq(lok.hits.length, hitsBefore, "lok: a second play of the same episode is served from the cache")
     eq(await err(lok.findEpisodeServer({ id: "151807$dub$20", number: 20, url: "" }, "Auto")), "animelok: episode 20 has no multi-language dub on this site", "lok: an episode with only flixcloud and MegaPlay is reported as missing")
+    eq(lok.logs.slice(-1).map((l) => /^warn SEHERRv1 .*"lvl":"info"/.test(l)), [true], "lok: a missing episode is reported as a notice, not an error")
+    const sick = mkLok({ status: 503 })
+    await err(sick.findEpisodeServer({ id: "151807$dub$1", number: 1, url: "" }, "Auto"))
+    eq(sick.logs.map((l) => /^error SEHERRv1 /.test(l) && l.indexOf("lvl") === -1), [true], "lok: a failed lookup is reported as an error")
     eq([
         await err(mkLok({ status: 503 }).search(solo(true))),
         await err(mkLok({ shape: true }).search(solo(true))),
+        await err(mkLok({ status: 404 }).search(solo(true))),
         await err(mkLok({ noLink: true }).findEpisodeServer({ id: "151807$dub$1", number: 1, url: "" }, "Auto")),
     ], [
         "animelok: search failed - the site answered HTTP 503",
         "animelok: https://animelok.cc answered for AniList id 151807 in a shape this extension does not understand — the site changed its API; this extension needs an update.",
+        "animelok: https://animelok.cc answered for AniList id 151807 in a shape this extension does not understand — the site changed its API; this extension needs an update.",
         "animelok: the ravok.buzz player answered without a stream link - this extension needs an update",
-    ], "lok: an HTTP error, a changed API and a player with no link each say what failed")
+    ], "lok: an HTTP error, a changed API, a removed endpoint and a player with no link each say what failed")
+    const o = { status: 503 }
+    const healing = mkLok(o)
+    const r1 = await err(healing.search(solo(true)))
+    o.status = 0
+    eq([r1, (await healing.search(solo(true))).length], ["animelok: search failed - the site answered HTTP 503", 1], "lok: a failed lookup is not cached, so the next search tries again")
+    const f = { bad: [8] }
+    const flaky = mkLok(f)
+    const c1 = await err(flaky.findEpisodes("151807$dub$0"))
+    f.bad = []
+    eq([c1, (await flaky.findEpisodes("151807$dub$0")).length], ["animelok: counting episodes failed - the site answered HTTP 502", 13], "lok: a probe that fails twice stops the count with an error instead of a short list, and nothing short is cached")
     const down = mkLok({ down: true })
     eq([await err(down.search(solo(true))), down.hits.length], ["animelok: search failed - the site could not be found (DNS)", 2], "lok: a lookup failure is retried once and named")
 }
