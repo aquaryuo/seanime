@@ -1,7 +1,7 @@
 {
   "id": "aq-anizone",
   "name": "AniZone",
-  "version": "1.1.42",
+  "version": "1.1.43",
   "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/main/extensions/anizone/manifest.json",
   "language": "typescript",
   "type": "onlinestream-provider",

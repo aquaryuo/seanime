@@ -463,7 +463,92 @@ console.log("anizone")
     const slow = load("anizone", { fetch: (url, opts) => { timeouts.push(opts.timeout); return Promise.reject(new Error("anizone.to did not answer in time")) } })
     const slowErr = await slow.findEpisodes("abc123$sub").catch((e) => e)
     await slow.trimToExisting({ cookies: {} }, "<span>9 Episodes</span>", "abc123", 1)
-    eq([timeouts, slowErr], [[60, 5], "anizone did not respond — the site is slow or down right now, retry in a moment"], "timeout: page loads outwait the host default and a caller's own timeout wins")
+    eq([timeouts, slowErr], [[60, 5], "anizone: series page failed - the site did not answer in time"], "timeout: page loads outwait the host default and a caller's own timeout wins")
+
+    const BLOCK = "<!DOCTYPE html><html><head><title>Attention Required! | Cloudflare</title></head><body><h1>Sorry, you have been blocked</h1><h2>You are unable to access anizone.to</h2></body></html>"
+    const CHALLENGE = "<!DOCTYPE html><html><head><title>Just a moment...</title></head><body></body></html>"
+    const answer = (status, body, headers = {}) => () => Promise.resolve({ ok: status >= 200 && status < 300, status, headers, cookies: {}, text: () => body })
+    const refuse = (m) => () => Promise.reject(new Error(m))
+    const searched = async (f) => {
+        let n = 0
+        const r = await load("anizone", { fetch: (u, o) => (n++, f(u, o)) }).search({ media: { id: 0, romajiTitle: "Foo", englishTitle: "Foo English" }, query: "Foo", dub: false }).then((x) => x.map((y) => y.id), (e) => e)
+        return [r, n]
+    }
+    const sf = "anizone: search failed - the site "
+    eq([
+        await searched(answer(403, BLOCK)),
+        await searched(answer(403, CHALLENGE)),
+        await searched(answer(403, "<h1>Forbidden</h1>", { "Cf-Mitigated": "challenge" })),
+        await searched(answer(403, "<h1>Forbidden</h1>")),
+        await searched(answer(401, "")),
+    ], [
+        [sf + "blocks this server (Cloudflare block page, HTTP 403)", 1],
+        [sf + "wants a captcha from this server (Cloudflare check, HTTP 403)", 1],
+        [sf + "wants a captcha from this server (Cloudflare check, HTTP 403)", 1],
+        [sf + "answered HTTP 403", 1],
+        [sf + "answered HTTP 401", 1],
+    ], "why: a Cloudflare block page, a Cloudflare check by title or header, and a plain 401 or 403 are each named and stop the remaining queries")
+    const said = async (f) => (await searched(f))[0].slice(sf.length)
+    eq([
+        await said(answer(503, "")),
+        await said(refuse("anizone.to did not answer in time")),
+        await said(refuse("anizone.to refused the connection")),
+        await said(refuse("anizone.to reset the connection")),
+        await said(refuse("Cannot resolve anizone.to")),
+        await said(refuse("anizone.to could not be found")),
+        await said(refuse("anizone.to failed the TLS check")),
+        await said(refuse("anizone.to rejected the TLS handshake")),
+        await said(refuse("Too many redirects")),
+        await said(refuse("anizone.to redirected")),
+        await said(refuse("something odd")),
+    ], [
+        "answered HTTP 503",
+        "did not answer in time",
+        "refused the connection",
+        "reset the connection",
+        "could not be found (DNS)",
+        "could not be found (DNS)",
+        "failed the TLS handshake",
+        "failed the TLS handshake",
+        "redirected too many times",
+        "redirected",
+        "could not be reached (something odd)",
+    ], "why: a server error and each of the host's transport failures are named")
+    eq([
+        await said(refuse('Get "https://anizone.to/anime?search=Reset": dial tcp: lookup anizone.to: no such host')),
+        await said(refuse('Get "https://anizone.to/anime?search=Foo": stopped after 10 redirects')),
+        await said(refuse('Get "https://anizone.to/anime?search=Foo": context deadline exceeded (Client.Timeout exceeded while awaiting headers)')),
+        await said(refuse("read tcp 10.0.0.1:5000->1.2.3.4:443: read: connection reset by peer")),
+        await said(refuse('Get "https://anizone.to/anime?search=Closed": tls: failed to verify certificate: x509: certificate has expired')),
+    ], ["could not be found (DNS)", "redirected too many times", "did not answer in time", "reset the connection", "failed the TLS handshake"], "why: Seanime's Go errors are named by their cause, not by words in the URL they quote")
+    const mixed = async (first, mem = {}) => {
+        let n = 0
+        const r = await load("anizone", { $store: store(mem), fetch: (u) => (n++, n === 1 ? first() : answer(403, BLOCK)()) }).search({ media: { id: 0, romajiTitle: "Foo Bar", englishTitle: "Foo Bar English" }, query: "Foo", dub: false }).then((x) => x.map((y) => y.id), (e) => e)
+        return [r, n]
+    }
+    const settled = { "anizone:q:foo bar english": { at: Date.now(), data: [{ sid: "abc123", titles: ["Foo Bar English"], type: "", year: 0, eps: 0 }] } }
+    eq([
+        await mixed(answer(200, "items: JSON.parse('[]')")),
+        await mixed(answer(403, BLOCK), settled),
+    ], [
+        [sf + "blocks this server (Cloudflare block page, HTTP 403)", 2],
+        [["abc123$sub"], 1],
+    ], "why: a block after an answered query still names itself, but a query already in the cache can still settle the pick")
+    const epsErr = (f) => load("anizone", { fetch: f }).findEpisodes("abc123$sub").catch((e) => e)
+    const srcErr = (f) => load("anizone", { fetch: f }).findEpisodeServer({ id: "abc123$1$sub", number: 1, url: "" }, "Auto").catch((e) => e)
+    eq([
+        await epsErr(answer(403, BLOCK)),
+        await epsErr(refuse("anizone.to refused the connection")),
+        await srcErr(answer(403, CHALLENGE)),
+        await srcErr(answer(403, "<h1>Forbidden</h1>")),
+        await srcErr(refuse("anizone.to did not answer in time")),
+    ], [
+        "anizone: series page failed - the site blocks this server (Cloudflare block page, HTTP 403)",
+        "anizone: series page failed - the site refused the connection",
+        "anizone: episode page failed - the site wants a captcha from this server (Cloudflare check, HTTP 403)",
+        "anizone: episode page failed - the site answered HTTP 403",
+        "anizone: episode page failed - the site did not answer in time",
+    ], "why: the series and episode pages name the same cases")
 
     const dub = await load("anizone", { fetch: () => Promise.resolve({ ok: false, status: 503, text: () => "" }) }).hasEnglishAudio("https://cdn.test/a/master.m3u8", "abc123", "1")
     eq(dub === undefined, true, "dub: a failed audio check is undecided, not a missing dub")
@@ -684,8 +769,10 @@ console.log("mkissa")
             fetch: (url, opts = {}) => {
                 const body = opts.body ? JSON.parse(opts.body) : null
                 hits.push(body ? (/episode\(/.test(body.query) ? "episode" : /shows\(/.test(body.query) ? "shows:" + body.variables.search.query : "show:" + body.variables._id) : url.replace(/\?.*$/, ""))
+                if (o.reject) return Promise.reject(new Error(o.reject))
                 if (o.status) return reply(o.status, {})
                 if (url.indexOf("/client-crypto/v1/bootstrap") !== -1) {
+                    if (o.boot) return reply(o.boot[0], o.boot[1])
                     const k1 = crypto.createHmac("sha256", mask).update("KoCGqjW:179").digest()
                     const want = crypto.createHmac("sha256", k1).update(["179", "mkissa", "k7", epoch, "mkissa.to"].join("|")).digest("hex")
                     if (opts.headers["x-aa-boot"] !== want) return reply(403, { error: "invalid_boot_token" })
@@ -694,6 +781,7 @@ console.log("mkissa")
                 if (body && /episode\(/.test(body.query)) {
                     if (o.gate && !(body.extensions.captcha && body.extensions.captcha.token === o.gate)) return reply(200, { errors: [{ message: body.extensions.captcha ? "CAPTCHA_INVALID" : "NEED_CAPTCHA" }], data: { episode: null } })
                     if (o.errors) return reply(200, { errors: [{ message: o.errors }], data: { episode: null } })
+                    if (o.garble) return reply(200, { data: { _m: "b7", tobeparsed: "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" } })
                     if (crypt-- > 0) return reply(200, { errors: [{ message: "AA_CRYPTO_STALE" }], data: { episode: null } })
                     const t = Buffer.from(body.extensions.aaReq, "base64")
                     const d = crypto.createDecipheriv("aes-256-gcm", wk, t.subarray(1, 13))
@@ -763,22 +851,59 @@ console.log("mkissa")
     await stale.s.findEpisodeServer({ id: "ReHMC7TQnch3C6z8j$sub$1", number: 1, url: "" }, "Auto")
     eq(stale.hits.slice(0, 4), ["https://api.mkissa.net/client-crypto/v1/bootstrap", "episode", "https://api.mkissa.net/client-crypto/v1/bootstrap", "episode"], "server: a stale crypto answer refetches the bootstrap and retries once")
     const dead = site({ crypt: 9, sources: [] })
-    eq(await dead.s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto").catch((e) => e), "mkissa: the site changed its player handshake - this extension needs an update", "server: a second stale answer says the extension needs an update")
+    eq([await dead.s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto").catch((e) => e), dead.hits.filter((h) => h === "episode").length], ["mkissa: the site refused the sealed request (AA_CRYPTO_STALE) - this extension needs an update", 2], "server: a second stale answer names the site's code and says the extension needs an update")
+    const lookup = (o) => {
+        const x = site(o)
+        return x.s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto").then(() => "returned", (e) => e).then((e) => [e, x.hits])
+    }
+    const BOOT = "https://api.mkissa.net/client-crypto/v1/bootstrap"
+    eq(await lookup({ boot: [404, { error: "unknown_build_id" }] }), ["mkissa: the site retired build 179 (bootstrap: unknown_build_id) - this extension needs an update", [BOOT]], "boot: a retired build is named from the bootstrap's own error, with no episode request")
+    eq([
+        (await lookup({ boot: [403, { error: "invalid_boot_token" }] }))[0],
+        (await lookup({ boot: [500, { error: "oops" }] }))[0],
+        (await lookup({ boot: [502, "<html>bad gateway</html>"] }))[0],
+        (await lookup({ boot: [200, { epoch: 1, partB: "AAAA" }] }))[0],
+    ], [
+        "mkissa: the site rejected the build 179 boot token (invalid_boot_token) - this extension needs an update",
+        "mkissa: the handshake bootstrap answered 500 oops",
+        "mkissa: the handshake bootstrap answered 502",
+        "mkissa: the handshake bootstrap answered without a key",
+    ], "boot: a refused token, any other status with or without an error field, and a missing key each name themselves")
+    const mismatch = await lookup({ errors: "AA_CRYPTO_BUILD_MISMATCH" })
+    eq([mismatch[0], mismatch[1].filter((h) => h === "episode").length], ["mkissa: the site refused the sealed request (AA_CRYPTO_BUILD_MISMATCH) - this extension needs an update", 1], "crypto: a code other than stale or expired is named at once, with no retry")
+    const expired = await lookup({ errors: "AA_CRYPTO_EXPIRED" })
+    eq([expired[0], expired[1].filter((h) => h === "episode").length], ["mkissa: the site refused the sealed request (AA_CRYPTO_EXPIRED) - this extension needs an update", 2], "crypto: an expired answer gets the one retry, then is named")
+    const garbled = await lookup({ garble: true })
+    eq([garbled[0], garbled[1].filter((h) => h === "episode").length], ["mkissa: the sealed answer did not open with the build 179 key - this extension needs an update", 2], "crypto: an answer that will not open is retried once, then named")
+    eq([
+        (await lookup({ reject: "api.mkissa.net did not answer in time" }))[0],
+        (await lookup({ reject: "api.mkissa.net refused the connection" }))[0],
+        (await lookup({ reject: "api.mkissa.net reset the connection" }))[0],
+        (await lookup({ reject: "Cannot resolve api.mkissa.net" }))[0],
+    ], ["mkissa: the site did not answer in time", "mkissa: the site refused the connection", "mkissa: the site reset the connection", "mkissa: the site could not be found (DNS)"], "transport: each of the host's failures is named")
 
     const busy = "mkissa: too many requests right now - wait a minute and retry"
     eq(await site({ status: 429 }).s.search({ media: frieren, query: "", dub: false }).catch((e) => e), busy, "rate limit: an HTTP 429 stops the search at once")
     const limited = site({ errors: "Too many requests, please try again in 2 seconds." })
     eq([await limited.s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto").catch((e) => e), limited.hits.length], [busy, 2], "rate limit: the API's own throttle message is a 429 too, with no retry")
-    eq(await site({ errors: "NEED_CAPTCHA" }).s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto").catch((e) => e), p.captcha, "captcha: a captcha demand is reported, not mistaken for a missing episode")
+    eq(await site({ errors: "NEED_CAPTCHA" }).s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto").catch((e) => e), "mkissa: the site asks for a captcha (NEED_CAPTCHA) for episode links from this server's IP", "captcha: a captcha demand is reported with its code, not mistaken for a missing episode")
     const relay = (token) => (url) => (url === "http://127.0.0.1:8192/token" ? reply(token ? 200 : 404, token ? { token, provider: "turnstile" } : {}) : mp4(url))
     const relayed = site({ gate: "t1", relay: "http://127.0.0.1:8192/", sources: [{ sourceUrl: "https://mp4upload.com/embed-abc.html", sourceName: "Mp4" }], page: relay("t1") })
     const pass = await relayed.s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto").then((r) => r.videoSources[0].type, (e) => e)
     eq([pass, relayed.hits], ["mp4", ["https://api.mkissa.net/client-crypto/v1/bootstrap", "episode", "http://127.0.0.1:8192/token", "episode", "https://www.mp4upload.com/embed-abc.html"]], "captcha: a solved check from the relay is sent with one retry of the same lookup")
     const askRelay = "mkissa: the site wants a captcha for episode links from this IP - complete the check on your captcha relay page at http://127.0.0.1:8192/ and retry"
     const empty = site({ gate: "t1", relay: "http://127.0.0.1:8192", page: relay("") })
-    eq([await empty.s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto").catch((e) => e), empty.hits.length], [askRelay, 3], "captcha: with no solved check waiting, the user is pointed at the relay page")
+    eq([await empty.s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto").catch((e) => e), empty.hits.length], [`${askRelay} (the relay has no solved check yet)`, 3], "captcha: with no solved check waiting, the user is pointed at the relay page")
+    const down = site({ gate: "t1", relay: "http://127.0.0.1:8192", page: (url) => (url.endsWith("/token") ? Promise.reject(new Error("127.0.0.1 refused the connection")) : mp4(url)) })
+    const broken = site({ gate: "t1", relay: "http://127.0.0.1:8192", page: (url) => reply(500, "") })
+    const html = site({ gate: "t1", relay: "http://127.0.0.1:8192", page: (url) => reply(200, "<!DOCTYPE html><p>proxy</p>") })
+    eq([
+        await down.s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto").catch((e) => e),
+        await broken.s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto").catch((e) => e),
+        await html.s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto").catch((e) => e),
+    ], [`${askRelay} (the relay refused the connection)`, `${askRelay} (the relay answered HTTP 500)`, `${askRelay} (the relay answered without a token)`], "captcha: a relay that is down, failing or answering something else says so")
     const refused = site({ gate: "t1", relay: "http://127.0.0.1:8192", page: relay("old") })
-    eq([await refused.s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto").catch((e) => e), refused.hits.filter((h) => h === "episode").length], [askRelay, 2], "captcha: a rejected token fails once instead of looping")
+    eq([await refused.s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto").catch((e) => e), refused.hits.filter((h) => h === "episode").length], ["mkissa: the site rejected the relayed captcha token (CAPTCHA_INVALID)", 2], "captcha: a rejected token is named and fails once instead of looping")
     eq(await site({ sources: [{ sourceUrl: "https://bysekoze.com/e/x", sourceName: "Fm-Hls" }] }).s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto").catch((e) => e), "mkissa: episode 1 only has players this extension cannot play (Fm-Hls)", "server: an episode with only unsupported players says which")
 
     eq(load("mkissa", { $getUserPreference: () => "https://mkissa.to/" }).baseUrl, "https://mkissa.to", "config: a trailing slash is stripped")
@@ -798,6 +923,7 @@ console.log("shared helpers")
         [["anikoto", "anizone", "mkissa"], ["isNonDialogue"]],
         [["anikoto", "anizone", "kickassanime", "mkissa"], ["cfg"]],
         [["anizone", "kickassanime", "mkissa"], ["fail", "readCache"]],
+        [["anizone", "mkissa"], ["net"]],
         [["anizone", "kickassanime"], ["searchQueries", "firstWords", "norm", "matchTargets", "scoreTitles", "cardYear", "yearPenalty", "disambiguate", "byPart", "cardMax", "yearOf", "partOf", "bestTitle", "toInt", "displayName", "langName"]],
     ]
     const drift = []

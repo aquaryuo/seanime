@@ -26,6 +26,8 @@ class Provider implements AnimeProvider {
         let anyOk = false
         let anyShape = false
         let limited = false
+        let refused = false
+        let why = ""
         const run = async (queries: string[]): Promise<void> => {
             for (const q of queries) {
                 if (cands.length >= 12 || limited) break
@@ -34,6 +36,8 @@ class Provider implements AnimeProvider {
                 if (cards) {
                     anyOk = true
                     anyShape = true
+                } else if (refused) {
+                    continue
                 } else {
                     let html = ""
                     try {
@@ -44,9 +48,12 @@ class Provider implements AnimeProvider {
                         if (res.ok) {
                             anyOk = true
                             html = res.text()
-                        }
+                        } else why = this.why(res)
                         limited = res.status === 429
-                    } catch (_e) {}
+                        refused = res.status === 401 || res.status === 403
+                    } catch (e) {
+                        why = this.net(e)
+                    }
                     cards = this.parseItems(html)
                     if (this.itemsMarkup.test(html)) {
                         anyShape = true
@@ -60,9 +67,10 @@ class Provider implements AnimeProvider {
         await run(sq.primary)
         if (cands.length === 0) await run(sq.fallback)
         if (limited) throw this.fail("search", this.busy)
-        if (!anyOk) throw this.fail("search", "anizone: search failed (site unreachable)")
+        const picked = this.pickBest(cands, opts.media, sq.season, sq.part)
+        if ((refused && picked.length !== 1) || !anyOk) throw this.fail("search", `anizone: search failed - the site ${why || "could not be reached"}`)
         if (!anyShape) throw this.fail("search", "anizone: search page layout not recognized")
-        return this.pickBest(cands, opts.media, sq.season, sq.part)
+        return picked
     }
 
     private cfg(name: string, fallback: string): string {
@@ -249,7 +257,7 @@ class Provider implements AnimeProvider {
         if (cached) return cached
         const res = await this.guarded("episodes", `${this.baseUrl}/anime/${shortid}`)
         if (res.status === 404) return []
-        if (!res.ok) throw this.fail("episodes", `anizone: series page failed (status ${res.status})`)
+        if (!res.ok) throw this.fail("episodes", `anizone: series page failed - the site ${this.why(res)}`)
         const html = res.text()
         const nums = new Set<number>()
         this.collectEps(html, shortid, nums)
@@ -284,7 +292,7 @@ class Provider implements AnimeProvider {
                 } catch (_e) {}
                 throw this.fail("server", `anizone: episode ${n} is not on anizone yet - refresh the episode list`)
             }
-            if (!res.ok) throw this.fail("server", `anizone: episode page failed (status ${res.status})`)
+            if (!res.ok) throw this.fail("server", `anizone: episode page failed - the site ${this.why(res)}`)
             cached = this.parsePlayer(res.text())
             if (!cached.m3u8) throw this.fail("server", "anizone: no stream found for this episode")
             this.writeCache(cacheKey, cached)
@@ -657,11 +665,32 @@ class Provider implements AnimeProvider {
         try {
             res = await fetch(url, { headers: this.headers, timeout: this.pageTimeout })
         } catch (e) {
-            this.reportError(scope, `transport failure: ${e instanceof Error ? e.message : String(e)}`)
-            throw "anizone did not respond — the site is slow or down right now, retry in a moment"
+            throw this.fail(scope, `anizone: ${scope === "episodes" ? "series" : "episode"} page failed - the site ${this.net(e)}`)
         }
         if (res.status === 429) throw this.fail(scope, this.busy)
         return res
+    }
+
+    private why(res: FetchResponse): string {
+        if (res.status === 403) {
+            const body = String(res.text() || "")
+            const h = res.headers || {}
+            if (Object.keys(h).some((k) => k.toLowerCase() === "cf-mitigated" && /challenge/i.test(String(h[k]))) || /<title>\s*Just a moment/i.test(body)) return "wants a captcha from this server (Cloudflare check, HTTP 403)"
+            if (/Attention Required! \| Cloudflare|you have been blocked/i.test(body)) return "blocks this server (Cloudflare block page, HTTP 403)"
+        }
+        return `answered HTTP ${res.status}`
+    }
+
+    private net(e: unknown): string {
+        const m = String(e instanceof Error ? e.message : (e && (e as any).message) || e).replace(/^\w+ "[^"]*": /, "")
+        if (/did not answer in time|timed? ?out|deadline exceeded/i.test(m)) return "did not answer in time"
+        if (/refused/i.test(m)) return "refused the connection"
+        if (/\b(?:reset|closed|EOF)\b/i.test(m)) return "reset the connection"
+        if (/could not be found|cannot resolve|no such host|ENOTFOUND|EAI_AGAIN/i.test(m)) return "could not be found (DNS)"
+        if (/TLS|SSL|certificate|x509/i.test(m)) return "failed the TLS handshake"
+        if (/too many redirects|stopped after \d+ redirects/i.test(m)) return "redirected too many times"
+        if (/redirected/i.test(m)) return "redirected"
+        return `could not be reached (${m.slice(0, 120)})`
     }
 
     private readCache<T>(key: string, ttl: number): T | undefined {
