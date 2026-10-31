@@ -1,16 +1,13 @@
 declare const console: { log(...args: any[]): void; info(...args: any[]): void; warn(...args: any[]): void; error(...args: any[]): void }
 
-type VibeTrack = { url?: string; lang?: string; label?: string; kind?: string; default?: boolean }
-type VibeData = { sources?: { url: string }[]; tracks?: VibeTrack[]; headers?: { [key: string]: string } }
-type Availability = { exists: boolean; audio: string; subOrDub: SubOrDub; broken?: boolean }
-type VibeResult = { status: "ok" | "notfound" | "nosource" | "fail" | "badshape"; url: string; tracks: VibeTrack[]; headers: { [key: string]: string } }
+type LokServer = { source?: string; url?: string }
+type Embed = { status: "ok" | "notfound" | "badshape" | "fail"; origin: string; hash: string; why: string }
 
 class Provider implements AnimeProvider {
-    private baseUrl = this.cfg("baseUrl", "{{baseUrl}}", "https://animelok.live")
-    private base = this.baseUrl.replace(/animelok\.(online|net|to)/i, "animelok.live").replace(/\/+$/, "")
+    private baseUrl = this.cfg("baseUrl", "{{baseUrl}}", "https://animelok.cc")
+    private base = this.baseUrl.replace(/animelok\.(online|net|to|live|xyz)/i, "animelok.cc").replace(/\/+$/, "")
     private cacheTtl = 900000
     private srcCacheTtl = 300000
-    private availFailTtl = 45000
 
     getSettings(): Settings {
         return { episodeServers: ["Auto"], supportsDub: true }
@@ -24,17 +21,19 @@ class Provider implements AnimeProvider {
             if (q && !/^\d+$/.test(q)) throw this.fail("search", "animelok matches by AniList id — paste the anilist.co URL or its numeric id instead of a title")
             return []
         }
-        const av = await this.availability(anilistId, opts.dub)
-        if (av.broken) throw this.fail("search", `animelok: ${this.base} answered for AniList id ${anilistId} in a shape this extension does not understand — the site changed its API; this extension needs an update.`)
-        if (!av.exists) return []
+        if (!opts.dub) return []
+        const first = await this.probe(anilistId, 1)
+        if (first.status === "badshape") throw this.fail("search", `animelok: ${this.base} answered for AniList id ${anilistId} in a shape this extension does not understand — the site changed its API; this extension needs an update.`)
+        if (first.status === "fail") throw this.fail("search", `animelok: search failed - the site ${first.why}`)
+        if (first.status !== "ok") return []
         const epCount = opts.media.episodeCount && opts.media.episodeCount > 0 ? opts.media.episodeCount : 0
         const title = opts.media.englishTitle || opts.media.romajiTitle || `Anime ${anilistId}`
         return [
             {
-                id: this.encode(anilistId, av.audio, epCount),
+                id: this.encode(anilistId, epCount),
                 title,
-                url: `${this.base}/anime/${anilistId}`,
-                subOrDub: av.subOrDub,
+                url: `${this.base}/watch/${anilistId}`,
+                subOrDub: "dub",
             },
         ]
     }
@@ -42,13 +41,13 @@ class Provider implements AnimeProvider {
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {
         const meta = this.decode(id)
         if (meta.anilistId <= 0) return []
-        let count = await this.probeEpisodeCount(meta.anilistId, meta.audio)
+        let count = await this.probeEpisodeCount(meta.anilistId)
         if (count <= 0) count = meta.num
         if (count <= 0) return []
         const episodes: EpisodeDetails[] = []
         for (let n = 1; n <= count; n++) {
             episodes.push({
-                id: this.encode(meta.anilistId, meta.audio, n),
+                id: this.encode(meta.anilistId, n),
                 number: n,
                 url: `${this.base}/watch/${meta.anilistId}?ep=${n}`,
             })
@@ -58,25 +57,16 @@ class Provider implements AnimeProvider {
 
     async findEpisodeServer(episode: EpisodeDetails, server: string): Promise<EpisodeServer> {
         const meta = this.decode(episode.id)
-        const v = await this.getVibe(meta.anilistId, meta.num, meta.audio)
-        if (v.status === "ok") {
-            return {
-                server: "Auto",
-                headers: Object.assign({ Referer: `${this.base}/` }, v.headers),
-                videoSources: [
-                    {
-                        url: v.url,
-                        type: "m3u8",
-                        quality: "auto",
-                        subtitles: this.buildSubs(v.tracks),
-                    },
-                ],
-            }
+        const e = await this.probe(meta.anilistId, meta.num)
+        if (e.status === "notfound") throw this.fail("server", `animelok: episode ${meta.num} has no multi-language dub on this site`, "info")
+        if (e.status === "badshape") throw this.fail("server", `animelok: the site answered for episode ${meta.num} in a shape this extension does not understand — the site changed its API; this extension needs an update.`)
+        if (e.status !== "ok") throw this.fail("server", `animelok: episode ${meta.num} lookup failed - the site ${e.why}`)
+        const url = await this.video(e.origin, e.hash)
+        return {
+            server: "Auto",
+            headers: { Referer: `${e.origin}/` },
+            videoSources: [{ url, type: "m3u8", quality: "auto", subtitles: [] }],
         }
-        if (v.status === "notfound") throw this.fail("server", `animelok: episode ${meta.num} is not available on this site`, "info")
-        if (v.status === "nosource") throw this.fail("server", `animelok: no source for episode ${meta.num} right now (the site returned an error; try again later)`)
-        if (v.status === "badshape") throw this.fail("server", `animelok: the site answered for episode ${meta.num} in a shape this extension does not understand — the site changed its API; this extension needs an update.`)
-        throw this.fail("server", `animelok: source temporarily unavailable (failed to extract episode ${meta.num}; try again)`)
     }
 
     private cfg(name: string, raw: string, fallback: string): string {
@@ -88,194 +78,94 @@ class Provider implements AnimeProvider {
         return fallback
     }
 
-    private safeHeaders(apiHeaders: { [key: string]: string }): { [key: string]: string } {
-        const allow: { [key: string]: string } = { referer: "Referer", origin: "Origin", "user-agent": "User-Agent" }
-        const out: { [key: string]: string } = {}
-        for (const k in apiHeaders) {
-            const name = allow[String(k).toLowerCase()]
-            const v = apiHeaders[k]
-            if (!name || typeof v !== "string" || !v || v.length > 512) continue
-            if (/[\r\n]/.test(v)) continue
-            out[name] = v
+    private async embed(anilistId: number, ep: number): Promise<Embed> {
+        const cacheKey = `animelok:embed:${anilistId}:${ep}`
+        const cached = this.readCache<Embed>(cacheKey, this.srcCacheTtl)
+        if (cached) return cached
+        let res: FetchResponse
+        try {
+            res = await fetch(`${this.base}/api/anilist/${anilistId}/${ep}`, { headers: { Referer: `${this.base}/watch/${anilistId}`, Accept: "application/json" } })
+        } catch (e) {
+            return { status: "fail", origin: "", hash: "", why: this.net(e) }
         }
+        if (res.status === 404) return { status: "notfound", origin: "", hash: "", why: "" }
+        if (!res.ok) return { status: "fail", origin: "", hash: "", why: `answered HTTP ${res.status}` }
+        let data: { servers?: LokServer[] } | undefined
+        try {
+            data = res.json<{ servers?: LokServer[] }>()
+        } catch (_e) {}
+        if (!data || !Array.isArray(data.servers)) return { status: "badshape", origin: "", hash: "", why: "" }
+        let out: Embed = { status: "notfound", origin: "", hash: "", why: "" }
+        for (const s of data.servers) {
+            const m = s && s.source === "animesalt" && typeof s.url === "string" ? s.url.match(/^(https:\/\/[^/?#]+)\/video\/([A-Za-z0-9]+)$/) : null
+            if (m) {
+                out = { status: "ok", origin: m[1], hash: m[2], why: "" }
+                break
+            }
+        }
+        this.writeCache(cacheKey, out)
         return out
     }
 
-    private buildSubs(tracks: VibeTrack[]): VideoSubtitle[] {
-        const out: VideoSubtitle[] = []
-        const seen: { [key: string]: boolean } = {}
-        const nonDialogue: boolean[] = []
-        let pick = 0
-        let best = -1
-        for (const t of tracks) {
-            if (!t || typeof t.url !== "string" || !/^https?:\/\//i.test(t.url)) continue
-            if (t.kind && t.kind !== "captions" && t.kind !== "subtitles") continue
-            if (seen["#" + t.url]) continue
-            seen["#" + t.url] = true
-            const label = (t.label || "").trim()
-            const code = this.subCode(t.lang || "", label)
-            const idx = out.length
-            out.push({ id: `${code}-${idx}`, url: t.url, language: label || this.langName(code), isDefault: false })
-            const nd = this.isNonDialogue(label)
-            nonDialogue.push(nd)
-            const score = this.trackScore(label, code === "en", t.default === true, nd)
-            if (score > best) {
-                best = score
-                pick = idx
-            }
-        }
-        if (out.length === 0) return out
-        out[pick].isDefault = true
-        return [out[pick]].concat(out.filter((_, i) => i !== pick && !nonDialogue[i]), out.filter((_, i) => i !== pick && nonDialogue[i]))
+    private async probe(anilistId: number, ep: number): Promise<Embed> {
+        const first = await this.embed(anilistId, ep)
+        return first.status === "fail" ? await this.embed(anilistId, ep) : first
     }
 
-    private subCode(lang: string, label: string): string {
-        const raw = (lang || "").toLowerCase().split("-")[0]
-        if (raw && raw.length <= 3 && /^[a-z]+$/.test(raw) && raw !== "und") {
-            if (raw === "en" || raw === "eng") return "en"
-            if (raw.length === 2) return raw
-        }
-        const words = (raw || label || "").toLowerCase().split(/[^a-z]+/)
-        const map: { [key: string]: string } = {
-            eng: "en", english: "en",
-            spa: "es", spanish: "es", espanol: "es",
-            por: "pt", portuguese: "pt", portugues: "pt",
-            fre: "fr", fra: "fr", french: "fr", francais: "fr",
-            ger: "de", deu: "de", german: "de", deutsch: "de",
-            ita: "it", italian: "it", italiano: "it",
-            rus: "ru", russian: "ru",
-            ara: "ar", arabic: "ar",
-            jpn: "ja", japanese: "ja",
-            kor: "ko", korean: "ko",
-            chi: "zh", zho: "zh", chinese: "zh",
-            tha: "th", thai: "th",
-            vie: "vi", vietnamese: "vi",
-            tur: "tr", turkish: "tr",
-            pol: "pl", polish: "pl",
-            ind: "id", indonesian: "id",
-            hin: "hi", hindi: "hi",
-        }
-        for (const w of words) if (map[w]) return map[w]
-        return raw || "und"
-    }
-
-    private langName(code: string): string {
-        const map: { [key: string]: string } = {
-            en: "English", ja: "Japanese", ar: "Arabic", de: "German", es: "Spanish", fr: "French",
-            it: "Italian", ru: "Russian", pt: "Portuguese", hi: "Hindi", id: "Indonesian",
-            ko: "Korean", zh: "Chinese", th: "Thai", vi: "Vietnamese", tr: "Turkish", pl: "Polish", nl: "Dutch",
-        }
-        const c = (code || "").toLowerCase()
-        return map[c] || map[c.split("-")[0]] || (c ? c.toUpperCase() : "Unknown")
-    }
-
-    private isNonDialogue(label: string): boolean {
-        const l = label || ""
-        if (/\b(?:full|dialogu?e|dialog|main|complete)\b/i.test(l)) return false
-        return /\b(?:forced|forc[eé]s|signs?|songs?|karaoke|kfx|typeset(?:ting)?|commentary)\b/i.test(l) || /\bs\s*[&+\/]\s*s\b/i.test(l) || /\bop\s*[\/&+]\s*ed\b/i.test(l)
-    }
-
-    private trackScore(label: string, isEnglish: boolean, def: boolean, nd: boolean): number {
-        const base = nd ? (isEnglish ? 3 : 0) : /\b(?:ai|mtl)\b/i.test(label) ? (isEnglish ? 4 : 1) : /\b(?:sdh|cc|closed[\s-]?captions?|hearing[\s-]?impaired|dub[\s-]?titles?)\b/i.test(label) ? (isEnglish ? 5 : 1) : isEnglish ? 6 : 2
-        return def ? base * 10 + 1 : base * 10
-    }
-
-    private async availability(anilistId: number, wantDub: boolean): Promise<Availability> {
-        const cacheKey = `animelok:avail:${anilistId}:${wantDub ? "d" : "s"}`
-        const cached = this.readCache<Availability>(cacheKey, this.cacheTtl)
+    private async video(origin: string, hash: string): Promise<string> {
+        const cacheKey = `animelok:video:${hash}`
+        const cached = this.readCache<string>(cacheKey, this.srcCacheTtl)
         if (cached) return cached
-        const failKey = `animelok:availfail:${anilistId}`
-        const negativeCached = this.readCache<Availability>(failKey, this.availFailTtl)
-        if (negativeCached) return negativeCached
-        const sub = await this.getVibe(anilistId, 1, "sub")
-        const dub = await this.getVibe(anilistId, 1, "dub")
-        const subOk = sub.status === "ok"
-        const dubOk = dub.status === "ok"
-        const exists = subOk || dubOk
-        const audio = wantDub && dubOk ? "dub" : subOk ? "sub" : "dub"
-        const subOrDub: SubOrDub = subOk && dubOk ? "both" : dubOk ? "dub" : "sub"
-        const broken = !exists && (sub.status === "badshape" || dub.status === "badshape")
-        const result = { exists, audio, subOrDub, broken }
-        const definitelyAbsent = sub.status === "notfound" && dub.status === "notfound"
-        if (exists || definitelyAbsent) {
-            this.writeCache(cacheKey, result)
-        } else {
-            this.writeCache(failKey, result)
-        }
-        return result
-    }
-
-    private async getVibe(anilistId: number, ep: number, audio: string): Promise<VibeResult> {
-        const cacheKey = `animelok:src:${anilistId}:${ep}:${audio}`
-        const cached = this.readCache<VibeResult>(cacheKey, this.srcCacheTtl)
-        if (cached) return cached
-        for (let i = 0; i < 2; i++) {
-            let res: FetchResponse
-            try {
-                res = await fetch(
-                    `${this.base}/api/get-vibeplayer-data?anilistId=${anilistId}&epNum=${ep}&type=${audio}`,
-                    { headers: { Referer: `${this.base}/`, Accept: "application/json" } }
-                )
-            } catch (_e) {
-                continue
-            }
-            if (res.status === 404) return { status: "notfound", url: "", tracks: [], headers: {} }
-            if (res.status === 500 && this.noSources(res)) return { status: "nosource", url: "", tracks: [], headers: {} }
-            if (res.ok) {
-                let data: VibeData | undefined
-                try {
-                    data = res.json<VibeData>()
-                } catch (_e) {}
-                if (!data || !Array.isArray(data.sources)) {
-                    this.reportError("parse", `animelok: API returned ${res.status} with no sources list for ${anilistId} ep ${ep} (${audio}) — the site changed its API`)
-                    return { status: "badshape", url: "", tracks: [], headers: {} }
-                }
-                const raw = (data.sources[0] && data.sources[0].url) || ""
-                if (!/^https?:\/\//i.test(raw)) return { status: "fail", url: "", tracks: [], headers: {} }
-                const ok: VibeResult = { status: "ok", url: raw, tracks: data.tracks && data.tracks.length > 0 ? data.tracks : [], headers: this.safeHeaders(data.headers || {}) }
-                this.writeCache(cacheKey, ok)
-                return ok
-            }
-            break
-        }
-        return { status: "fail", url: "", tracks: [], headers: {} }
-    }
-
-    private noSources(res: FetchResponse): boolean {
+        const host = origin.replace(/^https:\/\//, "")
+        let res: FetchResponse
         try {
-            const body = res.json<{ error?: string }>()
-            return !!(body && typeof body.error === "string" && /not found|fetching sources/i.test(body.error))
-        } catch (_e) {
-            return false
+            res = await fetch(`${origin}/player/index.php?data=${hash}&do=getVideo`, {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8", "X-Requested-With": "XMLHttpRequest", Referer: `${origin}/video/${hash}`, Origin: origin },
+                body: `hash=${hash}&r=${encodeURIComponent(this.base + "/")}`,
+            })
+        } catch (e) {
+            throw this.fail("server", `animelok: the ${host} player ${this.net(e)}`)
         }
+        if (!res.ok) throw this.fail("server", `animelok: the ${host} player answered HTTP ${res.status}`)
+        let data: { securedLink?: string; videoSource?: string } | undefined
+        try {
+            data = res.json<{ securedLink?: string; videoSource?: string }>()
+        } catch (_e) {}
+        const url = (data && (data.securedLink || data.videoSource)) || ""
+        if (!/^https:\/\//i.test(url)) throw this.fail("server", `animelok: the ${host} player answered without a stream link - this extension needs an update`)
+        this.writeCache(cacheKey, url)
+        return url
     }
 
-    private async probeVibe(anilistId: number, num: number, audio: string): Promise<VibeResult> {
-        const first = await this.getVibe(anilistId, num, audio)
-        if (first.status === "ok" || first.status === "notfound" || first.status === "nosource") return first
-        return await this.getVibe(anilistId, num, audio)
+    private net(e: unknown): string {
+        const m = String(e instanceof Error ? e.message : (e && (e as any).message) || e).replace(/^\w+ "[^"]*": /, "")
+        if (/did not answer in time|timed? ?out|deadline exceeded/i.test(m)) return "did not answer in time"
+        if (/could not be found|cannot resolve|no such host|ENOTFOUND|EAI_AGAIN/i.test(m)) return "could not be found (DNS)"
+        if (/TLS|SSL|certificate|x509/i.test(m)) return "failed the TLS handshake"
+        return `could not be reached (${m.slice(0, 120)})`
     }
 
-    private async probeEpisodeCount(anilistId: number, audio: string): Promise<number> {
-        const cacheKey = `animelok:epcount:${anilistId}:${audio}`
+    private async probeEpisodeCount(anilistId: number): Promise<number> {
+        const cacheKey = `animelok:epcount:${anilistId}`
         const cached = this.readCache<number>(cacheKey, this.cacheTtl)
         if (cached !== undefined && cached > 0) return cached
-        const first = await this.probeVibe(anilistId, 1, audio)
+        const first = await this.probe(anilistId, 1)
         if (first.status !== "ok") return 0
         let lo = 1
         let hi = 2
         for (; hi <= 2048; hi *= 2) {
-            const v = await this.probeVibe(anilistId, hi, audio)
-            if (v.status === "notfound" || v.status === "nosource") break
+            const v = await this.probe(anilistId, hi)
+            if (v.status === "notfound") break
             if (v.status !== "ok") return lo
             lo = hi
         }
         if (hi > 2048) return lo
         while (hi - lo > 1) {
             const mid = Math.floor((lo + hi) / 2)
-            const v = await this.probeVibe(anilistId, mid, audio)
+            const v = await this.probe(anilistId, mid)
             if (v.status === "ok") lo = mid
-            else if (v.status === "notfound" || v.status === "nosource") hi = mid
+            else if (v.status === "notfound") hi = mid
             else return lo
         }
         this.writeCache(cacheKey, lo)
@@ -287,16 +177,13 @@ class Provider implements AnimeProvider {
         return m ? parseInt(m[1], 10) : 0
     }
 
-    private encode(anilistId: number, audio: string, num: number): string {
-        return `${anilistId}$${audio}$${num}`
+    private encode(anilistId: number, num: number): string {
+        return `${anilistId}$dub$${num}`
     }
 
-    private decode(id: string): { anilistId: number; audio: string; num: number } {
+    private decode(id: string): { anilistId: number; num: number } {
         const parts = id.split("$")
-        const anilistId = parseInt(parts[0] || "0", 10) || 0
-        const audio = parts[1] === "dub" ? "dub" : "sub"
-        const num = parseInt(parts[2] || "0", 10) || 0
-        return { anilistId, audio, num }
+        return { anilistId: parseInt(parts[0] || "0", 10) || 0, num: parseInt(parts[2] || "0", 10) || 0 }
     }
 
     private reportError(scope: string, message: string, lvl?: "warn" | "info"): void {
@@ -309,11 +196,11 @@ class Provider implements AnimeProvider {
 
     private plain(message: string): string {
         return String(message === undefined || message === null ? "" : message)
-            .replace(/\u2026/g, "...")
-            .replace(/[\u2014\u2013]/g, "-")
-            .replace(/[\u2018\u2019]/g, "'")
-            .replace(/[\u201c\u201d]/g, '"')
-            .replace(/[\u00b7\u2022]/g, "-")
+            .replace(/…/g, "...")
+            .replace(/[—–]/g, "-")
+            .replace(/[‘’]/g, "'")
+            .replace(/[“”]/g, '"')
+            .replace(/[·•]/g, "-")
             .replace(/\s+/g, " ")
             .replace(/[^\x20-\x7e]/g, "?")
             .replace(/^ +| +$/g, "")

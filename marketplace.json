@@ -2,14 +2,14 @@
   {
     "id": "aq-animelok",
     "name": "Animelok",
-    "version": "0.1.23",
+    "version": "0.1.24",
     "description": "Only animelok compatibility layer you'll ever need",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
     "language": "typescript",
     "lang": "en",
     "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/gate/extensions/animelok/icon.png",
-    "website": "https://animelok.live",
+    "website": "https://animelok.cc",
     "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/gate/extensions/animelok/manifest.json"
   },
   {
