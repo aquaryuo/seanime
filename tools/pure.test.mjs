@@ -337,15 +337,19 @@ console.log("anikoto: search matching")
 console.log("anikoto: megaplay by AniList id")
 {
     // A fake MegaPlay with `aired` episodes per AniList id: a player page carries data-id, anything past it is MegaPlay's error page.
-    const mega = (aired, down) => {
+    const mega = (aired, down, o = {}) => {
         const hits = []
         const p = load("anikoto", {
             $store: store({}),
             LoadDoc: () => () => ({ first: () => ({ attr: () => "" }), length: () => 0 }),
-            fetch: (url) => {
-                hits.push(url.replace("https://megaplay.buzz", ""))
-                const m = /\/stream\/ani\/\d+\/(\d+)\//.exec(url)
-                if (m) return down ? Promise.reject(new Error("i/o timeout")) : reply(200, +m[1] <= aired ? `<div id="megaplay-player" data-id="f${m[1]}"></div>` : "<title>Error - MegaPlay</title>")
+            fetch: (url, opts) => {
+                hits.push(url.replace("https://megaplay.buzz", "").replace("https://graphql.anilist.co", "anilist"))
+                if (url === "https://graphql.anilist.co") {
+                    hits.push(JSON.parse(opts.body).query.indexOf("idMal:") !== -1 ? "by mal" : "by id")
+                    return typeof o.al === "number" ? reply(o.al, "") : reply(200, { data: { Media: o.al || null } })
+                }
+                const m = /\/stream\/(ani|mal)\/\d+\/(\d+)\//.exec(url)
+                if (m) return down ? Promise.reject(new Error("i/o timeout")) : reply(200, +m[2] <= (m[1] === "mal" ? o.mal || 0 : aired) ? `<div id="megaplay-player" data-id="f${m[2]}"></div>` : "<title>Error - MegaPlay</title>")
                 if (url.indexOf("getSources") !== -1) return reply(200, { sources: [{ file: "https://c.cdn/anime/a/master.m3u8" }], tracks: [{ file: "https://c.cdn/anime/a/eng.vtt", label: "English" }] })
                 if (url.endsWith("master.m3u8")) return reply(200, "#EXTM3U\nseg-1.ts\n")
                 if (url.endsWith("seg-1.ts")) return reply(206, "G@\x00\x10")
@@ -365,9 +369,20 @@ console.log("anikoto: megaplay by AniList id")
 
     const airing = mega(4)
     eq([(await airing.p.findEpisodes("mp:7$sub$ec12$pt0")).map((e) => e.number), airing.hits], [[1, 2, 3, 4], probes([12, 6, 3, 4, 5])], "megaplay: an airing show is cut to its aired episodes by bisecting below the planned count")
-    const long = mega(1180)
-    await long.p.search({ query: "Show", dub: false, media: { ...media, episodeCount: -1 } }).catch((e) => e)
-    eq([long.hits.some((h) => h.indexOf("/stream/ani/") === 0), long.hits.some((h) => h.indexOf("anikototv.to/filter?keyword=") !== -1)], [false, true], "megaplay: a title with no tracker count skips MegaPlay and uses the site search")
+    const long = mega(1180, false, { al: { episodes: null, nextAiringEpisode: { episode: 1181 } } })
+    const longId = (await long.p.search({ query: "Show", dub: false, media: { ...media, episodeCount: -1 } }))[0].id
+    const longEps = await long.p.findEpisodes(longId)
+    await long.p.findEpisodes(longId)
+    eq([longId, longEps.length, long.hits], ["mp:7$sub", 1180, ["/stream/ani/7/1/sub", "anilist", "by id", "/stream/ani/7/1180/sub"]], "megaplay: a title with no tracker count still stays on MegaPlay, taking its aired count from AniList's next episode, kept for a while")
+    const lost = mega(20, false, { al: 500 })
+    eq([(await lost.p.findEpisodes("mp:7$sub$pt0")).length, lost.hits.slice(2)], [20, probes([1, 2, 4, 8, 16, 32, 24, 20, 22, 21])], "megaplay: with no count from AniList either, the last episode is found by doubling then bisecting on MegaPlay")
+    const malOnly = mega(0, false, { mal: 12, al: { episodes: 12 } })
+    const viaMal = await malOnly.p.search({ query: "Show", dub: false, media: { ...media, idMal: 70 } })
+    const malEps = await malOnly.p.findEpisodes(viaMal[0].id)
+    const malGot = await malOnly.p.findEpisodeServer({ id: malEps[2].id, number: 3, url: "" }, "Auto")
+    eq([viaMal[0].id, viaMal[0].url, malEps.length, malEps[2].id, malGot.videoSources[0].url, malOnly.hits.filter((h) => /^\/stream\/(ani|mal)\//.test(h))], ["mp:m70$sub$ec12$pt0", "https://megaplay.buzz/stream/mal/70/1/sub", 12, "mp:m70:3$sub", "https://c.cdn/anime/a/master.m3u8", ["/stream/ani/7/1/sub", "/stream/mal/70/1/sub", "/stream/mal/70/12/sub", "/stream/mal/70/3/sub"]], "megaplay: a title MegaPlay maps only by MAL id is found, listed and played through the MAL route")
+    const malLong = mega(0, false, { mal: 100, al: { episodes: null, nextAiringEpisode: { episode: 101 } } })
+    eq([(await malLong.p.findEpisodes("mp:m70$sub$pt0")).length, malLong.hits], [100, ["anilist", "by mal", "/stream/mal/70/100/sub"]], "megaplay: a MAL-route title with no count asks AniList by MAL id")
     eq(await mega(0).p.findEpisodes("mp:7$sub$ec1$pt0").catch((e) => e), "MegaPlay lists no sub episodes for this title", "megaplay: an id whose episodes are gone fails clearly instead of listing nothing")
     const gone = mega(12, true)
     eq([await gone.p.findEpisodes("mp:7$sub$ec12$pt0").catch((e) => e), gone.hits.length], ["MegaPlay did not answer the episode check - retry in a moment", 1], "megaplay: an unreachable MegaPlay fails the list after one unretried check instead of guessing a count")
