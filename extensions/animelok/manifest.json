@@ -1,11 +1,11 @@
 {
   "id": "aq-animelok",
   "name": "Animelok",
-  "version": "0.1.24",
+  "version": "0.1.25",
   "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/gate/extensions/animelok/manifest.json",
   "language": "typescript",
   "type": "onlinestream-provider",
-  "description": "Only animelok compatibility layer you'll ever need",
+  "description": "Only animelok compatibility layer you'll ever need. Dub streams carry every audio track (Japanese, English, Hindi, Tamil, Telugu and more) — pick yours in the player's audio menu.",
   "author": "aquaryuo",
   "icon": "https://raw.githubusercontent.com/aquaryuo/seanime/gate/extensions/animelok/icon.png",
   "website": "https://animelok.cc",
