@@ -57,8 +57,6 @@ class Provider implements AnimeProvider {
     private serverBudget = 15000
     private ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
     private busy = "mkissa: too many requests right now - wait a minute and retry"
-    private stale = "mkissa: the site changed its player handshake - this extension needs an update"
-    private captcha = "mkissa: the site wants a captcha for episode links from this IP right now - wait a while, open an episode on mkissa.to once, or set up the captcha relay in the extension settings, then retry"
     private captchaRelayed = "mkissa: the site wants a captcha for episode links from this IP - complete the check on your captcha relay page at"
 
     getSettings(): Settings {
@@ -296,17 +294,22 @@ class Provider implements AnimeProvider {
             if (!body || typeof body !== "object") throw this.fail(scope, `mkissa: the site API failed (status ${res.status})`)
             const msgs: string[] = (body.errors || []).map((e: any) => String((e && e.message) || ""))
             if (msgs.some((m) => /too many requests/i.test(m))) throw this.fail(scope, this.busy)
-            if (msgs.indexOf("NEED_CAPTCHA") !== -1 || msgs.indexOf("CAPTCHA_INVALID") !== -1) {
+            const code = msgs.indexOf("NEED_CAPTCHA") !== -1 ? "NEED_CAPTCHA" : msgs.indexOf("CAPTCHA_INVALID") !== -1 ? "CAPTCHA_INVALID" : ""
+            if (code) {
+                if (captcha && code === "CAPTCHA_INVALID") throw this.fail(scope, "mkissa: the site rejected the relayed captcha token (CAPTCHA_INVALID)")
                 const relay = this.cfg("captchaRelay", "").trim().replace(/\/+$/, "")
-                if (captcha || !/^https?:\/\/[^\s/]+/i.test(relay)) throw this.fail(scope, captcha ? `${this.captchaRelayed} ${relay}/ and retry` : this.captcha)
-                captcha = await this.relayToken(scope, relay)
-                if (!captcha) throw this.fail(scope, `${this.captchaRelayed} ${relay}/ and retry`)
+                if (captcha) throw this.fail(scope, `${this.captchaRelayed} ${relay}/ and retry`)
+                if (!/^https?:\/\/[^\s/]+/i.test(relay)) throw this.fail(scope, `mkissa: the site asks for a captcha (${code}) for episode links from this server's IP`)
+                const got = await this.relayToken(relay)
+                if (typeof got === "string") throw this.fail(scope, `${this.captchaRelayed} ${relay}/ and retry (${got})`)
+                captcha = got
                 attempt--
                 continue
             }
-            if (msgs.some((m) => /^AA_CRYPTO/.test(m))) {
-                if (attempt === 0) continue
-                throw this.fail(scope, this.stale)
+            const crypto = msgs.filter((m) => /^AA_CRYPTO/.test(m))[0]
+            if (crypto) {
+                if (attempt === 0 && /STALE|EXPIRED/.test(crypto)) continue
+                throw this.fail(scope, `mkissa: the site refused the sealed request (${crypto.slice(0, 60)}) - this extension needs an update`)
             }
             const data = body.data
             if (data && typeof data.tobeparsed === "string") {
@@ -314,7 +317,7 @@ class Provider implements AnimeProvider {
                     return this.open(boot as Boot, data.tobeparsed)
                 } catch (_e) {
                     if (attempt === 0) continue
-                    throw this.fail(scope, this.stale)
+                    throw this.fail(scope, `mkissa: the sealed answer did not open with the build ${this.build} key - this extension needs an update`)
                 }
             }
             if (msgs.length && (!data || Object.keys(data).every((k) => data[k] === null))) throw this.fail(scope, `mkissa: the site API answered with an error (${msgs[0].slice(0, 120)})`)
@@ -327,22 +330,38 @@ class Provider implements AnimeProvider {
         try {
             res = await fetch(url, { ...opts, headers: { "x-build-id": this.build, Origin: this.baseUrl, Referer: `${this.baseUrl}/`, "User-Agent": this.ua, ...opts.headers }, timeout: 10 })
         } catch (e) {
-            this.reportError(scope, `transport failure: ${e instanceof Error ? e.message : String(e)}`)
-            throw "mkissa: the site did not respond - retry in a moment"
+            throw this.fail(scope, `mkissa: the site ${this.net(e)}`)
         }
         if (res.status === 429) throw this.fail(scope, this.busy)
         return res
     }
 
-    private async relayToken(scope: string, relay: string): Promise<{ token: string; provider: string } | undefined> {
+    private net(e: unknown): string {
+        const m = String(e instanceof Error ? e.message : (e && (e as any).message) || e).replace(/^\w+ "[^"]*": /, "")
+        if (/did not answer in time|timed? ?out|deadline exceeded/i.test(m)) return "did not answer in time"
+        if (/refused/i.test(m)) return "refused the connection"
+        if (/\b(?:reset|closed|EOF)\b/i.test(m)) return "reset the connection"
+        if (/could not be found|cannot resolve|no such host|ENOTFOUND|EAI_AGAIN/i.test(m)) return "could not be found (DNS)"
+        if (/TLS|SSL|certificate|x509/i.test(m)) return "failed the TLS handshake"
+        if (/too many redirects|stopped after \d+ redirects/i.test(m)) return "redirected too many times"
+        if (/redirected/i.test(m)) return "redirected"
+        return `could not be reached (${m.slice(0, 120)})`
+    }
+
+    private async relayToken(relay: string): Promise<{ token: string; provider: string } | string> {
+        let res: FetchResponse
         try {
-            const res = await fetch(`${relay}/token`, { noCloudflareBypass: true })
-            const j = res.ok ? res.json<any>() : null
-            if (j && typeof j.token === "string" && j.token) return { token: j.token, provider: typeof j.provider === "string" && j.provider ? j.provider : "turnstile" }
+            res = await fetch(`${relay}/token`, { noCloudflareBypass: true })
         } catch (e) {
-            this.reportError(scope, `captcha relay at ${relay} did not answer: ${e instanceof Error ? e.message : String(e)}`)
+            return `the relay ${this.net(e)}`
         }
-        return undefined
+        let j: any = null
+        try {
+            j = res.ok ? res.json<any>() : null
+        } catch (_e) {}
+        if (j && typeof j.token === "string" && j.token) return { token: j.token, provider: typeof j.provider === "string" && j.provider ? j.provider : "turnstile" }
+        if (res.status === 404) return "the relay has no solved check yet"
+        return res.ok ? "the relay answered without a token" : `the relay answered HTTP ${res.status}`
     }
 
     private async boot(scope: string, fresh: boolean): Promise<Boot> {
@@ -358,23 +377,32 @@ class Provider implements AnimeProvider {
         const host = this.baseUrl.replace(/^[a-z]+:\/\//i, "").replace(/[\/:].*$/, "").replace(/^www\./, "").toLowerCase()
         const mask = this.unhexBytes(this.mask)
         const k1 = this.hmac(mask, this.utf8(this.bootPrefix + this.build))
+        let why = ""
         for (const epoch of now - cur * week < day && cur > 0 ? [cur - 1, cur] : [cur]) {
             const token = this.hex(this.hmac(k1, this.utf8([this.build, "mkissa", this.lane, epoch, host].join("|"))))
             const res = await this.guarded(scope, `${this.api}/client-crypto/v1/bootstrap?buildId=${this.build}&k=${this.lane}`, { headers: { "x-aa-boot": token } })
+            let j: any = null
+            try {
+                j = res.json<any>()
+            } catch (_e) {}
             if (!res.ok) {
-                this.reportError(scope, `bootstrap for build ${this.build} answered ${res.status}`)
+                const err = j && typeof j.error === "string" ? j.error.slice(0, 60) : ""
+                if (res.status === 404 && err === "unknown_build_id") throw this.fail(scope, `mkissa: the site retired build ${this.build} (bootstrap: unknown_build_id) - this extension needs an update`)
+                why = res.status === 403 && err === "invalid_boot_token" ? `mkissa: the site rejected the build ${this.build} boot token (invalid_boot_token) - this extension needs an update` : `mkissa: the handshake bootstrap answered ${res.status}${err ? ` ${err}` : ""}`
                 continue
             }
-            const j = res.json<any>()
             const part = j && typeof j.partB === "string" ? this.b64dec(j.partB) : []
-            if (part.length < 32) continue
+            if (part.length < 32) {
+                why = "mkissa: the handshake bootstrap answered without a key"
+                continue
+            }
             const key: number[] = []
             for (let i = 0; i < 32; i++) key.push(part[i] ^ mask[i % mask.length])
             const boot: Boot = { epoch: Number(j.epoch) || epoch, switchAt: Number(j.switchAt) || now + day, key: this.hex(key) }
             $store.set(ck, boot)
             return boot
         }
-        throw this.fail(scope, this.stale)
+        throw this.fail(scope, why)
     }
 
     private aaReq(boot: Boot, qh: string): string {

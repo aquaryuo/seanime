@@ -15,7 +15,7 @@
   {
     "id": "aq-anizone",
     "name": "AniZone",
-    "version": "1.1.42",
+    "version": "1.1.43",
     "description": "Only anizone compatibility layer you'll ever need. Dub streams carry both audio tracks — pick English in the player's audio menu once and Seanime remembers it for that series.",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
@@ -41,7 +41,7 @@
   {
     "id": "aq-mkissa",
     "name": "MKissa",
-    "version": "0.1.2",
+    "version": "0.1.3",
     "description": "Only mkissa compatibility layer you'll ever need",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
