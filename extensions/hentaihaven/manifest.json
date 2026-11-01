@@ -1,0 +1,14 @@
+{
+  "id": "aq-hentaihaven",
+  "name": "Hentai Haven",
+  "version": "0.1.0",
+  "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/gate/extensions/hentaihaven/manifest.json",
+  "language": "typescript",
+  "type": "onlinestream-provider",
+  "description": "Only hentaihaven compatibility layer you'll ever need. 18+. Older episodes have their subtitles burned in.",
+  "author": "aquaryuo",
+  "icon": "https://hentaihaven.xxx/favicon.png",
+  "website": "https://hentaihaven.xxx",
+  "lang": "en",
+  "payloadURI": "https://raw.githubusercontent.com/aquaryuo/seanime/gate/extensions/hentaihaven/provider.ts"
+}

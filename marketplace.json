@@ -36,5 +36,44 @@
     "lang": "en",
     "website": "https://cdn.lua.locker/docs",
     "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/gate/extensions/haifacdn/manifest.json"
+  },
+  {
+    "id": "aq-hanime",
+    "name": "hanime",
+    "version": "0.1.0",
+    "description": "Only hanime compatibility layer you'll ever need. 18+. English subtitles are burned into the video; 720p is the best free quality.",
+    "author": "aquaryuo",
+    "type": "onlinestream-provider",
+    "language": "typescript",
+    "lang": "en",
+    "icon": "https://hanime.tv/apple-touch-icon.png",
+    "website": "https://hanime.tv",
+    "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/gate/extensions/hanime/manifest.json"
+  },
+  {
+    "id": "aq-hentaicity",
+    "name": "Hentai City",
+    "version": "0.1.0",
+    "description": "Only Hentai City compatibility layer you'll ever need. 18+. Subtitles are part of the picture; there are no separate subtitle tracks.",
+    "author": "aquaryuo",
+    "type": "onlinestream-provider",
+    "language": "typescript",
+    "lang": "en",
+    "icon": "https://www.hentaicity.com/apple-touch-icon.png",
+    "website": "https://www.hentaicity.com",
+    "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/gate/extensions/hentaicity/manifest.json"
+  },
+  {
+    "id": "aq-hentaihaven",
+    "name": "Hentai Haven",
+    "version": "0.1.0",
+    "description": "Only hentaihaven compatibility layer you'll ever need. 18+. Older episodes have their subtitles burned in.",
+    "author": "aquaryuo",
+    "type": "onlinestream-provider",
+    "language": "typescript",
+    "lang": "en",
+    "icon": "https://hentaihaven.xxx/favicon.png",
+    "website": "https://hentaihaven.xxx",
+    "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/gate/extensions/hentaihaven/manifest.json"
   }
 ]

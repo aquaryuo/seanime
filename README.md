@@ -9,5 +9,8 @@ This is the `gate` branch: [Seanime](https://seanime.rahim.app) extensions and p
 | payload | kind | what it is |
 | --- | --- | --- |
 | `haifacdn` | onlinestream provider | a private library; needs an API key from its owner |
-| `animelok` | onlinestream provider | animelok.live |
+| `animelok` | onlinestream provider | animelok.cc; multi-language dubs only |
 | `animepahe` | onlinestream provider | animepahe; needs a FlareSolverr-compatible Cloudflare solver to load anything |
+| `hanime` | onlinestream provider | hanime.tv; 18+ |
+| `hentaicity` | onlinestream provider | hentaicity.com; 18+ |
+| `hentaihaven` | onlinestream provider | hentaihaven.xxx; 18+; older episodes on dead mirrors don't play |
