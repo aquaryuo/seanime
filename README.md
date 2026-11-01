@@ -8,7 +8,11 @@ Since you're here anyway: these are the released [Seanime](https://seanime.rahim
 
 | payload | kind | what it is |
 | --- | --- | --- |
-| `anikoto` | onlinestream provider | anikototv.to |
-| `anizone` | onlinestream provider | anizone.to |
-| `kickassanime` | onlinestream provider | kaa.lt |
-| `mkissa` | onlinestream provider | mkissa.to; episode links stop behind a captcha after a few lookups from one IP, which `extensions/mkissa/captcha-relay.mjs` lets you clear from a browser tab |
+| `anikoto` | Online | anikototv.to |
+| `anizone` | Online | anizone.to |
+| `kickassanime` | Online | kaa.lt |
+| `mkissa` | Online | mkissa.to; drops captchas after few lookups -> `extensions/mkissa/captcha-relay.mjs` clears from browser tab |
+
+---
+
+> New discord server, feel free to drop by -> https://discord.gg/ryuo
