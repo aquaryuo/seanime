@@ -1,7 +1,7 @@
 declare const console: { log(...args: any[]): void; info(...args: any[]): void; warn(...args: any[]): void; error(...args: any[]): void }
 
 type Card = { sid: string; titles: string[]; type: string; year: number; eps: number; locales: string[] }
-type Cand = { r: SearchResult; card: Card }
+type Cand = { r: SearchResult; card: Card; s?: number }
 type Target = { t: string; w: number }
 type Scored = { c: Cand; s: number; adj: number; ep: number }
 type Sub = { origin: string; lang: string; label: string }
@@ -67,7 +67,7 @@ class Provider implements AnimeProvider {
         const out: SearchResult[] = []
         for (const { r, card } of picked) {
             const lang = this.localeOf(card.locales, audio)
-            if (lang) out.push({ ...r, id: `${card.sid}$${lang}$${audio}` })
+            if (lang) out.push({ ...r, id: `${card.sid}$${lang}$${audio}`, title: this.shownTitle(card.titles, opts.media) })
         }
         if (out.length === 0 && picked.some((c) => c.card.locales.length > 0)) throw this.fail("search", none, "info")
         if (audio === "dub" && out.length === 1 && !(await this.firstEpisodePlays(out[0].id))) throw this.fail("search", none, "info")
@@ -79,7 +79,7 @@ class Provider implements AnimeProvider {
         const audio = a === "dub" ? "dub" : "sub"
         if (!/^[\w-]{1,160}$/.test(show) || !/^[a-z]{2}-[\w]{2,4}$/i.test(lang)) return []
         const cacheKey = `kickassanime:eps:${show}$${lang}$${audio}`
-        const cached = this.readCache<EpisodeDetails[]>(cacheKey, this.cacheTtl)
+        const cached = this.readCache<EpisodeDetails[]>(cacheKey, this.srcCacheTtl)
         if (cached && cached.length > 0) return cached
         const res = await this.guarded("episodes", this.episodesUrl(show, 1, lang))
         if (res.status === 404) return []
@@ -275,8 +275,9 @@ class Provider implements AnimeProvider {
     }
 
     private async byStartDate(picked: Cand[], d: FuzzyDate | undefined): Promise<Cand[]> {
-        if (picked.length < 2 || !d || !d.year || !d.month || !d.day) return picked
+        if (picked.length === 0 || !d || !d.year || !d.month || !d.day) return picked
         const want = `${d.year}-${("0" + d.month).slice(-2)}-${("0" + d.day).slice(-2)}`
+        const kept: Cand[] = []
         for (const c of picked.slice(0, 3)) {
             const ck = `kickassanime:start:${c.card.sid}`
             let start = this.readCache<string>(ck, this.cacheTtl)
@@ -288,14 +289,33 @@ class Provider implements AnimeProvider {
                 this.writeCache(ck, start)
             }
             if (start === want) return [c]
+            if (!(Math.abs(Date.parse(start || "") - Date.parse(want)) > 60 * 86400000)) kept.push(c)
         }
-        return picked
+        return kept.concat(picked.slice(3))
     }
 
     private localeOf(locales: string[], audio: string): string {
         if (audio === "dub") return locales.indexOf(this.dubLocale) !== -1 ? this.dubLocale : ""
         for (const l of this.subLocales) if (locales.indexOf(l) !== -1) return l
         return ""
+    }
+
+    private shownTitle(titles: string[], media: Media): string {
+        const words = (s: string): string => s.toLowerCase().replace(/\s*\([^()]*\)\s*$/, "").replace(/[^a-z0-9]+/g, " ").trim()
+        const want = [media.romajiTitle, media.englishTitle].concat(media.synonyms || []).map((t) => words(t || "")).filter((t) => t)
+        let best = titles[0]
+        let top = -1
+        for (const t of titles) {
+            const w = words(t)
+            for (const m of want) {
+                const v = this.simNorm(w, m)
+                if (v > top) {
+                    top = v
+                    best = t
+                }
+            }
+        }
+        return best
     }
 
     private addCards(cards: Card[], opts: SearchOptions, out: Cand[]): void {
@@ -359,7 +379,8 @@ class Provider implements AnimeProvider {
         const scored: Scored[] = []
         const conflicted: Scored[] = []
         for (const c of cands) {
-            const s = this.scoreTitles(c.card.titles, targets)
+            if (c.s === undefined) c.s = this.scoreTitles(c.card.titles, targets)
+            const s = c.s
             const adj = s - this.yearPenalty(this.cardYear(c), year)
             const row = { c, s, adj, ep: eps > 0 && c.card.eps > 0 && c.card.eps === eps ? 1 : 0 }
             if (this.formatConflict(format, c.card.type)) conflicted.push(row)

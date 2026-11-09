@@ -48,9 +48,9 @@ class Provider implements AnimeProvider {
     private baseUrl = this.cfg("baseUrl", "https://mkissa.to").replace(/\/+$/, "")
     private api = "https://api.mkissa.net"
     private player = "https://filelotion.fyi"
-    private build = "179"
-    private mask = "b5905da39d2feab87b23661f2d791a560537111e8990186e405ed6cbc7701905"
-    private bootPrefix = "KoCGqjW:"
+    private build = "188"
+    private mask = "c1dd024b8fa5978ce1b091be1c99f3a34f60122dca3167321350eaaca4fbfbac"
+    private bootPrefix = "fiizIPFV0P:"
     private lane = "k7"
     private cacheTtl = 900000
     private srcCacheTtl = 300000
@@ -365,7 +365,7 @@ class Provider implements AnimeProvider {
     }
 
     private async boot(scope: string, fresh: boolean): Promise<Boot> {
-        const ck = `mkissa:boot:${this.lane}`
+        const ck = `mkissa:boot:${this.build}:${this.lane}`
         if (!fresh) {
             const c = $store.get<Boot>(ck)
             if (c && c.key && Date.now() < c.switchAt - 60000) return c
@@ -379,7 +379,7 @@ class Provider implements AnimeProvider {
         const k1 = this.hmac(mask, this.utf8(this.bootPrefix + this.build))
         let why = ""
         for (const epoch of now - cur * week < day && cur > 0 ? [cur - 1, cur] : [cur]) {
-            const token = this.hex(this.hmac(k1, this.utf8([this.build, "mkissa", this.lane, epoch, host].join("|"))))
+            const token = this.hex(this.hmac(k1, this.utf8([this.build, epoch, "mkissa", host, this.lane].join("/"))))
             const res = await this.guarded(scope, `${this.api}/client-crypto/v1/bootstrap?buildId=${this.build}&k=${this.lane}`, { headers: { "x-aa-boot": token } })
             let j: any = null
             try {

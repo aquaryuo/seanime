@@ -26,7 +26,8 @@ class Provider implements AnimeProvider {
         let anyOk = false
         let anyShape = false
         let limited = false
-        let refused = false
+        let stopped = false
+        let errs = 0
         let why = ""
         const run = async (queries: string[]): Promise<void> => {
             for (const q of queries) {
@@ -36,7 +37,7 @@ class Provider implements AnimeProvider {
                 if (cards) {
                     anyOk = true
                     anyShape = true
-                } else if (refused) {
+                } else if (stopped) {
                     continue
                 } else {
                     let html = ""
@@ -50,9 +51,10 @@ class Provider implements AnimeProvider {
                             html = res.text()
                         } else why = this.why(res)
                         limited = res.status === 429
-                        refused = res.status === 401 || res.status === 403
+                        stopped = res.status === 401 || res.status === 403
                     } catch (e) {
                         why = this.net(e)
+                        stopped = ++errs > 1
                     }
                     cards = this.parseItems(html)
                     if (this.itemsMarkup.test(html)) {
@@ -68,7 +70,7 @@ class Provider implements AnimeProvider {
         if (cands.length === 0) await run(sq.fallback)
         if (limited) throw this.fail("search", this.busy)
         const picked = this.pickBest(cands, opts.media, sq.season, sq.part)
-        if ((refused && picked.length !== 1) || !anyOk) throw this.fail("search", `anizone: search failed - the site ${why || "could not be reached"}`)
+        if ((stopped && picked.length !== 1) || !anyOk) throw this.fail("search", `anizone: search failed - the site ${why || "could not be reached"}`)
         if (!anyShape) throw this.fail("search", "anizone: search page layout not recognized")
         return picked
     }
@@ -575,7 +577,7 @@ class Provider implements AnimeProvider {
             const label = s.label.trim()
             const idx = out.length
             out.push({ id: `${code}-${idx}`, url: origin, language: this.displayName(code, label), isDefault: false })
-            const isForced = s.forced === true || this.isNonDialogue(label)
+            const isForced = (s.forced === true && s.def !== true) || this.isNonDialogue(label)
             const score = this.trackScore(label, code.split("-")[0] === "en", s.def === true, isForced)
             nonDialogue.push(isForced)
             if (score > best) {
