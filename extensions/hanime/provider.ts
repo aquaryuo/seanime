@@ -208,7 +208,7 @@ class Provider implements AnimeProvider {
         if (!name || /\b(?:bonus|extra|preview|trailer)(?: (?:video|episode|scene))?$/i.test(name)) return undefined
         let m = name.match(/^(.+?) (\d+) ?& ?(\d+)$/)
         if (m && +m[3] > +m[2]) return { t: m[1], eps: [+m[2], +m[3]], comp: false }
-        m = name.match(/^(.+?) (?:ep|episode)\.? ?(\d+)$/i)
+        m = name.match(/^(.+?)(?: -)? (?:ep|episode)\.? ?(\d+)$/i)
         if (m) return +m[2] > 0 ? { t: m[1], eps: [+m[2]], comp: false } : undefined
         if (/ season \d+$/i.test(name)) return { t: name, eps: [1], comp: true }
         m = name.match(/^(.+?) (\d+(?:\.\d+)?)$/)

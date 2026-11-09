@@ -19,12 +19,42 @@ class Provider implements AnimeProvider {
         if (opts.dub) return []
         const media = opts.media
         if (!media || !(media.id > 0)) return this.manual(opts.query || "")
+        let pick = await this.match(media)
+        if (!pick) {
+            const syn = media.synonyms || []
+            const more = (await this.synonyms(media.id)).filter((s) => syn.indexOf(s) === -1)
+            if (more.length) pick = await this.match({ ...media, synonyms: syn.concat(more) })
+        }
+        return pick ? [this.result(pick)] : []
+    }
+
+    private async match(media: Media): Promise<Post | null> {
         const forms = this.mediaForms(media)
-        if (forms.length === 0) return []
+        if (forms.length === 0) return null
         let cands = this.rank(forms, await this.catalog(false))
         if (cands.length === 0) cands = this.rank(forms, await this.catalog(true))
-        const pick = await this.choose(cands, media.episodeCount && media.episodeCount > 0 ? media.episodeCount : 0, (media.startDate && media.startDate.year) || 0)
-        return pick ? [this.result(pick)] : []
+        return this.choose(cands, media.episodeCount && media.episodeCount > 0 ? media.episodeCount : 0, (media.startDate && media.startDate.year) || 0)
+    }
+
+    private async synonyms(id: number): Promise<string[]> {
+        const ck = `hentaihaven:syn:${id}`
+        const hit = this.readCache<string[]>(ck, 86400000)
+        if (hit) return hit
+        try {
+            const res = await fetch("https://graphql.anilist.co", {
+                method: "POST",
+                headers: { ...this.ua, "Content-Type": "application/json", Accept: "application/json" },
+                body: JSON.stringify({ query: "query($id:Int){Media(id:$id,type:ANIME){synonyms}}", variables: { id } }),
+                noCloudflareBypass: true,
+            })
+            const media = res.status === 200 ? (res.json<any>().data || {}).Media : null
+            if (!media || !Array.isArray(media.synonyms)) return []
+            const out: string[] = media.synonyms.filter((x: unknown) => typeof x === "string")
+            this.writeCache(ck, out)
+            return out
+        } catch (_e) {
+            return []
+        }
     }
 
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {

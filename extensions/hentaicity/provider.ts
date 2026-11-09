@@ -38,8 +38,9 @@ class Provider implements AnimeProvider {
         const scan: Scan = { fetched: 0, seen: {} }
         let pick: SearchResult | null = null
         for (let i = 0; i < queries.length && !pick; i++) {
-            for (const it of await this.find(queries[i], "search")) if (!pool.some((p) => p.id === it.id)) pool.push(it)
-            pick = await this.decide(pool, cands, m, scan, i === queries.length - 1)
+            const got = await this.find(queries[i], "search")
+            for (const it of got) if (!pool.some((p) => p.id === it.id)) pool.push(it)
+            pick = await this.decide(pool, cands, m, scan, i === queries.length - 1, got[0])
         }
         const done = m.status === "FINISHED" && m.episodeCount && m.episodeCount > 0 ? `$${m.episodeCount}` : ""
         const out = pick ? [{ ...pick, id: pick.id + done, title: m.englishTitle || m.romajiTitle || pick.title }] : []
@@ -117,20 +118,20 @@ class Provider implements AnimeProvider {
         }
     }
 
-    private async decide(pool: Item[], cands: Cand[], m: Media, scan: Scan, last: boolean): Promise<SearchResult | null> {
+    private async decide(pool: Item[], cands: Cand[], m: Media, scan: Scan, last: boolean, top?: Item): Promise<SearchResult | null> {
         const count = m.episodeCount && m.episodeCount > 0 ? m.episodeCount : 0
         const cap = count + Math.floor(count / 4)
         const low = count >= 4 && m.status === "FINISHED" ? Math.ceil(count / 2) : 0
         const fit = (g: Group) => (count ? Math.abs(g.eps.length - count) : -g.eps.length)
-        const all = this.groups(pool).map((g) => ({ g, level: this.level(g, cands) }))
-        const ranked = all
-            .filter((x) => x.level > 0 && (!cap || Math.max(...x.g.eps) <= cap))
-            .sort((a, b) => b.level - a.level || fit(a.g) - fit(b.g) || b.g.base.length - a.g.base.length)
-        if (!last && !ranked.some((x) => x.level > 1)) return null
+        const all = this.groups(pool).map((g) => ({ g, level: this.level(g, cands), fits: !cap || Math.max(...g.eps) <= cap }))
+        const ranked = all.filter((x) => x.level > 0 && x.fits).sort((a, b) => b.level - a.level || fit(a.g) - fit(b.g) || b.g.base.length - a.g.base.length)
+        const lead = all.filter((x) => x.level === 0 && x.fits && !!top && x.g.key === top.key && scan.fetched < 2)
+        const early = !last && !ranked.some((x) => x.level > 1)
+        if (early && !lead.length) return null
         const strong = ranked.filter((x) => x.level === 3)
         const solid = strong.filter((x) => x.g.eps.indexOf(1) !== -1 && x.g.eps.length >= low)
         if (!(ranked.length === 1 && solid.length === 1)) {
-            for (const x of ranked) {
+            for (const x of (early ? [] : ranked).concat(lead)) {
                 const rep = x.g.items[0]
                 if (scan.fetched >= 3) break
                 if (scan.seen[rep.id]) continue

@@ -41,7 +41,7 @@ class Provider implements AnimeProvider {
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {
         const meta = this.decode(id)
         if (meta.anilistId <= 0) return []
-        const count = (await this.probeEpisodeCount(meta.anilistId, meta.num)) || meta.num
+        const count = await this.probeEpisodeCount(meta.anilistId, meta.num)
         if (count <= 0) return []
         const episodes: EpisodeDetails[] = []
         for (let n = 1; n <= count; n++) {
@@ -60,11 +60,11 @@ class Provider implements AnimeProvider {
         if (e.status === "notfound") throw this.fail("server", `animelok: episode ${meta.num} has no multi-language dub on this site`, "info")
         if (e.status === "badshape") throw this.fail("server", `animelok: the site answered for episode ${meta.num} in a shape this extension does not understand — the site changed its API; this extension needs an update.`)
         if (e.status !== "ok") throw this.fail("server", `animelok: episode ${meta.num} lookup failed - the site ${e.why}`)
-        const url = await this.video(e.origin, e.hash)
+        const v = await this.video(e.origin, e.hash)
         return {
             server: "Auto",
             headers: { Referer: `${e.origin}/` },
-            videoSources: [{ url, type: "m3u8", quality: "auto", subtitles: [] }],
+            videoSources: [{ url: v.url, type: "m3u8", quality: "auto", subtitles: v.subtitles }],
         }
     }
 
@@ -111,9 +111,9 @@ class Provider implements AnimeProvider {
         return first.status === "fail" ? await this.embed(anilistId, ep) : first
     }
 
-    private async video(origin: string, hash: string): Promise<string> {
+    private async video(origin: string, hash: string): Promise<{ url: string; subtitles: VideoSubtitle[] }> {
         const cacheKey = `animelok:video:${hash}`
-        const cached = this.readCache<string>(cacheKey, this.srcCacheTtl)
+        const cached = this.readCache<{ url: string; subtitles: VideoSubtitle[] }>(cacheKey, this.srcCacheTtl)
         if (cached) return cached
         const host = origin.replace(/^https:\/\//, "")
         let res: FetchResponse
@@ -133,8 +133,22 @@ class Provider implements AnimeProvider {
         } catch (_e) {}
         const url = (data && (data.securedLink || data.videoSource)) || ""
         if (!/^https:\/\//i.test(url)) throw this.fail("server", `animelok: the ${host} player answered without a stream link - this extension needs an update`)
-        this.writeCache(cacheKey, url)
-        return url
+        const out = { url, subtitles: await this.subtitles(origin, hash) }
+        this.writeCache(cacheKey, out)
+        return out
+    }
+
+    private async subtitles(origin: string, hash: string): Promise<VideoSubtitle[]> {
+        let page = ""
+        try {
+            const res = await fetch(`${origin}/video/${hash}`, { headers: { Referer: `${this.base}/` } })
+            if (res.ok) page = res.text()
+        } catch (_e) {}
+        const list = (page.match(/playerjsSubtitle\s*=\s*"([^"]*)"/) || ["", ""])[1]
+        const out: VideoSubtitle[] = []
+        const re = /\[([^\]]+)\](https:\/\/[^,\s]+)/g
+        for (let m = re.exec(list); m; m = re.exec(list)) out.push({ id: String(out.length), url: m[2], language: m[1], isDefault: out.length === 0 })
+        return out
     }
 
     private net(e: unknown): string {
