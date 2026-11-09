@@ -62,6 +62,7 @@ console.log("haifacdn")
         "/series/6": { id: 6, seasons_detail: [{ season: 1, episodes: [ep("a1", 1)] }] },
         "/series/3": { id: 3, seasons_detail: [{ season: 0, episodes: [ep("o2", 2), ep("o1", 1)] }] },
         "/series/2": { id: 2, seasons_detail: [] },
+        "/series/52": { id: 52, seasons_detail: [{ season: 3, episodes: [ep("r0", 0.5), ep("c1", 1), ep("c17", 17), ep("r17", 17.5), ep("c18", 18)] }] },
         "/episodes/ja": {
             stream: "https://x/ja.m3u8",
             audio: [{ label: "Japanese", language: "jpn", default: true }],
@@ -195,6 +196,60 @@ console.log("haifacdn")
     let noKey = ""
     try { await mk("").findEpisodes("7$sub") } catch (e) { noKey = String(e) }
     eq([noKey, seen.every((h) => h === "Bearer ak_test")], ["Haifa CDN: add your API key in the extension settings", true], "auth: the key is sent trimmed as a bearer token, and a missing key says where to set it")
+
+    const fresh = mk("ak_test", { requestMissing: "off" })
+    eq([await ids(fresh, media(108511, "That Time I Got Reincarnated as a Slime Season 2"), false, "slime"), fresh.listings()], [["7$sub:both"], 0], "search: a title search that finds this media's own id answers without loading the library")
+    eq((await p.findEpisodes("52$sub")).map((e) => e.number), [1, 17, 18], "episodes: recaps Haifa numbers 0.5 or 17.5 are left out, since Seanime only takes whole episode numbers")
+
+    const pager = (opts = {}) => {
+        const store = new Map(Object.entries(opts.store || {}))
+        const clock = { t: 1e12 }
+        const calls = []
+        let inflight = 0
+        let peak = 0
+        const rows = Array.from({ length: 250 }, (_, i) => ({ id: i + 1, title: "Show " + (i + 1), anilist_id: 1000 + i, audio: ["Japanese"], description: "x" }))
+        const prov = load("haifacdn", {
+            Date: { now: () => clock.t },
+            $getUserPreference: (k) => (k === "apiKey" ? "ak_test" : (opts.prefs || {})[k]),
+            $store: { get: (k) => store.get(k), set: (k, v) => store.set(k, v), remove: (k) => store.delete(k), has: (k) => store.has(k) },
+            fetch: async (url, o) => {
+                const path = url.replace("https://cdn.lua.locker/v1", "")
+                calls.push((o.method || "GET") + " " + path)
+                peak = Math.max(peak, ++inflight)
+                await new Promise((r) => setTimeout(r, 5))
+                inflight--
+                clock.t += opts.slow || 0
+                if (opts.down) throw new Error("connect ECONNREFUSED")
+                const offset = +((path.match(/offset=(\d+)/) || [])[1] || 0)
+                if (path.startsWith("/series?")) return { ok: true, status: 200, json: () => ({ total: rows.length, series: path.includes("&q=") ? [] : rows.slice(offset, offset + 100) }) }
+                if (path.startsWith("/requests?")) return { ok: true, status: 200, json: () => ({ requests: [] }) }
+                return { ok: true, status: 201, json: () => ({ ok: true, request: { title: "X" } }) }
+            },
+        })
+        return { prov, store, calls, peak: () => peak }
+    }
+    const err = (pr) => pr.then(() => "ok", (e) => String(e))
+    const paged = pager()
+    eq([
+        await ids(paged.prov, media(1100, "Show 101"), false),
+        paged.calls,
+        paged.peak(),
+        paged.store.get("haifacdn:library").data.map((s) => s.id).join() === Array.from({ length: 250 }, (_, i) => i + 1).join(),
+    ], [["101$sub:sub"], ["GET /series?limit=100&offset=0", "GET /series?limit=100&offset=100", "GET /series?limit=100&offset=200"], 2, true],
+        "library: the first page gives the total, the rest are fetched together, and the cache keeps the library in order")
+    const old = { "haifacdn:library": { at: 0, data: [{ id: 7, title: "Show", anilist_id: 1100, audio: ["Japanese"] }] } }
+    eq([
+        await ids(pager({ down: true, store: old }).prov, media(1100, "Show"), false, "show"),
+        await err(pager({ down: true }).prov.search({ media: media(1100, "Show"), query: "show", dub: false })),
+        await err(pager({ down: true, store: old }).prov.search({ media: media(0), query: "show", dub: false })),
+    ], [["7$sub:sub"], "Haifa CDN: the library could not be reached", "Haifa CDN: the library could not be reached"],
+        "library: when Haifa can't be reached, an expired listing still answers; with none, or for a typed search, the failure is reported")
+    const slow = pager({ slow: 2500, prefs: { requestMissing: "on" } })
+    await slow.prov.search({ media: media(5, "Missing"), query: "missing", dub: false })
+    const skipped = slow.calls.filter((c) => !c.startsWith("GET /series")).length + (slow.store.has("haifacdn:requested:5") ? 1 : 0)
+    await slow.prov.search({ media: media(5, "Missing"), query: "missing", dub: false })
+    eq([skipped, slow.calls.filter((c) => !c.startsWith("GET /series"))], [0, ["GET /requests?limit=100", "POST /request"]],
+        "request: a search that already took over 4 s leaves the request for the next search, which sends it once the library is cached")
 }
 
 console.log("animepahe")
@@ -288,6 +343,62 @@ console.log("animepahe")
         [strangers, bare, blocked].map((p) => new Set(p.hits).size),
     ], [fallback, fallback, fallback, [3, 0, 1]],
         "ids: no page with our ids, no ids to look for, or a page that will not load all keep the title pick, and a failed page stops the checks")
+
+    const buttons = (html) => () => {
+        const els = [...html.matchAll(/<button([^>]*)>/g)].map((m) => Object.fromEntries([...m[1].matchAll(/([\w-]+)="([^"]*)"/g)].map((a) => [a[1], a[2]])))
+        return { length: () => els.length, each: (cb) => els.forEach((a, i) => cb(i, { attr: (n) => a[n] })) }
+    }
+    const btn = (id, res, audio, av1) => `<button data-src="https://kwik.cx/e/${id}" data-fansub="SP" data-resolution="${res}" data-audio="${audio}" data-av1="${av1}">`
+    const play = load("animepahe", { LoadDoc: buttons })
+    const urls = (html, audio) => play.parsePlaySources(html, audio).map((s) => s.url.split("/").pop())
+    const mixed = btn("a720", 720, "jpn", 0) + btn("v1080", 1080, "jpn", 1) + btn("a1080", 1080, "jpn", 0) + btn("e1080", 1080, "eng", 0)
+    eq([urls(mixed, "sub"), urls(mixed, "dub"), urls(btn("v720", 720, "jpn", 1) + btn("v1080", 1080, "jpn", 1), "sub")],
+        [["a1080", "a720"], ["e1080"], ["v1080", "v720"]],
+        "play: AV1 duplicates are skipped while a plain encode exists, and an AV1-only episode still plays")
+
+    const solverAt = (answers) => {
+        const store = new Map()
+        const cmds = []
+        const prov = load("animepahe", {
+            $store: { get: (k) => store.get(k), set: (k, v) => store.set(k, v), remove: (k) => store.delete(k), has: (k) => store.has(k) },
+            fetch: (url, o) => {
+                const cmd = JSON.parse(o.body).cmd
+                cmds.push(cmd)
+                const a = answers[cmd]
+                return a === undefined ? Promise.reject(new Error("refused")) : reply(a, a.status === "ok" ? 200 : 500)
+            },
+        })
+        prov.cmds = cmds
+        return prov
+    }
+    const ours = solverAt({ "sessions.list": { status: "ok", version: "0.2.3" }, metrics: { status: "ok" } })
+    const stock = solverAt({ "sessions.list": { status: "ok", version: "3.3.21" }, metrics: { status: "error" } })
+    const down = solverAt({})
+    eq([await ours.solverPing(), await ours.solverPing(), ours.cmds, await stock.solverPing(), await down.solverPing(), down.cmds],
+        [{ up: true, version: "0.2.3", proxy: true }, { up: true, version: "0.2.3", proxy: true }, ["sessions.list", "metrics"], { up: true, version: "3.3.21", proxy: false }, { up: false, proxy: false }, ["sessions.list"]],
+        "solver: only a solver that answers metrics gets the /m3u8 proxy, a stock FlareSolverr keeps direct URLs, and a dead one costs one probe")
+
+    const homepage = () => {
+        const store = new Map()
+        const hits = []
+        const prov = load("animepahe", {
+            $store: { get: (k) => store.get(k), set: (k, v) => store.set(k, v), remove: (k) => store.delete(k), has: (k) => store.has(k) },
+            fetch: (url) => {
+                hits.push(url.replace("https://animepahe.pw", ""))
+                return url.indexOf("/api?") !== -1 ? reply("Sorry, you have been blocked", 403, true) : reply("<html></html>", 200, true)
+            },
+        })
+        prov.hits = hits
+        prov.solverUrl = ""
+        return prov
+    }
+    const cookieless = homepage()
+    await cookieless.harvestCookies(false)
+    await cookieless.harvestCookies(false)
+    const blockedApi = homepage()
+    await blockedApi.getText("https://animepahe.pw/api?m=search&q=x").catch(() => {})
+    eq([cookieless.hits, blockedApi.hits], [["/"], ["/", "/api?m=search&q=x", "/", "/api?m=search&q=x"]],
+        "cookies: a site that sets no cookies is not re-fetched on every call, and a blocked request is re-harvested once between its two tries")
 }
 
 console.log("animelok")
@@ -316,6 +427,7 @@ console.log("animelok")
                     return reply(servers(+api[1], +api[2], +api[2] <= (o.eps ?? 13), o.movie ? 1 : +api[2]))
                 }
                 if (/\/player\/index\.php\?data=h\d+&do=getVideo$/.test(url) && init && init.method === "POST") return reply(o.noLink ? { hls: true } : { hls: true, securedLink: "https://ravok.buzz/cdn/hls/x/master.m3u8?md5=a&expires=1" })
+                if (/\/video\/h\d+$/.test(url) && o.page !== undefined) return Promise.resolve({ ok: true, status: 200, url: "", cookies: {}, headers: {}, text: () => o.page })
                 return reply({}, 404)
             },
         })
@@ -336,8 +448,15 @@ console.log("animelok")
     const movie = mkLok({ movie: true, eps: 5000 })
     eq([(await movie.findEpisodes("21519$dub$1")).length, (await movie.findEpisodes("21519$dub$0")).length], [1, 1], "lok: a movie the site answers for at every episode number lists once")
     eq(await mkLok({ eps: 0 }).search(solo(true)), [], "lok: a show whose episode 1 has only flixcloud and MegaPlay is not a match")
+    eq((await mkLok({ eps: 0 }).findEpisodes("151807$dub$12")).length, 0, "lok: a saved match whose episode 1 lost its ravok source lists nothing instead of its AniList count")
     const srv = await lok.findEpisodeServer({ id: "151807$dub$5", number: 5, url: "" }, "Auto")
     eq([srv.videoSources[0].url, srv.headers.Referer, lok.hits.filter((h) => h.indexOf("getVideo") !== -1)], ["https://ravok.buzz/cdn/hls/x/master.m3u8?md5=a&expires=1", "https://ravok.buzz/", ["/player/index.php?data=h5&do=getVideo"]], "lok: the server asks the ravok player for its secured link and plays it with the player's referer")
+    eq([srv.videoSources[0].subtitles, lok.hits.slice(-1)], [[], ["/video/h5"]], "lok: a player page that does not load still plays, without subtitles")
+    const subbed = mkLok({ page: '<script>var playerjsSubtitle = "[English]https://as-cdn29.top/p/a.jpg,[Hindi]https://as-cdn29.top/p/b.jpg";\nvar playerjsDefaultSubtitle = "English";</script>' })
+    eq((await subbed.findEpisodeServer({ id: "151807$dub$5", number: 5, url: "" }, "Auto")).videoSources[0].subtitles, [
+        { id: "0", url: "https://as-cdn29.top/p/a.jpg", language: "English", isDefault: true },
+        { id: "1", url: "https://as-cdn29.top/p/b.jpg", language: "Hindi", isDefault: false },
+    ], "lok: the subtitles on the ravok player page ride along with the stream, the first one default")
     const hitsBefore = lok.hits.length
     await lok.findEpisodeServer({ id: "151807$dub$5", number: 5, url: "" }, "Auto")
     eq(lok.hits.length, hitsBefore, "lok: a second play of the same episode is served from the cache")
@@ -468,6 +587,8 @@ console.log("hanime")
         row("Grimoire of the Divine Comedy 1", "grimoire-of-the-divine-comedy-1", "2014-11-28"),
         row("Grimoire of the Divine Comedy 2", "grimoire-of-the-divine-comedy-2", "2015-12-24"),
         row("Grimoire of the Divine Comedy Bonus", "grimoire-of-the-divine-comedy-bonus", "2015-12-25"),
+        row("Kateikyoushi x Saimin 2 - Episode 1", "kateikyoushi-x-saimin-2-episode-1", "2024-04-03T15:00:00Z"),
+        row("Kateikyoushi x Saimin 2 - Episode 2", "kateikyoushi-x-saimin-2-episode-2", "2024-06-19T15:00:00Z"),
         { id: 2, name: null, slug: "broken-row" },
     ]
     const SOURCES = [
@@ -617,6 +738,8 @@ console.log("hanime")
         "hanime normalize: a truncated site name matches by prefix on the JST date of its earliest row even when episodes were released out of order; wo/o, THE ANIMATION, HTML entities, curly apostrophes and the site's alt names all line up")
     const titles = (await h.search({ media: M(212574, "Pure x Holic: Junketsu Otome to Kon’in Kankei!? The Animation", "", [], "2026-08-28", 2), query: "x", dub: false })).map((r) => [r.title, r.url, r.subOrDub])
     eq(titles, [["Pure x Holic: Junketsu Otome to Kon'in Kankei!?", "https://hanime.tv/videos/hentai/pure-x-holic-1", "sub"]], "hanime result: the site title is decoded and the result links the first episode page")
+    eq((await h.search({ media: M(169202, "Kateikyoushi x Saimin 2 The Animation", "", [], "2024-04-05", 2), query: "", dub: false })).map((r) => [r.id, r.title]), [["kateikyoushi x saimin 2", "Kateikyoushi x Saimin 2"]],
+        "hanime result: a ' - Episode N' row keeps no dangling dash in the series title")
     eq([
         await err(h.search({ media: M(113417, "Overflow", "Overflow", [], "2020-01-06", 8), query: "Overflow", dub: false })),
         await ids(M(900007, "Overflow", "", [], "2020-02-23", 1)),
@@ -768,6 +891,9 @@ console.log("hentaicity")
         "discipline+the+academy": discipline, discipline: discipline, "discipline+the+record+of+a": discipline,
         "kuroinu+2": kuroinu, kuroinu: kuroinu, "euphoria+2": euphoria, "senpai+and+kouhai": kouhai,
         "night+shift+nurses": nurses, "my+long+title+show+and+friends+together": results([...rows("lt", 3, (k) => `My Long Title Show and Friends Together ${k}`), ...pad]), "my+long+title+show+and": results(rows("lt", 5, (k) => `My Long Title Show and Friends Together ${k}`)), "yakin+byoutou": empty, "eroge+h+mo+game+mo+kaihatsu+zanmai": empty, eroge: results(erogeOld), "eroge+make+sexy+games": eroge,
+        "imaizumin+chi+wa+douyara+gal+no+tamariba+ni": results([[id("iw", 3), "Imaizumi Takes all the Women 3 - Chapter"], [id("ig", 1), "Imaizumi Takes all the Girls 1 - Chapter"], [id("ig", 2), "Imaizumi Takes all the Girls 2 - Chapter"], ...pad]),
+        "mirror+castle+night+king": results([[id("f1", 1), "Filler One 1 - Chapter"]]), "kagami+no+shiro+yoru+no+ou": results([[id("f2", 1), "Filler Two 1 - Chapter"]]), "mirror+castle": results([[id("f3", 1), "Filler Three 1 - Chapter"]]),
+        "kagami+no+shiro": results(rows("kg", 2, (k) => `Kagami Shiro Yoru ${k}`)),
     }
     const pages = {
         [id("bb", 1)]: page(id("bb", 1), bibleBox), [id("tg", 1)]: page(id("tg", 1)), [id("ad", 1)]: page(id("ad", 1), asagiBox), [id("ae", 1)]: page(id("ae", 1), asagiBox),
@@ -777,6 +903,8 @@ console.log("hentaicity")
         [id("nc", 1)]: page(id("nc", 1), "", "default,mobile,480p,720p", "0101", 101),
         [id("mm", 3)]: page(id("mm", 3), mmBox),[id("is", 1)]: page(id("is", 1), sistersBox), [id("pl", 1)]: page(id("pl", 1), list("Princess Lover!", ["", eps("pl", 2)])),
         [id("ru", 1)]: page(id("ru", 1), "", "default,mobile,480p", "0730", 36556), [id("rc", 1)]: page(id("rc", 1), "", "default,mobile,480p,720p", "0569", 28497),
+        [id("iw", 3)]: page(id("iw", 3), grid("Imaizumi Takes all the Women to His House / Imaizumin-chi wa Douyara Gal no Tamariba ni Natteru Rashii", id("iw", 3), [[id("ig", 1), "Episode 1", "Episode 1"], [id("ig", 2), "Episode 2", "Episode 2"], [id("iw", 3), "Episode 3", "Episode 3 - Now Playing"]])),
+        [id("kg", 1)]: page(id("kg", 1), list("Kagami no Shiro: Yoru no Ou", ["", eps("kg", 2)])),
     }
     const reply = (body, status = 200) => Promise.resolve({ ok: status < 400, status, url: "", headers: {}, cookies: {}, text: () => body, json: () => JSON.parse(body) })
     const busy = `<html><head><title>Service Unavailable</title></head><body>No server is available to handle the request</body></html>`
@@ -857,8 +985,8 @@ console.log("hentaicity")
     ], "city pick: the franchise box confirms the exact series among its spin-offs, and the episode list comes from the cached box and search")
     const nt = mkCity()
     eq([await pick(nt, media(1401, "Shin Bible Black", "Bible Black: New Testement", ["Bible Black: Revival"], 6)), await list2(nt, `b$${id("bb", 1)}$${id("nt", 1)}$bible+black`), nt.hits.filter((h) => h.indexOf("/video/") === 0)], [
-        [[`b$${id("bb", 1)}$${id("nt", 1)}$bible+black`, "Bible Black: New Testement"]], many("nt", 6), [`/video/x-${id("bb", 1)}.html`],
-    ], "city pick: a sequel known only by its (misspelt) English title is found in the franchise box, never as the original 'Bible Black 1..6', and lists the box's own links")
+        [[`b$${id("bb", 1)}$${id("nt", 1)}$bible+black`, "Bible Black: New Testement"]], many("nt", 6), [`/video/x-${id("pd", 1)}.html`, `/video/x-${id("bb", 1)}.html`],
+    ], "city pick: a sequel known only by its (misspelt) English title is found in the franchise box, never as the original 'Bible Black 1..6', and lists the box's own links (the unrelated top hit of an earlier query costs one box look)")
     const ta = mkCity()
     const taId = `b$${id("ad", 1)}$${id("ad", 1)}$taimanin+asagi`
     eq([await pick(ta, media(3479, "Taimanin Asagi", "", [], 4)), await list2(ta, taId), ta.hits.filter((h) => h.indexOf("/video/") === 0)], [
@@ -882,7 +1010,7 @@ console.log("hentaicity")
     eq([await pick(ko, media(990003, "○○ Kouhai", "", ["Senpai and Kouhai"], 2)), ko.hits], [[["g$1$senpai and kouhai$senpai+and+kouhai", "○○ Kouhai"]], ["/search/video/senpai+and+kouhai"]],
         "city placeholder: a '○○' romaji is neither searched nor matched (no 'Kouhai'); the synonym wins, and the result carries the AniList title so Seanime's title comparison ranks it first")
     const ns = mkCity()
-    eq([await pick(ns, media(1387, "Yakin Byoutou", "Night Shift Nurses", [], 10)), ns.hits.length], [[], 2], "city trap: a show the site lacks gets nothing from its sequels' 'Night Shift Nurses 3 epN', '2epN' or the loose 'Night Shift Nurses 2 <name>' parts")
+    eq([await pick(ns, media(1387, "Yakin Byoutou", "Night Shift Nurses", [], 10)), ns.hits.length], [[], 3], "city trap: a show the site lacks gets nothing from its sequels' 'Night Shift Nurses 3 epN', '2epN' or the loose 'Night Shift Nurses 2 <name>' parts (the top hit's box is looked at once)")
     const lt = mkCity()
     eq([await pick(lt, media(990005, "Nagai Taitoru", "My Long Title Show and Friends Together", [], 4)), await list2(lt, "g$1$my long title show and friends together$my+long+title+show+and+friends+together")], [
         [["g$1$my long title show and friends together$my+long+title+show+and+friends+together", "My Long Title Show and Friends Together"]], many("lt", 5),
@@ -954,8 +1082,20 @@ console.log("hentaicity")
         [["g$1$super hxeros$super+hxeros", "SUPER HXEROS"]], many("hx", 12), [["g$1$super hxeros ova$super+hxeros", "Dokyuu Hentai HxEros OVA"]], [`1:${id("ho", 1)}`, `2:${id("ho", 2)}`],
     ], "city OVA: the TV entry lists only the TV posts (no OVA posts, no unnumbered compilation), and the AniList 'X OVA' entry gets the 'X OVA N' posts")
     const dead = mkCity()
-    eq([await pick(dead, media(1636, "Ai Shimai Tsubomi... Kegashite Kudasai", "Immoral Sisters: Blossoming", [], 2)), dead.hits.filter((h) => h.indexOf("/video/") === 0)], [[], [`/video/x-${id("is", 1)}.html`]],
+    eq([await pick(dead, media(1636, "Ai Shimai Tsubomi... Kegashite Kudasai", "Immoral Sisters: Blossoming", [], 2)), dead.hits.filter((h) => h.indexOf("/video/") === 0)], [[], [`/video/x-${id("is", 1)}.html`, `/video/x-${id("pd", 1)}.html`]],
         "city box: a box section none of whose links the site's search returns (dead links) is not a match")
+    const im = mkCity()
+    const im1 = mkCity()
+    const imId = `b$${id("iw", 3)}$${id("ig", 1)}$imaizumin+chi+wa+douyara+gal+no+tamariba+ni`
+    const imMedia = (n) => media(132203, "Imaizumin-chi wa Douyara Gal no Tamariba ni Natteru Rashii", "Imaizumi's house seems to be a gathering place for gals", [], n)
+    eq([await pick(im, imMedia(-1)), await list2(im, imId), im.hits.filter((h) => h.indexOf("/video/") === 0), await pick(im1, imMedia(1)), im1.hits.filter((h) => h.indexOf("/video/") === 0)], [
+        [[imId, "Imaizumi's house seems to be a gathering place for gals"]], [`1:${id("ig", 1)}`, `2:${id("ig", 2)}`, `3:${id("iw", 3)}`], [`/video/x-${id("pd", 1)}.html`, `/video/x-${id("iw", 3)}.html`],
+        [], [`/video/x-${id("pd", 1)}.html`],
+    ], "city lead: a show posted only under the site's own English names ('Imaizumi Takes all the Women/Girls N') is found when the site ranks it first for a title query and its box names the AniList title; a top hit with more episodes than the count allows is never opened")
+    const kg = mkCity()
+    eq([await pick(kg, media(990030, "Kagami no Shiro: Yoru no Ou", "Mirror Castle: Night King", [], 2)), kg.hits.filter((h) => h.indexOf("/video/") === 0)], [
+        [[`b$${id("kg", 1)}$${id("kg", 1)}$kagami+no+shiro`, "Mirror Castle: Night King"]], [`/video/x-${id("f1", 1)}.html`, `/video/x-${id("f2", 1)}.html`, `/video/x-${id("kg", 1)}.html`],
+    ], "city lead: unrelated top hits open at most two boxes, so the last query's own candidate still gets its box look")
     eq([await pick(mkCity(), media(21618, "Furueru Kuchibiru: fuzzy lips 0", "Fuzzy Lips 0", [], 1)), await pick(mkCity(), media(21617, "Furueru Kuchibiru: fuzzy lips 1", "Fuzzy Lips", ["Fuzzy Lips 1"], 1))], [[], []],
         "city count: 'X 0' is not 'X', and a one-episode entry never takes a two-episode group (no headroom below 4)")
     const an = mkCity()
@@ -1085,6 +1225,11 @@ console.log("hentaihaven")
             fetch: (url, init = {}) => {
                 const method = init.method || "GET"
                 calls.push({ method, url, bypass: init.noCloudflareBypass, ua: !!(init.headers && init.headers["User-Agent"]) })
+                if (url === "https://graphql.anilist.co") {
+                    const id = JSON.parse(init.body).variables.id
+                    if (id === 404) return reply("nope", 500)
+                    return reply({ data: { Media: { synonyms: { 112936: ["援助交配", "Enjo Kouhai", "Enjyo Kouhai", "Assisted Mating"], 5391: ["Boku no Piko OVA 2", "Boku no Pico", "Pico & Chico"] }[id] || [] } } })
+                }
                 if (/^https:\/\/cms\.hentaihaven\.xxx\/wp-json\/wp\/v2\/wp-manga-release\?per_page=100&_fields=id,name$/.test(url)) {
                     if (o.down) return dns(url, "cms.hentaihaven.xxx")
                     if (o.wall) return reply("<html>Just a moment...</html>", 403, { "Cf-Mitigated": "challenge" })
@@ -1153,8 +1298,8 @@ console.log("hentaihaven")
         "hh: a site title that is only the part before ':' needs the AniList episode count to agree when AniList has one (Seanime sends -1 for none)")
     eq([
         await pick(hh, media(112936, "○○ Kouhai", { syn: ["援助交配", "Enjo Kouhai", "Assisted Mating"], eps: -1 })),
-        await pick(hh, media(112936, "○○ Kouhai")),
-    ], [["3409$enjo-kouhai"], []], "hh: a placeholder romaji is skipped for its synonym and never matches the decoy post named Kouhai")
+        await pick(hh, media(999003, "○○ Kouhai")),
+    ], [["3409$enjo-kouhai"], []],"hh: a placeholder romaji is skipped for its synonym and never matches the decoy post named Kouhai")
     eq([
         await pick(hh, media(8577, "Aki-Sora: Yume no Naka", { en: "Aki Sora", eps: 2 })),
         await pick(hh, media(8577, "Aki-Sora: Yume no Naka", { en: "Aki Sora", eps: 2, syn: ["Akisora: Yume no Naka", "Aki-Sora: In a Dream"] })),
@@ -1199,7 +1344,19 @@ console.log("hentaihaven")
     const catalogHits = hh.calls.filter((c) => c.url.indexOf("/wp/v2/wp-manga") !== -1).length
     eq([await hh.search({ media: media(113417, "Overflow"), query: "Overflow", dub: true }), catalogHits], [[], 3], "hh: dub finds nothing and the catalog is fetched once for all searches")
     const before = hh.calls.length
-    eq([await pick(hh, media(1, "")), await pick(hh, media(2, "○○ Senpai")), hh.calls.length - before], [[], [], 0], "hh: a media with no usable title returns nothing without a request")
+    eq([await pick(hh, media(1, "")), await pick(hh, media(2, "○○ Senpai")), hh.calls.slice(before).map((c) => c.method + " " + c.url)], [[], [], ["POST https://graphql.anilist.co", "POST https://graphql.anilist.co"]],
+        "hh: a media with no usable title asks AniList for its synonyms and, given none, returns nothing without touching the site")
+    const al = mk()
+    eq([
+        await pick(al, media(112936, "○○ Kouhai", { eps: -1 })),
+        await pick(al, media(112936, "○○ Kouhai", { eps: -1 })),
+        await pick(al, media(5391, "Pico to Chico", { eps: 1 })),
+        await pick(al, media(404, "○○ Kouhai")),
+        await pick(al, media(404, "○○ Kouhai")),
+        await pick(al, media(113417, "Overflow", { eps: 8 })),
+        al.calls.filter((c) => c.url === "https://graphql.anilist.co").length,
+    ], [["3409$enjo-kouhai"], ["3409$enjo-kouhai"], [], [], [], ["2131$overflow"], 4],
+        "hh: Seanime sends only season synonyms, so a miss fetches the rest from AniList once (a failed lookup is retried), they pass the same trap checks, and a title that matches on its own never asks")
     eq([
         (await hh.search({ media: media(0, ""), query: "kuroinu", dub: false })).map((r) => r.id),
         (await hh.search({ media: media(0, ""), query: "oujo", dub: false })).map((r) => r.title),

@@ -2,7 +2,7 @@
   {
     "id": "aq-animelok",
     "name": "Animelok",
-    "version": "0.1.25",
+    "version": "0.1.26",
     "description": "Only animelok compatibility layer you'll ever need. Dub streams carry every audio track (Japanese, English, Hindi, Tamil, Telugu and more) — pick yours in the player's audio menu.",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
@@ -15,7 +15,7 @@
   {
     "id": "aq-animepahe",
     "name": "AnimePahe",
-    "version": "0.2.47",
+    "version": "0.2.48",
     "description": "Only animepahe compatibility layer you'll ever need",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
@@ -28,7 +28,7 @@
   {
     "id": "aq-haifacdn",
     "name": "Haifa CDN",
-    "version": "0.1.4",
+    "version": "0.1.5",
     "description": "Streams from the Haifa CDN private library. Needs an API key from the library owner. Dub streams carry every audio track; pick English in the player's audio menu.",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
@@ -40,7 +40,7 @@
   {
     "id": "aq-hanime",
     "name": "hanime",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "description": "Only hanime compatibility layer you'll ever need. 18+. English subtitles are burned into the video; 720p is the best free quality.",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
@@ -53,7 +53,7 @@
   {
     "id": "aq-hentaicity",
     "name": "Hentai City",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "description": "Only Hentai City compatibility layer you'll ever need. 18+. Subtitles are part of the picture; there are no separate subtitle tracks.",
     "author": "aquaryuo",
     "type": "onlinestream-provider",
@@ -66,7 +66,7 @@
   {
     "id": "aq-hentaihaven",
     "name": "Hentai Haven",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "description": "Only hentaihaven compatibility layer you'll ever need. 18+. Older episodes have their subtitles burned in.",
     "author": "aquaryuo",
     "type": "onlinestream-provider",

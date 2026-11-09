@@ -7,7 +7,6 @@ type Track = { label?: string; language?: string; default?: boolean; url?: strin
 
 class Provider implements AnimeProvider {
     private base = "https://cdn.lua.locker/v1"
-    // ponytail: a series Haifa removes stays listed up to 6 h and then 404s in findEpisodes; search's live q fallback finds new ones
     private libraryTtl = 6 * 3600000
 
     getSettings(): Settings {
@@ -15,20 +14,21 @@ class Provider implements AnimeProvider {
     }
 
     async search(opts: SearchOptions): Promise<SearchResult[]> {
+        const started = Date.now()
         const media = opts.media || ({} as Media)
         const id = media.id > 0 ? media.id : 0
-        const lib = id ? await this.library() : []
-        let picks = lib.filter((s) => s.anilist_id === id)
+        const q = opts.query ? this.api<{ series?: Series[] }>(`/series?limit=100&q=${encodeURIComponent(opts.query)}`).then((r) => r.series || []) : Promise.resolve([] as Series[])
+        const found = id ? await q.catch(() => [] as Series[]) : await q
+        let picks = found.filter((s) => !id || s.anilist_id === id)
         if (picks.length === 0 && id) {
+            const lib = await this.library()
             const names = this.titles(media).map((t) => this.titleKey(t))
-            picks = lib.filter((s) => !s.anilist_id && names.indexOf(this.titleKey(s.title)) !== -1)
-        }
-        if (picks.length === 0 && opts.query) {
-            const found = (await this.api<{ series?: Series[] }>(`/series?limit=100&q=${encodeURIComponent(opts.query)}`)).series || []
             const season = Math.max(1, ...this.titles(media).map((t) => this.seasonOf(t)))
-            picks = found.filter((s) => !id || s.anilist_id === id || (!s.anilist_id && this.seasonOf(s.title) === season))
+            picks = lib.filter((s) => s.anilist_id === id)
+            if (picks.length === 0) picks = lib.filter((s) => !s.anilist_id && names.indexOf(this.titleKey(s.title)) !== -1)
+            if (picks.length === 0) picks = found.filter((s) => !s.anilist_id && this.seasonOf(s.title) === season)
+            if (picks.length === 0 && Date.now() - started < 4000) await this.requestMissing(media)
         }
-        if (picks.length === 0 && id) await this.requestMissing(media)
         const audio = opts.dub ? "dub" : "sub"
         return picks
             .filter((s) => !opts.dub || (s.audio || []).some((a) => this.english(a)))
@@ -50,13 +50,12 @@ class Provider implements AnimeProvider {
         const tagged = want ? all.filter((x) => x.season === want) : []
         if (want >= 2 && tagged.length === 0) throw this.fail("episodes", "Haifa CDN: this match was saved by an older version of the extension - match the series again")
         const main = tagged.length ? tagged : all.filter((x) => x.season > 0)
-        // ponytail: an entry whose files disagree on their season (seasons > 1) keeps the biggest group's numbers on a clash; the API calls that a data problem
         const groups = (main.length ? main : all).slice().sort((a, b) => (b.episodes || []).length - (a.episodes || []).length)
         const taken: { [n: number]: boolean } = {}
         const eps: Episode[] = []
         for (const g of groups) {
             for (const e of g.episodes || []) {
-                if (taken[e.episode]) continue
+                if (taken[e.episode] || !Number.isInteger(e.episode)) continue
                 taken[e.episode] = true
                 eps.push(e)
             }
@@ -135,12 +134,19 @@ class Provider implements AnimeProvider {
     private async library(): Promise<Series[]> {
         const hit = $store.get<{ at: number; data: Series[] }>("haifacdn:library")
         if (hit && Date.now() - hit.at < this.libraryTtl) return hit.data
+        const page = (offset: number) => this.api<{ total?: number; series?: Series[] }>(`/series?limit=100&offset=${offset}`)
         const out: Series[] = []
-        for (let offset = 0; offset < 5000; offset += 100) {
-            const page = await this.api<{ total?: number; series?: Series[] }>(`/series?limit=100&offset=${offset}`)
-            const rows = page.series || []
-            for (const r of rows) out.push({ id: r.id, title: r.title, anilist_id: r.anilist_id, audio: r.audio })
-            if (rows.length < 100 || out.length >= (page.total || 0)) break
+        try {
+            const first = await page(0)
+            const offsets: number[] = []
+            for (let offset = 100; offset < Math.min(first.total || 0, 5000); offset += 100) offsets.push(offset)
+            let failed = ""
+            const rest = await Promise.all(offsets.map((o) => page(o).catch((e) => ((failed = String(e)), { series: [] as Series[] }))))
+            if (failed) throw failed
+            for (const p of [first].concat(rest)) for (const r of p.series || []) out.push({ id: r.id, title: r.title, anilist_id: r.anilist_id, audio: r.audio })
+        } catch (e) {
+            if (hit) return hit.data
+            throw e
         }
         $store.set("haifacdn:library", { at: Date.now(), data: out })
         return out

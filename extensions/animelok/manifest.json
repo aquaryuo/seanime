@@ -1,7 +1,7 @@
 {
   "id": "aq-animelok",
   "name": "Animelok",
-  "version": "0.1.25",
+  "version": "0.1.26",
   "manifestURI": "https://raw.githubusercontent.com/aquaryuo/seanime/gate/extensions/animelok/manifest.json",
   "language": "typescript",
   "type": "onlinestream-provider",

@@ -268,7 +268,7 @@ class Provider implements AnimeProvider {
         if (candidates.length === 0) throw this.fail("server", audio === "dub" ? "no dub source for this episode" : "no source found for this episode")
 
         const sources: EpisodeServer["videoSources"] = []
-        const useProxy = !!this.solverEndpoint() && (await this.solverPing()).up
+        const useProxy = (await this.solverPing()).proxy
         for (const c of candidates) {
             try {
                 const m3u8 = await this.resolveKwik(c.url, playUrl)
@@ -326,6 +326,7 @@ class Provider implements AnimeProvider {
 
         const wantDub = audio === "dub"
         const out: PlaySource[] = []
+        const av1: PlaySource[] = []
         const seen: { [key: string]: boolean } = {}
 
         nodes.each((_i, el) => {
@@ -338,11 +339,14 @@ class Provider implements AnimeProvider {
             const fansub = el.attr("data-fansub") || ""
             const num = parseInt(res, 10)
             const label = `${res ? res + "p" : "default"}${fansub ? " · " + fansub : ""}${isEng ? " (Eng)" : ""}`.trim()
-            out.push({ url, resolution: isNaN(num) ? 0 : num, label })
+            const src = { url, resolution: isNaN(num) ? 0 : num, label }
+            if (el.attr("data-av1") === "1") av1.push(src)
+            else out.push(src)
         })
 
-        out.sort((a, b) => b.resolution - a.resolution)
-        return out
+        const list = out.length > 0 ? out : av1
+        list.sort((a, b) => b.resolution - a.resolution)
+        return list
     }
 
     private async resolveKwik(embedUrl: string, playUrl: string): Promise<string | undefined> {
@@ -453,19 +457,16 @@ class Provider implements AnimeProvider {
 
     private async harvestCookies(force: boolean): Promise<string> {
         const cached = $store.get<{ at: number; map: { [k: string]: string } }>("apahe:ck")
-        if (!force && cached && cached.map && Object.keys(cached.map).length > 0 && Date.now() - cached.at < this.cookieTtl) {
+        if (!force && cached && cached.map && Date.now() - cached.at < this.cookieTtl) {
             return this.cookieHeader(cached.map)
         }
         let map = cached && cached.map ? cached.map : {}
-        const before = this.cookieHeader(map)
         try {
             const res = await fetch(`${this.baseUrl}/`, { headers: this.browserHeaders() })
             map = Object.assign({}, map, this.cookiesFrom(res))
         } catch (_e) {}
-        const after = this.cookieHeader(map)
-        const at = (after === before && cached && cached.at && cached.at > 0) ? cached.at : Date.now()
-        $store.set("apahe:ck", { at: at, map })
-        return after
+        $store.set("apahe:ck", { at: Date.now(), map })
+        return this.cookieHeader(map)
     }
 
     private async getText(url: string, extra?: { [k: string]: string }, valid?: (body: string) => boolean): Promise<string> {
@@ -481,7 +482,7 @@ class Provider implements AnimeProvider {
                     if (!valid || valid(body)) return body
                 }
             } catch (_e) {}
-            cookie = await this.harvestCookies(true)
+            if (i === 0) cookie = await this.harvestCookies(true)
         }
         const solved = await this.solveGet(url)
         if (solved && (!valid || valid(solved))) return solved
@@ -494,15 +495,16 @@ class Provider implements AnimeProvider {
         throw this.fail("fetch", "Connected to the solver (v" + (ping.version || "?") + ") but it couldn't clear the site's protection" + (why ? " — " + why : "") + ".")
     }
 
-    private async solverPing(): Promise<{ up: boolean; version?: string }> {
+    private async solverPing(): Promise<{ up: boolean; version?: string; proxy?: boolean }> {
         const ep = this.solverEndpoint()
         if (!ep) return { up: false }
-        const cached = $store.get<{ at: number; up: boolean; version?: string }>("apahe:ping")
+        const cached = $store.get<{ at: number; up: boolean; version?: string; proxy?: boolean }>("apahe:ping")
         const ttl = cached && cached.up ? 30000 : 4000
-        if (cached && cached.at > 0 && Date.now() - cached.at < ttl) return { up: cached.up, version: cached.version }
+        if (cached && cached.at > 0 && Date.now() - cached.at < ttl) return { up: cached.up, version: cached.version, proxy: cached.proxy }
         const d = await this.solverPost(ep, { cmd: "sessions.list" })
-        const r = { up: d !== undefined, version: d && d.version ? String(d.version) : undefined }
-        $store.set("apahe:ping", { at: Date.now(), up: r.up, version: r.version })
+        const m = d ? await this.solverPost(ep, { cmd: "metrics" }) : undefined
+        const r = { up: d !== undefined, version: d && d.version ? String(d.version) : undefined, proxy: !!(m && m.status === "ok") }
+        $store.set("apahe:ping", { at: Date.now(), up: r.up, version: r.version, proxy: r.proxy })
         return r
     }
 
