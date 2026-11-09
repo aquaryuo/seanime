@@ -22,6 +22,7 @@ class Provider implements AnimeProvider {
     private serverCacheTtl = 300000
     private learnedTtl = 18000000
     private deadline = 0
+    private srcStatus = 0
 
     private cfg(name: string, fallback: string): string {
         try {
@@ -540,7 +541,7 @@ class Provider implements AnimeProvider {
         const mpUrl = mp ? this.mpUrl(mp[1], parseInt(mp[2], 10), audio) : ""
 
         const groups = audio === "dub" ? ["dub"] : ["sub", "hsub"]
-        const KNOWN_SERVERS = ["HD-2", "HD-1", "Vidstream-2"]
+        const KNOWN_SERVERS = ["Vidstream-2", "HD-2", "HD-1"]
         const candidates = mp
             ? [{ name: "Vidstream-2", linkId: mpUrl }, { name: "HD-1", linkId: `${mpUrl}?s=tcdn` }]
             : this.collectServers(await this.serverListDoc(dataIds), groups)
@@ -605,7 +606,10 @@ class Provider implements AnimeProvider {
             const res = await this.fetchRetry(`${origin}/${path}?id=${encodeURIComponent(dataId)}${cdn ? `&s=${encodeURIComponent(cdn)}` : ""}`, {
                 headers: { Referer: embedUrl, "X-Requested-With": "XMLHttpRequest" },
             })
-            if (!res.ok) return undefined
+            if (!res.ok) {
+                this.srcStatus = Math.max(this.srcStatus, res.status)
+                return undefined
+            }
             const body = res.json<SourcePayload>()
             if (decode && body && !body.sources && body.enc) {
                 const plain = await this.decodeEnc(origin, embedUrl, String(body.enc))
@@ -698,7 +702,7 @@ class Provider implements AnimeProvider {
     private async resolveServer(linkId: string, serverName: string, audio: string): Promise<EpisodeServer> {
         try {
             const got = await this.fetchSources(linkId)
-            if (!got || !got.file) throw `${serverName} could not resolve the player URL (source may be encrypted or down)`
+            if (!got || !got.file) throw this.srcStatus >= 500 ? `${serverName}: the player's source API failed with HTTP ${this.srcStatus} (down on the player's side; retry later)` : `${serverName} could not resolve the player URL (source may be encrypted or down)`
             if (audio === "dub" && got.embedAudio === "sub") throw `${serverName} offered the subbed (Japanese) track for a dub request`
             if (audio !== "dub" && got.embedAudio === "dub") throw `${serverName} offered the dubbed track for a sub request`
             const subtitles = this.buildSubtitles(got.tracks)
@@ -942,10 +946,9 @@ class Provider implements AnimeProvider {
         const abs = /^https?:\/\//i.test(seg) ? seg : seg.charAt(0) === "/" ? this.originOf(url) + seg : url.replace(/[?#].*$/, "").replace(/[^/]*$/, "") + seg
         try {
             const r = await fetch(abs, { headers: Object.assign({ Range: "bytes=0-7" }, headers), timeout: this.timeLeft() })
-            const head = r.ok ? r.text().slice(0, 8) : ""
-            return head !== "" && !/^(?:G(?!IF8)|ID3|[\s\S]{1,4}(?:ftyp|styp|sidx|moof|emsg|prft))/.test(head)
+            return !/^(?:G(?!IF8)|[\s\S]{1,4}(?:ftyp|styp|moof|sidx))/.test(r.ok ? r.text().slice(0, 8) : "")
         } catch (_e) {
-            return false
+            return true
         }
     }
 
@@ -966,6 +969,7 @@ class Provider implements AnimeProvider {
         const cacheKey = `anikoto:src:${linkId}`
         const cachedSrc = this.readCache<Sources>(cacheKey, this.serverCacheTtl)
         if (cachedSrc) return cachedSrc
+        this.srcStatus = 0
 
         let embedUrl = linkId.indexOf("https://") === 0 ? linkId : undefined
         if (!embedUrl) {
@@ -1002,7 +1006,7 @@ class Provider implements AnimeProvider {
 
         let data: SourcePayload | undefined
         for (const path of this.sourcePaths(origin)) if ((data = await this.trySourcePath(origin, path, dataId, embedUrl, cdn, true))) break
-        if (!data) for (const path of await this.discoverSourcePaths(origin, embedUrl)) if ((data = await this.trySourcePath(origin, path, dataId, embedUrl, cdn, false))) break
+        if (!data && this.srcStatus < 500) for (const path of await this.discoverSourcePaths(origin, embedUrl)) if ((data = await this.trySourcePath(origin, path, dataId, embedUrl, cdn, false))) break
         if (!data || !data.sources) return undefined
         const raw = Array.isArray(data.sources) ? (data.sources[0] || ({} as any)).file : data.sources.file
         const file = typeof raw === "string" && /^https?:\/\//i.test(raw) ? raw : undefined

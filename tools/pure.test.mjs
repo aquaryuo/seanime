@@ -116,6 +116,14 @@ console.log("anikoto")
     kept.fetchSources = function (id) { return id === "L1" ? Promise.resolve({ origin: "https://c.cdn", file: "https://c.cdn/a/master.m3u8", embedAudio: "", tracks: [] }) : keptSources.call(this, id) }
     eq(await kept.findEpisodeServer({ id: "1,2$sub", number: 1, url: "" }, "Auto").then((s) => s.videoSources[0].url, (e) => e), "https://c.cdn/a/master.m3u8", "server: a 429 on a later candidate keeps the playable server already found")
 
+    const order = []
+    const site = load("anikoto", { fetch: (url) => (url.endsWith("master.m3u8") ? r429(200, "#EXTM3U\nseg-1.ts\n") : r429(206, "G@\x00\x10")) })
+    site.serverListDoc = async () => null
+    site.collectServers = () => [{ name: "HD-1", linkId: "L1" }, { name: "Vidstream-2", linkId: "L2" }]
+    site.fetchSources = (id) => { order.push(id); return Promise.resolve({ origin: "https://c.cdn", file: `https://c.cdn/${id}/master.m3u8`, embedAudio: "", tracks: [{ file: "https://c.cdn/e.vtt", label: "English" }] }) }
+    await site.findEpisodeServer({ id: "1,2$sub", number: 1, url: "" }, "Auto")
+    eq(order, ["L2"], "server: the site's Vidstream-2 is tried before HD-1, whose segments come TikTok-wrapped")
+
     const found = load("anikoto", {
         $scannerUtils: { normalizeTitle: () => null, buildSmartSearchTitles: () => ({ titles: ["Show A", "Show A Alt"] }) },
         LoadDoc: () => (sel) => ({ length: () => (sel === "footer" ? 1 : 0), children: () => ({ length: () => 0 }) }),
@@ -259,7 +267,8 @@ console.log("anikoto: time budget")
             fetch: (url) => {
                 asked.push(url)
                 const body = url.indexOf("master") !== -1 ? "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv/index.m3u8\n" : url.indexOf("index") !== -1 ? "#EXTM3U\n#EXTINF:4.0,\n" + seg + "\n" : head
-                return Promise.resolve({ ok: true, status: 200, text: () => body })
+                if (body instanceof Error) return Promise.reject(body)
+                return Promise.resolve(typeof body === "number" ? { ok: false, status: body, text: () => "" } : { ok: true, status: 200, text: () => body })
             },
         })
         const { ok, wrapped } = await wp.isPlayable({ server: "Auto", headers: {}, videoSources: [{ url: "https://c.cdn/a/master.m3u8", type: "m3u8", quality: "default", subtitles: [] }] })
@@ -268,9 +277,10 @@ console.log("anikoto: time budget")
     eq([await wrappedAs("seg-1.jpg", "�PNG\r\n\x1a\n"), await wrappedAs("/s/seg-1.jpg", "G@\x00\x10"), await wrappedAs("https://img.cdn/x.image?sig=1", "�PNG\r\n\x1a\n")],
         [[true, true, "https://c.cdn/a/v/seg-1.jpg"], [true, false, "https://c.cdn/s/seg-1.jpg"], [true, true, "https://img.cdn/x.image?sig=1"]],
         "segments: a stream whose first segment is a PNG-wrapped TS is flagged, a plain TS is not, and the segment URL resolves relative, root-relative and absolute")
-    const heads = ["����\0\x10JF", "GIF89a\x01\0", "<html><h", "\0\0\0\x18styp", "\0\0��moof", "ID3\x04\0\0\0\0"]
-    eq((await Promise.all(heads.map((h) => wrappedAs("s.ts", h)))).map((r) => r[1]), [true, true, true, false, false, false],
-        "segments: JPEG, GIF and HTML heads are flagged as disguised; fMP4 boxes and ID3 packed audio are not")
+    const heads = ["����\0\x10JF", "GIF89a\x01\0", "<html><h", "\0\0\0\x18styp", "\0\0��moof", "ID3\x04\0\0\0\0", "\0\0\0\x20emsg", "\0\0\0\x20ftyp", "\0\0\x01\x2csidx"]
+    eq((await Promise.all(heads.map((h) => wrappedAs("s.ts", h)))).map((r) => r[1]), [true, true, true, false, false, true, true, false, false],
+        "segments: only an MPEG-TS sync byte or an ftyp/styp/moof/sidx box counts as clean; JPEG, GIF, HTML, ID3 and other heads are disguised")
+    eq([(await wrappedAs("s.ts", 403))[1], (await wrappedAs("s.ts", new Error("i/o timeout")))[1]], [true, true], "segments: a first segment that cannot be read is not counted as clean")
     eq((await wrappedAs("#EXT-X-KEY:METHOD=AES-128,URI=\"k\"\n#EXTINF:4.0,\ns.ts", "�PNG\r\n\x1a\n"))[1], false, "segments: encrypted streams are not probed")
 }
 
@@ -350,7 +360,7 @@ console.log("anikoto: megaplay by AniList id")
                 }
                 const m = /\/stream\/(ani|mal)\/\d+\/(\d+)\//.exec(url)
                 if (m) return down ? Promise.reject(new Error("i/o timeout")) : reply(200, +m[2] <= (m[1] === "mal" ? o.mal || 0 : aired) ? `<div id="megaplay-player" data-id="f${m[2]}"></div>` : "<title>Error - MegaPlay</title>")
-                if (url.indexOf("getSources") !== -1) return reply(200, { sources: [{ file: "https://c.cdn/anime/a/master.m3u8" }], tracks: [{ file: "https://c.cdn/anime/a/eng.vtt", label: "English" }] })
+                if (url.indexOf("getSources") !== -1) return o.src ? reply(o.src, "") : reply(200, { sources: [{ file: "https://c.cdn/anime/a/master.m3u8" }], tracks: [{ file: "https://c.cdn/anime/a/eng.vtt", label: "English" }] })
                 if (url.endsWith("master.m3u8")) return reply(200, "#EXTM3U\nseg-1.ts\n")
                 if (url.endsWith("seg-1.ts")) return reply(206, "G@\x00\x10")
                 return reply(404, "")
@@ -399,6 +409,10 @@ console.log("anikoto: megaplay by AniList id")
     const s = mega(12)
     const got = await s.p.findEpisodeServer({ id: "mp:7:3$sub", number: 3, url: "" }, "Auto")
     eq([got.videoSources[0].url, got.headers.Referer, got.videoSources[0].subtitles.length, s.hits.slice(0, 2), s.hits.some((h) => h.indexOf("anikoto") !== -1 || h.indexOf("s=tcdn") !== -1)], ["https://c.cdn/anime/a/master.m3u8", "https://megaplay.buzz/", 1, ["/stream/ani/7/3/sub", "/stream/getSourcesNew?id=f3"], false], "megaplay: an episode plays straight from its MegaPlay player via Vidstream-2 first, never touching the site's server list or HD-1")
+
+    const broken = mega(12, false, { src: 500 })
+    const brokenErr = await broken.p.findEpisodeServer({ id: "mp:7:3$sub", number: 3, url: "" }, "Auto").catch((e) => e)
+    eq([brokenErr, broken.hits.length, broken.hits.filter((h) => h.indexOf("/stream/ani/7/3/sub") === 0)], ["no playable server found for this episode — HD-1: the player's source API failed with HTTP 500 (down on the player's side; retry later)", 10, ["/stream/ani/7/3/sub", "/stream/ani/7/3/sub?s=tcdn"]], "megaplay: a source API answering 500 is named as the player's fault and the player is not rescanned for a moved endpoint")
 }
 
 console.log("anizone")
@@ -410,6 +424,9 @@ console.log("anizone")
     eq(p.isNonDialogue("English (Signs & Songs)"), true, "track: signs and songs is non-dialogue")
     eq(p.trackScore("English", true, false, false) > p.trackScore("English (Signs)", true, false, true), true, "track: dialogue outranks signs")
     eq(p.trackScore("English", true, true, false) > p.trackScore("English", true, false, false), true, "track: the site default breaks ties upward")
+    const subs = (tracks) => p.buildSubs(tracks.map(([label, def, forced], i) => ({ origin: `https://cdn.test/${i}.ass`, lang: "en", label, def, forced }))).map((t) => [t.language, t.isDefault])
+    eq(subs([["English (US)", true, true], ["English (US) (CC)", false, false]]), [["English (US)", true], ["English (US) (CC)", false]], "track: the site default stays default when the release also flags it forced - Frieren's full English track is")
+    eq(subs([["English", false, true], ["English CC", false, false]]), [["English CC", true], ["English", false]], "track: a forced track the site does not default to still sinks below dialogue")
 
     eq(p.langName("he"), "Hebrew", "lang: a code the site serves is named")
     eq(p.langName("pt-br"), "Portuguese (Brazil)", "lang: a regional code keeps its region")
@@ -503,6 +520,9 @@ console.log("anizone")
         [sf + "answered HTTP 403", 1],
         [sf + "answered HTTP 401", 1],
     ], "why: a Cloudflare block page, a Cloudflare check by title or header, and a plain 401 or 403 are each named and stop the remaining queries")
+    eq(await searched(refuse("anizone.to did not answer in time")), [sf + "did not answer in time", 2], "why: a second transport failure stops the remaining queries instead of waiting out each one")
+    let flaky = 0
+    eq((await searched((u, o) => (flaky++ === 0 ? Promise.reject(new Error("connection reset by peer")) : answer(200, "<h1>No results</h1>")())))[1] >= 2, true, "why: one transport failure does not stop the remaining queries")
     const said = async (f) => (await searched(f))[0].slice(sf.length)
     eq([
         await said(answer(503, "")),
@@ -748,6 +768,29 @@ console.log("kickassanime")
     const moved = site({ "GET /api/show/f/episode/ep-1-s1": [200, { servers: [{ name: "VidStreaming", src: "https://krussdomi.com/cat-player/player?id=v" }] }], "GET @player/cat-player/player?id=v": [200, "<html>new player</html>"] })
     eq(await moved.p.findEpisodeServer({ id: "f$1$s1$ja-JP$sub", number: 1, url: "" }, "Auto").catch((e) => e), "kickassanime: no playable stream for episode 1 - the player page was not recognized - the site changed its player; this extension needs an update", "server: a player page in a new shape says the extension needs an update, not to retry")
     eq(load("kickassanime", { $getUserPreference: () => "https://kaa.mirror/" }).baseUrl, "https://kaa.mirror", "config: a mirror loses its trailing slash")
+
+    const merc = { result: [card("merc-f2d0", "Mezametara Saikyou Soubi to Uchuusenmochi Datta node, Ikkodate Mezashite Youhei toshite Jiyuu ni Ikitai (Saikyosoubi)", "Reborn as a Space Mercenary: I Woke Up Piloting the Strongest Starship! (Saikyosoubi)", "tv", 2026, ["ja-JP"])] }
+    const mercMedia = { id: 186541, romajiTitle: "Mezametara Saikyou Soubi to Uchuusen-mochi datta node, Ikkodate Mezashite Youhei to shite Jiyuu ni Ikitai", englishTitle: "Reborn as a Space Mercenary: I Woke Up Piloting the Strongest Starship!", synonyms: ["Saikyosoubi"], format: "TV", startDate: { year: 2026 } }
+    eq((await site({ "POST /api/fsearch": [200, merc] }).p.search({ media: mercMedia, query: "x", dub: false })).map((r) => r.title), ["Reborn as a Space Mercenary: I Woke Up Piloting the Strongest Starship! (Saikyosoubi)"], "title: the result carries the site title closest to any AniList title, ignoring the site's alias in brackets - hosts that re-check the title rejected the respelled romaji")
+
+    const sbr = { result: [card("sbr-472c", "Steel Ball Run: JoJo no Kimyou na Bouken", "Steel Ball Run: JoJo's Bizarre Adventure", "ona", 2026, ["ja-JP"])] }
+    const race = site({ "POST /api/fsearch": [200, sbr], "GET /api/show/sbr-472c": [200, { slug: "sbr-472c", start_date: "2026-03-19T00:00:00.000Z" }] })
+    const stage = (romajiTitle, englishTitle, month, day) => race.p.search({ media: { id: 7, romajiTitle, englishTitle, synonyms: ["SBR"], format: "ONA", startDate: { year: 2026, month, day } }, query: "x", dub: false })
+    eq([
+        (await stage("JoJo no Kimyou na Bouken: Steel Ball Run - 1st STAGE", "STEEL BALL RUN JoJo's Bizarre Adventure 1st STAGE", 3, 19)).map((r) => [r.id, r.title]),
+        await stage("JoJo no Kimyou na Bouken: Steel Ball Run - 2nd & 3rd STAGE", "STEEL BALL RUN JoJo's Bizarre Adventure 2nd - 3rd STAGE", 9, 25),
+        race.hits.filter((h) => h.startsWith("GET")),
+    ], [[["sbr-472c$ja-JP$sub", "Steel Ball Run: JoJo's Bizarre Adventure"]], [], ["GET /api/show/sbr-472c"]], "date: an entry the site started months before the AniList release already holds earlier episodes, so its numbers would be off - no match")
+
+    const counted = site({ "POST /api/fsearch": [200, frieren] })
+    let scored = 0
+    const score = counted.p.scoreTitles.bind(counted.p)
+    counted.p.scoreTitles = (...a) => (scored++, score(...a))
+    await counted.p.search({ media: { id: 6, romajiTitle: "Kono Oto Tomare", englishTitle: "Kono Oto Tomare: Sounds of Life", synonyms: [], startDate: { year: 2019 } }, query: "x", dub: false })
+    eq([counted.hits.length, scored], [2, 3], "match: each site entry is scored once per search, not again after every query")
+
+    const aged = site({ "GET /api/show/op-0948/episodes?ep=1&lang=ja-JP": [200, many] }, { "kickassanime:eps:op-0948$ja-JP$sub": { at: Date.now() - 360000, data: [{ id: "old", number: 1 }] } })
+    eq((await aged.p.findEpisodes("op-0948$ja-JP$sub")).length, 5, "episodes: a list older than five minutes is fetched again - hosts poll airing shows for the new episode")
 }
 
 console.log("mkissa")
@@ -783,17 +826,18 @@ console.log("mkissa")
             CryptoJS: { enc: { Base64: { stringify: (u) => Buffer.from(u).toString("base64") } } },
             fetch: (url, opts = {}) => {
                 const body = opts.body ? JSON.parse(opts.body) : null
-                hits.push(body ? (/episode\(/.test(body.query) ? "episode" : /shows\(/.test(body.query) ? "shows:" + body.variables.search.query : "show:" + body.variables._id) : url.replace(/\?.*$/, ""))
+                const kind = body && (body.variables.showId ? "episode" : body.variables.search ? "shows:" + body.variables.search.query : "show:" + body.variables._id)
+                hits.push(body ? kind : url.replace(/\?.*$/, ""))
                 if (o.reject) return Promise.reject(new Error(o.reject))
                 if (o.status) return reply(o.status, {})
                 if (url.indexOf("/client-crypto/v1/bootstrap") !== -1) {
                     if (o.boot) return reply(o.boot[0], o.boot[1])
-                    const k1 = crypto.createHmac("sha256", mask).update("KoCGqjW:179").digest()
-                    const want = crypto.createHmac("sha256", k1).update(["179", "mkissa", "k7", epoch, "mkissa.to"].join("|")).digest("hex")
+                    const k1 = crypto.createHmac("sha256", mask).update("fiizIPFV0P:188").digest()
+                    const want = crypto.createHmac("sha256", k1).update(["188", epoch, "mkissa", "mkissa.to", "k7"].join("/")).digest("hex")
                     if (opts.headers["x-aa-boot"] !== want) return reply(403, { error: "invalid_boot_token" })
                     return reply(200, { epoch, switchAt: Date.now() + 86400000, partB: Buffer.from(wk.map((b, i) => b ^ mask[i])).toString("base64"), k: "k7" })
                 }
-                if (body && /episode\(/.test(body.query)) {
+                if (kind === "episode") {
                     if (o.gate && !(body.extensions.captcha && body.extensions.captcha.token === o.gate)) return reply(200, { errors: [{ message: body.extensions.captcha ? "CAPTCHA_INVALID" : "NEED_CAPTCHA" }], data: { episode: null } })
                     if (o.errors) return reply(200, { errors: [{ message: o.errors }], data: { episode: null } })
                     if (o.garble) return reply(200, { data: { _m: "b7", tobeparsed: "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" } })
@@ -802,13 +846,13 @@ console.log("mkissa")
                     const d = crypto.createDecipheriv("aes-256-gcm", wk, t.subarray(1, 13))
                     d.setAuthTag(t.subarray(t.length - 16))
                     const req = JSON.parse(Buffer.concat([d.update(t.subarray(13, t.length - 16)), d.final()]).toString())
-                    if (req.qh !== crypto.createHash("sha256").update(body.query).digest("hex") || req.k !== "k7" || req.buildId !== "179") return reply(200, { errors: [{ message: "AA_CRYPTO_QUERY_MISMATCH" }] })
+                    if (req.qh !== crypto.createHash("sha256").update(body.query).digest("hex") || req.k !== "k7" || req.buildId !== "188") return reply(200, { errors: [{ message: "AA_CRYPTO_QUERY_MISMATCH" }] })
                     const ivo = crypto.randomBytes(12)
                     const e = crypto.createCipheriv("aes-256-gcm", wk, ivo)
                     const out = JSON.stringify({ episode: { episodeString: body.variables.episodeString, sourceUrls: o.sources } })
                     return reply(200, { data: { _m: "b7", tobeparsed: Buffer.concat([Buffer.from([1]), ivo, e.update(out), e.final(), e.getAuthTag()]).toString("base64") } })
                 }
-                if (body && /shows\(/.test(body.query)) return reply(200, { data: { shows: { edges: o.edges || [] } } })
+                if (body && body.variables.search) return reply(200, { data: { shows: { edges: o.edges || [] } } })
                 if (body) return reply(200, { data: { show: o.missing ? null : show } })
                 return o.page ? o.page(url, opts) : reply(404, "")
             },
@@ -872,14 +916,14 @@ console.log("mkissa")
         return x.s.findEpisodeServer({ id: "a$sub$1", number: 1, url: "" }, "Auto").then(() => "returned", (e) => e).then((e) => [e, x.hits])
     }
     const BOOT = "https://api.mkissa.net/client-crypto/v1/bootstrap"
-    eq(await lookup({ boot: [404, { error: "unknown_build_id" }] }), ["mkissa: the site retired build 179 (bootstrap: unknown_build_id) - this extension needs an update", [BOOT]], "boot: a retired build is named from the bootstrap's own error, with no episode request")
+    eq(await lookup({ boot: [404, { error: "unknown_build_id" }] }), ["mkissa: the site retired build 188 (bootstrap: unknown_build_id) - this extension needs an update", [BOOT]], "boot: a retired build is named from the bootstrap's own error, with no episode request")
     eq([
         (await lookup({ boot: [403, { error: "invalid_boot_token" }] }))[0],
         (await lookup({ boot: [500, { error: "oops" }] }))[0],
         (await lookup({ boot: [502, "<html>bad gateway</html>"] }))[0],
         (await lookup({ boot: [200, { epoch: 1, partB: "AAAA" }] }))[0],
     ], [
-        "mkissa: the site rejected the build 179 boot token (invalid_boot_token) - this extension needs an update",
+        "mkissa: the site rejected the build 188 boot token (invalid_boot_token) - this extension needs an update",
         "mkissa: the handshake bootstrap answered 500 oops",
         "mkissa: the handshake bootstrap answered 502",
         "mkissa: the handshake bootstrap answered without a key",
@@ -889,7 +933,7 @@ console.log("mkissa")
     const expired = await lookup({ errors: "AA_CRYPTO_EXPIRED" })
     eq([expired[0], expired[1].filter((h) => h === "episode").length], ["mkissa: the site refused the sealed request (AA_CRYPTO_EXPIRED) - this extension needs an update", 2], "crypto: an expired answer gets the one retry, then is named")
     const garbled = await lookup({ garble: true })
-    eq([garbled[0], garbled[1].filter((h) => h === "episode").length], ["mkissa: the sealed answer did not open with the build 179 key - this extension needs an update", 2], "crypto: an answer that will not open is retried once, then named")
+    eq([garbled[0], garbled[1].filter((h) => h === "episode").length], ["mkissa: the sealed answer did not open with the build 188 key - this extension needs an update", 2], "crypto: an answer that will not open is retried once, then named")
     eq([
         (await lookup({ reject: "api.mkissa.net did not answer in time" }))[0],
         (await lookup({ reject: "api.mkissa.net refused the connection" }))[0],
