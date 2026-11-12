@@ -587,7 +587,7 @@ class Provider implements AnimeProvider {
         }
         if (out.length === 0) return out
         out[pick].isDefault = true
-        return [out[pick]].concat(out.filter((_, i) => i !== pick && !nonDialogue[i]), out.filter((_, i) => i !== pick && nonDialogue[i]))
+        return [out[pick]].concat(out.filter((_, i) => i !== pick && !nonDialogue[i]), out.filter((_, i) => i !== pick && nonDialogue[i])).slice(0, 50)
     }
 
     private audioOf(id: string): string {

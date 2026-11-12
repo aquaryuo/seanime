@@ -1106,7 +1106,7 @@ class Provider implements AnimeProvider {
 
         collected[pick].isDefault = true
         const by = (nd: boolean) => collected.filter((_, i) => i !== pick && nonDialogue[i] === nd)
-        return [collected[pick]].concat(by(false), by(true))
+        return [collected[pick]].concat(by(false), by(true)).slice(0, 50)
     }
 
     private isNonDialogue(label: string): boolean {

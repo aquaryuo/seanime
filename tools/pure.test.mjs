@@ -147,6 +147,8 @@ console.log("anikoto")
     eq(p.buildSubtitles([{ file: "https://c/ara.vtt", label: "Arabic" }, { file: "https://c/eng.vtt", label: "Eng_sub" }]).map((s) => [s.url, s.isDefault]), [["https://c/eng.vtt", true], ["https://c/ara.vtt", false]], "subs: the English track leads and is the default even when the site lists it second")
     eq(p.buildSubtitles([{ file: "https://c/es.vtt", label: "Spanish (English signs)" }, { file: "https://c/pt.vtt", label: "Portuguese" }])[0].url, "https://c/pt.vtt", "subs: a label naming another language before English is not English")
     eq(p.buildSubtitles([{ file: "https://c/a.vtt", label: "  " }])[0].language, "English", "subs: a blank label is named English")
+    const cr = p.buildSubtitles(Array.from({ length: 64 }, (_, i) => ({ file: `https://c/${i}.vtt`, label: i === 0 ? "English" : i < 47 ? `Lang ${i}` : `Lang ${i} (Forced)` })))
+    eq([cr.length, cr[0].language, cr[0].isDefault, cr.filter((s) => !/Forced/.test(s.language)).length], [50, "English", true, 47], "subs: a 64-track release is cut to ws.ryuo.to's 50, dropping only forced tracks")
 
     eq(p.plain("a — b…"), "a - b...", "plain: dashes and ellipsis become ASCII")
     eq(p.plain("one\ntwo\tthree"), "one two three", "plain: newlines collapse to spaces")
@@ -427,6 +429,8 @@ console.log("anizone")
     const subs = (tracks) => p.buildSubs(tracks.map(([label, def, forced], i) => ({ origin: `https://cdn.test/${i}.ass`, lang: "en", label, def, forced }))).map((t) => [t.language, t.isDefault])
     eq(subs([["English (US)", true, true], ["English (US) (CC)", false, false]]), [["English (US)", true], ["English (US) (CC)", false]], "track: the site default stays default when the release also flags it forced - Frieren's full English track is")
     eq(subs([["English", false, true], ["English CC", false, false]]), [["English CC", true], ["English", false]], "track: a forced track the site does not default to still sinks below dialogue")
+    const cr = p.buildSubs(Array.from({ length: 64 }, (_, i) => ({ origin: `https://cdn.test/${i}.ass`, lang: "en", label: `Track ${i}`, def: i === 0, forced: i >= 47 })))
+    eq([cr.length, cr[0].url, cr.filter((t) => +t.url.match(/(\d+)\.ass$/)[1] < 47).length], [50, "https://cdn.test/0.ass", 47], "track: a 64-track release is cut to ws.ryuo.to's 50, dropping only forced tracks")
 
     eq(p.langName("he"), "Hebrew", "lang: a code the site serves is named")
     eq(p.langName("pt-br"), "Portuguese (Brazil)", "lang: a regional code keeps its region")
@@ -818,7 +822,7 @@ console.log("mkissa")
         const hits = []
         const mask = Buffer.from(p.mask, "hex")
         const wk = crypto.randomBytes(32)
-        const epoch = Math.floor(Date.now() / 604800000)
+        const epoch = Math.floor((Date.now() - 86400000) / 604800000)
         let crypt = o.crypt || 0
         const s = load("mkissa", {
             $store: store(mem),
